@@ -1,0 +1,73 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Bard",
+  "version": "0.1.0",
+  "identifier": "com.miisodev.bard",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Bard",
+        "width": 380,
+        "height": 620,
+        "minWidth": 340,
+        "minHeight": 420,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "visible": false,
+        "center": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "overlay",
+        "title": "Recording",
+        "width": 320,
+        "height": 96,
+        "url": "overlay.html",
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "focus": false,
+        "acceptFirstMouse": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "category": "Productivity",
+    "shortDescription": "Capture, dictate, ask.",
+    "longDescription": "Bard is a minimal native Windows workspace that merges clipboard capture, offline voice dictation and AI answers into one keyboard-first panel.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": "en-US",
+        "template": null
+      }
+    }
+  }
+}
