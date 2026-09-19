@@ -45,7 +45,11 @@ const notes = [];
 // Top-level rules only: a selector at column 0, up to its opening brace.
 const seen = new Map();
 for (const { file, text } of css) {
-  const re = /(?:^|\n)((?:\.[^{}\n]|[a-z:\[][^{}\n])[^{}\n]*?)\s*\{/g;
+  // A selector list spans lines (".a,\n.b {"), so the capture must allow
+  // newlines. Matching only the final line reduced ".a, .b" to a bare ".b",
+  // which then collided with the ordinary base-rule-then-override pattern and
+  // reported it as a duplicate.
+  const re = /(?:^|\n)([.#a-z:\[][^{}]*?)\s*\{/g;
   let m;
   while ((m = re.exec(text))) {
     const sel = m[1].trim();
@@ -65,6 +69,9 @@ for (const { file, text } of css) {
 
 /* ── 2. custom properties used but never defined ────────────────────────── */
 const defined = new Set([...allCss.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+// Some custom properties are only ever set inline from code — a per-instance
+// colour on a swatch, say — so a definition can legitimately live in a .tsx.
+for (const m of code.matchAll(/"(--[a-z0-9-]+)"/g)) defined.add(m[1]);
 const used = new Set([...allCss.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]));
 for (const v of used) {
   if (!defined.has(v)) problems.push(`undefined custom property  var(${v})`);

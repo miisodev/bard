@@ -98,6 +98,7 @@ fn main() {
             commands::get_setting_str,
             commands::add_item,
             commands::add_image,
+            commands::open_draw,
             commands::delete_item,
             commands::set_favorite,
             commands::set_done,

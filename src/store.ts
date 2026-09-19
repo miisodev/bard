@@ -5,8 +5,9 @@ export const api = {
   getState: () => invoke<AppState>("get_state"),
   getSettingStr: (key: string) => invoke<string>("get_setting_str", { key }),
   addItem: (content: string) => invoke<void>("add_item", { content }),
+  openDraw: () => invoke<void>("open_draw"),
   addImage: (dataBase64: string, ext: string) =>
-    invoke<void>("add_image", { dataBase64, ext }),
+    invoke<number>("add_image", { dataBase64, ext }),
   addFiles: (paths: string[]) => invoke<number>("add_files", { paths }),
   deleteItem: (id: number) => invoke<void>("delete_item", { id }),
   updateItem: (id: number, content: string) =>

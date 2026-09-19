@@ -265,18 +265,32 @@ pub fn add_item(app: AppHandle, content: String) {
 }
 
 #[tauri::command]
-pub fn add_image(app: AppHandle, data_base64: String, ext: String) {
+pub fn add_image(app: AppHandle, data_base64: String, ext: String) -> i64 {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data_base64)
         .unwrap_or_default();
     if bytes.is_empty() {
-        return;
+        return 0;
     }
     let images = app.state::<ImagesDir>().0.clone();
     let path = unique_image_path(&images, &ext);
     let _ = std::fs::write(&path, bytes);
-    db::insert_item(&app, "", "image", Some(&path.to_string_lossy()));
+    // Returned so a caller that needs the item afterwards — the drawing
+    // window's "Copy and Save" — does not have to guess which row it made.
+    let id = db::insert_item(&app, "", "image", Some(&path.to_string_lossy()));
     refresh(&app);
+    id
+}
+
+#[tauri::command]
+pub fn open_draw(app: AppHandle) {
+    use tauri::Manager;
+    let Some(win) = app.get_webview_window("draw") else {
+        return;
+    };
+    let _ = win.center();
+    let _ = win.show();
+    let _ = win.set_focus();
 }
 
 #[tauri::command]

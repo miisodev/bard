@@ -61,8 +61,8 @@ Verified against the Copper demo videos and cooper's source.
 | A4 | **Light theme quality** | **done** | Rebuilt off the measured Copper values. Panel `#e6e7ea` vs Copper `#e5e6e9`, card `#f9f9fb` vs `#f8f8f8`, field `#f3f4f7` exact |
 | A5 | **Sub-branches / nesting** — `add_child`, branch style, per-item collapse | **missing** | cooper: `BranchPanel.tsx`, nesting to 10 deep |
 | A6 | **Section collapse** — `##` clears the board, others compress to one-line dropdowns | **missing** | `set_section_collapsed` absent |
-| A7 | **Drawing** — composer plus-menu to "Create Drawing…" to canvas window (pen, text, rect, ellipse, arrow, line, colour, stroke) to thumbnail chip in composer | **missing** | Whole subsystem. cooper: `DrawWindow.tsx` + `draw/shapes.ts` |
-| A8 | **Composer plus-menu** — "Attach Files…" / "Create Drawing…" | **missing** | bard's composer has no affordance at all |
+| A7 | **Drawing** — composer plus-menu to "Create Drawing…" to canvas window to an item in the panel | **done** | Own window (`draw.html`), native Windows chrome because it is a document window rather than a summoned overlay. Select / pen / line / arrow / rect / ellipse / text, five colours, three widths, undo, redo, delete, Save and Copy and Save. `src/draw/shapes.ts` is a fresh pure model — no React, no Tauri — rather than a copy of cooper's, which is Apache-2.0 and would have entangled a paid product. Whole round trip verified on screen |
+| A8 | **Composer plus-menu** — "Attach Files…" / "Create Drawing…" | **done** | The plus sits *inside* the field, as in Copper — beside it, it stole enough width to clip the placeholder. Shared `Menu` component with the header overflow |
 | A9 | **Click thumbnail to copy image to clipboard** | **done** | The row was wrong: `copy_item` already handled images, only the click affordance was missing. Card images and attachment thumbnails now copy on click |
 | A10 | **Copy as List** — multi-select to Markdown list (`Ctrl+Shift+C`) | **verify** | Multi-select exists; list-copy path unconfirmed |
 | A11 | **Shortcuts sheet** (`Ctrl+/`) and shortcuts editor | **missing** | `set_keybinds` exists; no UI. cooper has both |
@@ -135,7 +135,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | D10 | **Settings needs its own window** | **decided, not built** | The sheet is a 380px-wide scroll inside the panel and already feels cramped at 9 settings. Handy's 62 live in a 696x609 window behind a General / History / Models / Advanced / About sidebar, and a Handy user expects that shape. Build the window before the B rows land, not after |
 | D9 | **Generate `types.ts` instead of hand-mirroring it** | **missing** | Today a Rust struct change breaks the frontend with no compile error. Handy generates bindings with `specta` + `tauri-specta`. Worth adopting before the surface triples |
 | D5 | **Real-audio verification** — the mic has never been exercised | **missing** | |
-| D6 | **Visual QA of every surface** | **in progress** | Verified: panel (light, dark, glass), overflow menu, empty state, settings sheet. Still unseen: onboarding, the dictation overlay, the section switcher, the context menu |
+| D6 | **Visual QA of every surface** | **in progress** | Verified: panel (light, dark, glass), overflow menu, empty state, settings sheet, composer menu, the drawing window and its whole round trip. Still unseen: onboarding, the dictation overlay, the section switcher, the context menu |
 | D7 | **Accessibility** — keyboard reachability, focus rings, contrast, screen reader | **missing** | |
 | D8 | **Empty / error / loading states everywhere** | **missing** | |
 
@@ -221,3 +221,24 @@ intended selection ring and search pill were never what was on screen, and the
 captures looked close enough to pass. `scripts/css-audit.mjs` now checks for
 duplicate selectors, undefined custom properties and unused classes, and
 `bun run build` fails on the first two.
+
+**2026-09-19 (later still) — drawing, the composer menu, and a driver that
+actually clicks.** A7 and A8 are done and verified end to end: plus-menu,
+canvas, three shapes in three colours, Save, and the drawing arriving in the
+panel as an item.
+
+**No synthetic click had worked all day, and every failure looked like
+something else.** `SendInput` reported success and the cursor appeared to move,
+so the blame kept landing on focus, on z-order, on WebView2. The cause was a
+PowerShell value-type trap: `$input.mi.dx = …` mutates a *copy* of the nested
+struct field, so every event went out with all fields zeroed. SendInput accepts
+that happily and returns 1. The cursor "moving" in the first test was a false
+positive — it was already at the target point from a preceding `SetCursorPos`.
+Build the inner struct as its own variable and assign it whole.
+
+Two smaller ones from the same stretch: two PowerShell scripts could not be
+chained in one session because both declared a type called `Win32` and
+`Add-Type` refuses the second, leaving its functions silently method-less; and
+the composer's plus button, placed *beside* the field as a 42px control, took
+enough width to clip the placeholder — Copper puts it inside the field, which
+is both the faithful answer and the one that fits.

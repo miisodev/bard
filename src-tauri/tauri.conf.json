@@ -27,8 +27,7 @@
         "skipTaskbar": true,
         "resizable": true,
         "visible": false,
-        "center": false,
-        "dragDropEnabled": false
+        "center": false
       },
       {
         "label": "overlay",
@@ -45,6 +44,19 @@
         "resizable": false,
         "focus": false,
         "acceptFirstMouse": true
+      },
+      {
+        "label": "draw",
+        "title": "Drawing",
+        "url": "draw.html",
+        "width": 760,
+        "height": 560,
+        "minWidth": 480,
+        "minHeight": 380,
+        "resizable": true,
+        "visible": false,
+        "center": true,
+        "skipTaskbar": false
       }
     ],
     "security": {
@@ -53,7 +65,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
+    "targets": [
+      "msi",
+      "nsis"
+    ],
     "category": "Productivity",
     "shortDescription": "Capture, dictate, ask.",
     "longDescription": "Bard is a minimal native Windows workspace that merges clipboard capture, offline voice dictation and AI answers into one keyboard-first panel.",

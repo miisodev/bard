@@ -6,6 +6,7 @@ import { api, isShortcutRecording } from "../store";
 import type { AppState, Item, ModelProgress, Section } from "../types";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
 import ItemCard from "./ItemCard";
+import Menu from "./Menu";
 import SectionSwitcher from "./SectionSwitcher";
 import SettingsSheet from "./SettingsSheet";
 
@@ -51,6 +52,7 @@ export default function Panel({
   const [showSettings, setShowSettings] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
+  const [composerMenu, setComposerMenu] = useState<{ x: number; y: number } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
@@ -62,6 +64,7 @@ export default function Panel({
   const [editingId, setEditingId] = useState<number | null>(null);
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
@@ -322,6 +325,7 @@ export default function Panel({
       void api.addItem(v);
     }
     setComposer("");
+    if (composerRef.current) composerRef.current.style.height = "auto";
     refresh();
   };
 
@@ -495,13 +499,46 @@ export default function Panel({
           </div>
         ) : null}
         <div className="composer-row">
+          <button
+            type="button"
+            className="composer-add"
+            aria-label="Attach or draw"
+            aria-haspopup="menu"
+            onClick={(e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setComposerMenu({ x: r.left, y: r.top - 8 });
+            }}
+          >
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" strokeWidth="1.3" />
+              <path d="M8 4.8 V11.2 M4.8 8 H11.2" stroke="currentColor"
+                    strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = [...(e.target.files ?? [])];
+              void addFiles(files, setToast);
+              e.target.value = "";
+            }}
+          />
           <textarea
             ref={composerRef}
             className="composer-input"
             rows={1}
-            placeholder="Add a note, type a prompt, or describe a task"
+            placeholder={`Add a note or a prompt${
+              activeSectionName ? ` (${activeSectionName.toLowerCase()})` : ""
+            }`}
             value={composer}
-            onChange={(e) => setComposer(e.target.value)}
+            onChange={(e) => {
+              setComposer(e.target.value);
+              e.target.style.height = "auto";
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -513,54 +550,50 @@ export default function Panel({
       </div>
 
       {showOverflow ? (
-        <>
-          <div className="overflow-scrim" onClick={() => setShowOverflow(false)} />
-          <div className="overflow-menu" role="menu">
-            <button
-              role="menuitemcheckbox"
-              aria-checked={onlyFavorites}
-              onClick={() => {
-                setOnlyFavorites(!onlyFavorites);
-                setShowOverflow(false);
-              }}
-            >
-              Favorites only
-              {onlyFavorites ? <span className="tick">✓</span> : null}
-            </button>
-            <button
-              role="menuitem"
-              disabled={doneCount === 0}
-              onClick={() => {
+        <Menu
+          onClose={() => setShowOverflow(false)}
+          entries={[
+            {
+              label: "Favorites only",
+              checked: onlyFavorites,
+              trailing: onlyFavorites ? "✓" : undefined,
+              onClick: () => setOnlyFavorites(!onlyFavorites),
+            },
+            {
+              label: "Clear completed",
+              disabled: doneCount === 0,
+              trailing: doneCount > 0 ? doneCount : undefined,
+              onClick: () => {
                 void api.clearCompleted().then(refresh);
-                setShowOverflow(false);
                 setToast(`Cleared ${doneCount} completed`);
-              }}
-            >
-              Clear completed
-              {doneCount > 0 ? <span className="count">{doneCount}</span> : null}
-            </button>
-            <div className="menu-sep" />
-            <button
-              role="menuitem"
-              onClick={() => {
+              },
+            },
+            {
+              label: "Export to Markdown",
+              separated: true,
+              onClick: () => {
                 void api.exportMarkdown().then((p) => setToast(p ? "Exported" : "Export failed"));
-                setShowOverflow(false);
-              }}
-            >
-              Export to Markdown
-            </button>
-            <div className="menu-sep" />
-            <button
-              role="menuitem"
-              onClick={() => {
-                setShowSettings(true);
-                setShowOverflow(false);
-              }}
-            >
-              Settings
-            </button>
-          </div>
-        </>
+              },
+            },
+            {
+              label: "Settings",
+              separated: true,
+              onClick: () => setShowSettings(true),
+            },
+          ]}
+        />
+      ) : null}
+
+      {composerMenu ? (
+        <Menu
+          anchor="point"
+          at={composerMenu}
+          onClose={() => setComposerMenu(null)}
+          entries={[
+            { label: "Attach Files…", onClick: () => fileInputRef.current?.click() },
+            { label: "Create Drawing…", onClick: () => void api.openDraw() },
+          ]}
+        />
       ) : null}
 
       {showSwitcher ? (
@@ -654,6 +687,26 @@ function copySelection(state: AppState, ids: number[], toast: (m: string) => voi
       items.map((i) => (i.kind === "text" ? `- ${i.content}` : `- [image]`)).join("\n")
     )
     .then(() => toast("Copied as list"));
+}
+
+/**
+ * Add dropped or picked files. Images become image items; text files become
+ * notes from their contents; anything else becomes a note naming the file.
+ */
+async function addFiles(files: File[], toast: (m: string) => void) {
+  if (files.length === 0) return;
+  for (const file of files) {
+    if (file.type.startsWith("image/")) {
+      const { b64, ext } = await readBlob(file);
+      await api.addImage(b64, ext);
+    } else if (file.type === "text/plain") {
+      const text = (await file.text()).trim();
+      if (text) await api.addItem(text);
+    } else {
+      await api.addItem(file.name);
+    }
+  }
+  toast(files.length === 1 ? "Added 1 file" : `Added ${files.length} files`);
 }
 
 function readBlob(file: File): Promise<{ b64: string; ext: string }> {

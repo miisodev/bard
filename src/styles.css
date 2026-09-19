@@ -397,30 +397,34 @@ body {
 
 .composer-row {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  transition: box-shadow var(--t-fast) var(--ease-out);
+}
+
+.composer-row:focus-within {
+  box-shadow: var(--focus-ring);
 }
 
 .composer-input {
   flex: 1;
-  min-height: 42px;
+  min-width: 0;
+  min-height: 26px;
   max-height: 120px;
   resize: none;
   border: none;
-  border-radius: var(--r-card);
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--border);
+  background: none;
+  box-shadow: none;
+  outline: none;
   color: var(--text);
   font-family: inherit;
   font-size: var(--fs-md);
   line-height: var(--lh-base);
-  padding: var(--sp-5) var(--sp-6);
-  outline: none;
-  transition: box-shadow var(--t-fast) var(--ease-out);
-}
-
-.composer-input:focus {
-  box-shadow: var(--focus-ring);
+  padding: 2px 0;
 }
 
 .composer-input::placeholder {
@@ -1189,20 +1193,31 @@ mark {
   border-radius: 3px;
   padding: 0 1px;
 }
-/* ---------- overflow menu ---------- */
+/* ---------- popover menu (header overflow + composer attach) ---------- */
 
-.overflow-scrim {
+.menu-sep {
+  height: 1px;
+  margin: var(--sp-3) var(--sp-5);
+  background: var(--rule);
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+.menu-scrim {
   position: fixed;
   inset: 0;
   z-index: 30;
 }
 
-.overflow-menu {
+.popover-menu {
   position: absolute;
-  top: 48px;
+  top: 52px;
   right: var(--sp-6);
   z-index: 31;
-  min-width: 194px;
+  min-width: 198px;
   padding: var(--sp-3);
   border-radius: var(--r-card);
   background: var(--surface-3);
@@ -1210,7 +1225,14 @@ mark {
   animation: menu-in var(--t-fast) var(--ease-out);
 }
 
-.overflow-menu button {
+/* Opened from the composer: anchored to a point and growing upward, so it
+   never covers the field you are about to type in. */
+.popover-menu.at-point {
+  top: auto;
+  right: auto;
+}
+
+.popover-menu button {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1227,34 +1249,52 @@ mark {
   text-align: left;
 }
 
-.overflow-menu button:hover:not(:disabled) {
+.popover-menu button:hover:not(:disabled) {
   background: var(--accent);
   color: var(--text-on-accent);
 }
 
-.overflow-menu button:disabled {
+.popover-menu button:disabled {
   color: var(--text-3);
   cursor: default;
 }
 
-.overflow-menu .tick,
-.overflow-menu .count {
+.popover-menu button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.popover-menu .trailing {
   font-size: var(--fs-sm);
   color: var(--text-3);
 }
 
-.overflow-menu button:hover:not(:disabled) .tick,
-.overflow-menu button:hover:not(:disabled) .count {
+.popover-menu button:hover:not(:disabled) .trailing {
   color: inherit;
 }
 
-.menu-sep {
-  height: 1px;
-  margin: var(--sp-3) var(--sp-5);
-  background: var(--rule);
+/* ---------- composer attach ---------- */
+
+
+.composer-add {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 26px;
+  border: none;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease-out);
 }
 
-@keyframes menu-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to   { opacity: 1; transform: none; }
+.composer-add:hover {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.composer-add:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }

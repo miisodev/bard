@@ -33,7 +33,7 @@ Add-Type @"
 using System;
 using System.Text;
 using System.Runtime.InteropServices;
-public class Win32 {
+public class BardShot {
   public delegate bool Cb(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] public static extern bool EnumWindows(Cb cb, IntPtr l);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
@@ -49,7 +49,7 @@ public class Win32 {
 }
 "@
 
-[Win32]::SetProcessDPIAware() | Out-Null
+[BardShot]::SetProcessDPIAware() | Out-Null
 
 # Finding the app's real windows is not as simple as MainWindowHandle. A Tauri
 # process owns a crowd of helpers — the single-instance window ("<id>-siw"), a
@@ -67,21 +67,21 @@ function Find-Windows($procName, $requireVisible, $minArea, $titleLike) {
   if ($owners.Count -eq 0) { return @() }
 
   $acc = New-Object System.Collections.ArrayList
-  $cb = [Win32+Cb]{
+  $cb = [BardShot+Cb]{
     param($h, $l)
     $owner = [uint32]0
-    [Win32]::GetWindowThreadProcessId($h, [ref]$owner) | Out-Null
+    [BardShot]::GetWindowThreadProcessId($h, [ref]$owner) | Out-Null
     if ($owners.ContainsKey($owner)) {
       $cls = New-Object System.Text.StringBuilder 256
-      [Win32]::GetClassNameW($h, $cls, 256) | Out-Null
+      [BardShot]::GetClassNameW($h, $cls, 256) | Out-Null
       if ($cls.ToString() -eq "Tauri Window") {
-        if ((-not $requireVisible) -or [Win32]::IsWindowVisible($h)) {
+        if ((-not $requireVisible) -or [BardShot]::IsWindowVisible($h)) {
           $sb = New-Object System.Text.StringBuilder 512
-          [Win32]::GetWindowTextW($h, $sb, 512) | Out-Null
+          [BardShot]::GetWindowTextW($h, $sb, 512) | Out-Null
           $title = $sb.ToString()
           if ((-not $titleLike) -or ($title -like $titleLike)) {
-            $r = New-Object Win32+RECT
-            [Win32]::GetWindowRect($h, [ref]$r) | Out-Null
+            $r = New-Object BardShot+RECT
+            [BardShot]::GetWindowRect($h, [ref]$r) | Out-Null
             $w = $r.Right - $r.Left; $ht = $r.Bottom - $r.Top
             if ($w * $ht -ge $minArea) {
               $null = $acc.Add([pscustomobject]@{
@@ -95,7 +95,7 @@ function Find-Windows($procName, $requireVisible, $minArea, $titleLike) {
     }
     return $true
   }
-  [Win32]::EnumWindows($cb, [IntPtr]::Zero) | Out-Null
+  [BardShot]::EnumWindows($cb, [IntPtr]::Zero) | Out-Null
   return @($acc | Sort-Object { -($_.W * $_.H) })
 }
 
@@ -104,8 +104,8 @@ if ($Show) {
   # Ask a hidden panel back on screen before looking for it.
   $any = Find-Windows $Proc $false $MinArea $Title
   if ($any.Count -gt 0) {
-    [Win32]::ShowWindow($any[0].Raw, 5) | Out-Null
-    [Win32]::SetForegroundWindow($any[0].Raw) | Out-Null
+    [BardShot]::ShowWindow($any[0].Raw, 5) | Out-Null
+    [BardShot]::SetForegroundWindow($any[0].Raw) | Out-Null
     Start-Sleep -Milliseconds 450
   }
 }
@@ -120,15 +120,15 @@ function Save-Window($h, $w, $ht, $path, $x, $y, $useScreen) {
   $bmp = New-Object System.Drawing.Bitmap($w, $ht)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   if ($useScreen) {
-    [Win32]::ShowWindow($h, 5) | Out-Null
-    [Win32]::SetForegroundWindow($h) | Out-Null
+    [BardShot]::ShowWindow($h, 5) | Out-Null
+    [BardShot]::SetForegroundWindow($h) | Out-Null
     Start-Sleep -Milliseconds 350
     $g.CopyFromScreen($x, $y, 0, 0, (New-Object System.Drawing.Size($w, $ht)))
     $ok = $true
     $g.Dispose()
   } else {
     $hdc = $g.GetHdc()
-    $ok = [Win32]::PrintWindow($h, $hdc, 2)   # PW_RENDERFULLCONTENT
+    $ok = [BardShot]::PrintWindow($h, $hdc, 2)   # PW_RENDERFULLCONTENT
     $g.ReleaseHdc($hdc); $g.Dispose()
   }
   $dir = Split-Path -Parent $path
