@@ -125,6 +125,17 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Whether the database is open.
+///
+/// Window events fire before `setup()` runs, so anything reading settings from
+/// that path has to ask first — `with_conn` unwraps, and a focus event arriving
+/// during window creation was enough to panic the whole app on launch.
+pub fn is_ready(app: &AppHandle) -> bool {
+    app.try_state::<Db>()
+        .map(|db| db.0.lock().map(|g| g.is_some()).unwrap_or(false))
+        .unwrap_or(false)
+}
+
 fn with_conn<T>(app: &AppHandle, f: impl FnOnce(&Connection) -> T) -> T {
     let db = app.state::<Db>();
     let guard = db.0.lock().unwrap();
@@ -140,6 +151,13 @@ fn with_conn_mut<T>(app: &AppHandle, f: impl FnOnce(&mut Connection) -> T) -> T 
 }
 
 pub fn get_setting(app: &AppHandle, key: &str) -> Option<String> {
+    // Before the database is open there are no settings, and saying so is
+    // correct. Panicking instead took the whole app down at launch — windows
+    // are created before setup() runs, so anything reacting to a window event
+    // can land here first, and under `panic = "abort"` it dies silently.
+    if !is_ready(app) {
+        return None;
+    }
     with_conn(app, |c| {
         c.query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| r.get(0))
             .ok()
@@ -147,6 +165,11 @@ pub fn get_setting(app: &AppHandle, key: &str) -> Option<String> {
 }
 
 pub fn set_setting(app: &AppHandle, key: &str, value: &str) {
+    // Dropping a write is better than dying; nothing writes a setting before
+    // the database exists except paths that fire during window creation.
+    if !is_ready(app) {
+        return;
+    }
     with_conn_mut(app, |c| {
         let _ = c.execute(
             "INSERT INTO settings(key, value) VALUES(?1, ?2)

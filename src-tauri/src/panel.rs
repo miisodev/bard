@@ -164,6 +164,13 @@ pub fn on_focus_change(app: &AppHandle, focused: bool) {
         return;
     }
 
+    // Focus events arrive while the window is still being created, before
+    // setup() has opened the database. Reading a setting here panics the app
+    // before it has drawn anything.
+    if !crate::db::is_ready(app) {
+        return;
+    }
+
     // Onboarding is a first-run flow, not a summoned panel: hiding it the
     // instant the window loses focus would strand a new user with nothing on
     // screen and no idea how to get it back.

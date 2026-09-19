@@ -35,10 +35,6 @@ fn def_of(m: &'static crate::catalog::CatalogModel) -> ModelDef {
     }
 }
 
-pub fn models_defs() -> Vec<ModelDef> {
-    crate::catalog::ordered().into_iter().map(def_of).collect()
-}
-
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {

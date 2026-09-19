@@ -23,6 +23,16 @@ use crate::db::Db;
 /// Passed by the autostart registration, and by nothing else.
 const AUTOSTART_FLAG: &str = "--autostart";
 
+/// Tauri resolves the app data directory from the bundle identifier, and this
+/// has to match it exactly: `%APPDATA%\<identifier>`. Opening the database
+/// here rather than in setup() is what makes every later read safe.
+fn open_database() -> Option<rusqlite::Connection> {
+    let base = std::env::var("APPDATA").ok()?;
+    let dir = std::path::Path::new(&base).join("com.miisodev.bard");
+    std::fs::create_dir_all(&dir).ok()?;
+    db::init(&dir.join("bard.db")).ok()
+}
+
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
     if args.iter().any(|a| a == "--guardian") {
@@ -51,18 +61,41 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .manage(Db(Mutex::new(None)))
+        // The database is opened here, before the builder runs, rather than in
+        // setup(). Windows declared in tauri.conf are created before setup(),
+        // so anything reacting to a window event — a focus change, the webview
+        // asking for state — could reach the database while it was still None
+        // and take the whole app down on an unwrap. Under `panic = "abort"`
+        // that is a silent exit with no window and no message.
+        .manage(Db(Mutex::new(open_database())))
         .setup(|app| {
             let handle = app.handle().clone();
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let state = db::init(&data_dir.join("bard.db"))?;
-            *app.state::<Db>().0.lock().unwrap() = Some(state);
+            // Already opened before the builder ran; this only covers the case
+            // where that failed, so the app still has a working database
+            // rather than limping on with none.
+            if app.state::<Db>().0.lock().unwrap().is_none() {
+                let state = db::init(&data_dir.join("bard.db"))?;
+                *app.state::<Db>().0.lock().unwrap() = Some(state);
+            }
             let images_dir = data_dir.join("images");
             std::fs::create_dir_all(&images_dir)?;
             app.manage(commands::ImagesDir(images_dir));
 
-            if db::get_setting(&handle, "autostart_enabled") == Some("1".into()) {
+            // Re-assert the login entry so it always points at *this* executable:
+            // an install to a new location would otherwise leave Windows
+            // launching the old path forever.
+            //
+            // Debug builds are excluded deliberately. Autostart registers
+            // whatever executable is running, so a single `tauri dev` session
+            // silently repointed the user's login entry at
+            // target\debugard.exe — a build that only works while the Vite
+            // dev server happens to be up. Development must not rewrite what
+            // the machine launches at login.
+            if !cfg!(debug_assertions)
+                && db::get_setting(&handle, "autostart_enabled") == Some("1".into())
+            {
                 let _ = handle.autolaunch().enable();
             }
 
