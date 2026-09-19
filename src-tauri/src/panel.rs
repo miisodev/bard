@@ -88,6 +88,85 @@ pub fn hide_now(app: &tauri::AppHandle) {
     restore_foreground();
 }
 
+/// Bumped on every focus change. A pending auto-hide carries the value it was
+/// scheduled with and abandons itself if anything has happened since, which is
+/// what makes a refocus — or a second blur — cancel it cleanly.
+static FOCUS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Grace period before an unfocused panel hides. Long enough to absorb the
+/// focus flicker of opening one of our own windows or a native file dialog,
+/// short enough that the panel is gone by the time you have looked away.
+const HIDE_GRACE_MS: u64 = 140;
+
+/// Does the foreground window belong to us?
+///
+/// The obvious version of this asks each of our own windows `is_focused()`,
+/// and it does not work: queried during a focus transition it answers about a
+/// window that is merely the most recently active, so a foreign window taking
+/// focus reads as "one of ours is focused" and the panel never hides. Asking
+/// the OS which process owns the foreground window has no such ambiguity, and
+/// it covers every window we might grow later without a list to maintain.
+#[cfg(windows)]
+fn foreground_is_ours() -> bool {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetForegroundWindow() -> isize;
+        fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
+    }
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd == 0 {
+            return false;
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        pid == std::process::id()
+    }
+}
+
+#[cfg(not(windows))]
+fn foreground_is_ours() -> bool {
+    false
+}
+
+/// The panel is summoned, so it dismisses itself once it is no longer what you
+/// are using — including when it never lost focus in the webview's opinion,
+/// which is why this is driven by the native window event rather than a blur
+/// listener in JS.
+pub fn on_focus_change(app: &AppHandle, focused: bool) {
+    use std::sync::atomic::Ordering;
+
+    let generation = FOCUS_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    if focused {
+        return;
+    }
+
+    // Onboarding is a first-run flow, not a summoned panel: hiding it the
+    // instant the window loses focus would strand a new user with nothing on
+    // screen and no idea how to get it back.
+    if crate::db::get_setting(app, "onboarding_completed") != Some("1".into()) {
+        return;
+    }
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(HIDE_GRACE_MS));
+        if FOCUS_GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        // Settings and the drawing canvas are ours; opening one should not
+        // yank the panel away behind it.
+        if foreground_is_ours() {
+            return;
+        }
+        // Window operations have to happen on the main thread on Windows.
+        // Called straight from this timer thread, hide() returns Ok and does
+        // nothing at all.
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || hide_now(&handle));
+    });
+}
+
 pub fn toggle_now(app: &AppHandle) {
     let Some(win) = app.get_webview_window("main") else {
         return;

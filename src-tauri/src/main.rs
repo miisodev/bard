@@ -86,11 +86,24 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "main" {
-                if let WindowEvent::CloseRequested { api, .. } = event {
+            if window.label() != "main" {
+                return;
+            }
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
                     panel::hide_now(window.app_handle());
                 }
+                // The panel is summoned, so it dismisses itself the moment it
+                // stops being the thing you are using. This lives here rather
+                // than on the webview's blur event because the webview is not
+                // told reliably when the *native* window loses activation —
+                // which is exactly the case that matters, a click into another
+                // application.
+                WindowEvent::Focused(focused) => {
+                    panel::on_focus_change(window.app_handle(), *focused);
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![

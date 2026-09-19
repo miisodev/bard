@@ -12,6 +12,13 @@
     .\scripts\shot.ps1 -Proc handy -Out shots # any other process
     .\scripts\shot.ps1 -Out g.png -Screen      # composited, for Glass
 
+  CAUTION for BEHAVIOURAL tests: -Show (and drive.ps1) bring a window up with
+  ShowWindow, which Tauri does not know about — it still believes the window is
+  hidden, so a later hide() is a no-op and auto-hide looks broken when it is
+  not. To test how the app shows and hides its panel, summon it the way the app
+  does (launch a second instance; it bounces off the single-instance lock and
+  calls panel::show_now). -Show is for capture, not for behaviour.
+
   -Screen grabs the screen region the window occupies instead of asking the
   window to draw itself. PrintWindow renders the window in isolation, so an
   acrylic or mica backdrop — which is composited from what lies *behind* the

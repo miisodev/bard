@@ -66,12 +66,13 @@ Verified against the Copper demo videos and cooper's source.
 | A9 | **Click thumbnail to copy image to clipboard** | **done** | The row was wrong: `copy_item` already handled images, only the click affordance was missing. Card images and attachment thumbnails now copy on click |
 | A10 | **Copy as List** — multi-select to Markdown list (`Ctrl+Shift+C`) | **verify** | Multi-select exists; list-copy path unconfirmed |
 | A11 | **Shortcuts sheet** (`Ctrl+/`) and shortcuts editor | **missing** | `set_keybinds` exists; no UI. cooper has both |
-| A12 | **Focus hand-back** — Esc returns focus to the previous app | **verify** | `panel.rs` mentions it; untested |
+| A12 | **Focus hand-back** — Esc returns focus to the previous app | **verify** | `panel.rs` remembers and restores the previous foreground window; still untested by hand |
 | A13 | **Right-Shift x2 toggles panel** (Left-Shift x2 captures) | **verify** | bard binds double-shift; side-specific behaviour unconfirmed |
 | A14 | **Obsidian export** — vault detection, one file per section | **missing** | cooper has all three commands |
 | A15 | **Merge notes** | **missing** | Named on Copper's own feature list |
 | A16 | **Update checker** + in-app update banner | **missing** | cooper: `update.ts`; Handy: full `update-checker/` |
 | A17 | **Sound preferences** — per-event sounds, themes, volume | **partial** | bard has one `sound_on_capture` boolean; cooper has prefs, Handy a picker + volume |
+| A24 | **Dismiss on losing focus** — the panel goes away when you move on | **done** | Driven by the native window's focus event, not a webview blur listener: the webview is not reliably told when the *native* window loses activation, which is the case that matters. A 140 ms grace absorbs focus flicker, and the panel stays put when the foreground window belongs to bard, so opening settings or the canvas does not yank it away |
 | A18 | **Empty state** — contextual, uses the active section name | **done** | Asks "What should we build in &lt;section&gt;?" over a quiet glyph, with a first-run hint about double-shift. Verified, then centred and the hint re-cut to stop it orphaning a word |
 | A19 | **No window chrome** — frameless, keyboard-dismissed | **done** | Titlebar row removed |
 | A20 | **No branding in the panel** | **done** | Wordmark removed; the header is a search pill and one overflow button |
@@ -148,7 +149,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | E3 | Auto-update channel + signed releases | **missing** |
 | E4 | miiso.dev purchase + download page | **missing** |
 | E5 | Microsoft Store packaging | **later** |
-| E6 | Licence review — cooper is Apache-2.0, Handy is its own; attribution and compliance | **open** |
+| E6 | Licence review — cooper is Apache-2.0, Handy is MIT | **clear, keep it that way** | bard ships **no code from either**. Handy was read for facts — which crates, which features, what its catalog records — and facts carry no licence. cooper was read for approach only; `shapes.ts` and `markdown.tsx` are bard's own. The markdown tokenizer *was* a verbatim copy of cooper's regex and has been rewritten as an independent scanner. Attribution attaches to code, so none is owed today — but it becomes owed the moment anything is vendored, `catalog.json` included |
 | E7 | Name/brand check against shadcn's Copper — bard must not read as a clone or a knock-off | **open** |
 
 ---
@@ -260,3 +261,34 @@ Two smaller notes from the same pass. `.keys` — the shortcut recorder's button
 unused-class list is what surfaced it, from the other direction. And a `Note`
 placed inside a `Group` renders inside the card, where it reads as a setting
 rather than as commentary; `Group` now takes a `note` that sits above the card.
+
+**2026-09-19 (night) — dismiss on blur, and credits removed.**
+
+The panel now dismisses itself when you move on. It is driven by the native
+window's focus event rather than a blur listener in the webview, because the
+webview is not reliably told when the native window loses activation — which is
+precisely the case that matters, a click into another application.
+
+Three things had to be wrong at once for this to look simple:
+
+- **`hide()` from a spawned thread silently does nothing.** Window operations
+  belong on the main thread on Windows; called from a timer thread it returns
+  `Ok` and has no effect.
+- **Asking our own windows `is_focused()` does not work.** Queried during a
+  focus transition it answers about the most recently active window, so a
+  foreign window taking focus read as "one of ours has focus" and the panel
+  stayed. Asking the OS which *process* owns the foreground window is
+  unambiguous, and covers windows we have not built yet.
+- **The test tooling was invalidating the test.** `shot.ps1 -Show` and
+  `drive.ps1` raise a window with `ShowWindow`, which Tauri knows nothing
+  about: it still believes the window is hidden, so a later `hide()` is a
+  no-op. Every "auto-hide is broken" reading came from a window shown behind
+  Tauri's back. Behavioural tests must summon the panel the way the app does.
+
+Credits are out of About. A paid product does not carry a list of the things
+it learned from in its settings, and Apple would not ship one. The licence
+position is unchanged because bard ships no code from either reference — with
+one exception now closed: the markdown tokenizer's regex was character for
+character cooper's, and cooper is Apache-2.0. It is now an independent scanner,
+which also states marker precedence explicitly and leaves an unclosed marker as
+plain text instead of swallowing the rest of the line.
