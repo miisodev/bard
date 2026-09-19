@@ -13,6 +13,16 @@ pub use model::{
     model_status, models,
 };
 
+pub fn reset_cancel() {
+    cancel_download_reset();
+}
+
+pub fn is_cancel_pending() -> bool {
+    cancel_pending()
+}
+
+use model::{cancel_download_reset, cancel_pending};
+
 #[derive(Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DictState {

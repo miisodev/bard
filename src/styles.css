@@ -1138,6 +1138,19 @@ body {
   max-width: 170px;
 }
 
+.hf-add {
+  display: flex;
+  gap: 6px;
+}
+
+.hf-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 .danger-btn {
   color: var(--danger);
   border-color: rgba(229, 72, 77, 0.3);

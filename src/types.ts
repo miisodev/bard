@@ -57,3 +57,16 @@ export interface ModelProgress {
   total: number;
   percent: number;
 }
+
+export interface HfFile {
+  path: string;
+  size: number;
+  sha256: string;
+}
+
+export interface CachedHfModel {
+  repo: string;
+  file: string;
+  size: number;
+  localPath: string;
+}

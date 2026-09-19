@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppState, ModelInfo, ModelProgress, ModelStatus } from "./types";
+import type { AppState, CachedHfModel, HfFile, ModelInfo, ModelProgress, ModelStatus } from "./types";
 
 export const api = {
   getState: () => invoke<AppState>("get_state"),
@@ -55,9 +55,30 @@ export const api = {
   deleteModel: (id: string) => invoke<void>("delete_model", { id }),
   getMicrophones: () => invoke<string[]>("get_microphones"),
   setMicrophone: (name: string) => invoke<void>("set_microphone", { name }),
+  hfCachedModels: () => invoke<CachedHfModel[]>("hf_cached_models"),
+  hfListRepo: (repo: string) => invoke<HfFile[]>("hf_list_repo", { repo }),
+  hfInstall: (repo: string, file: string, size: number, sha256: string) =>
+    invoke<unknown>("hf_install", { repo, file, size, sha256 }),
+  hfUseCached: (repo: string, file: string, localPath: string, size: number) =>
+    invoke<void>("hf_use_cached", { repo, file, localPath, size }),
+  removeCustomModel: (id: string) => invoke<void>("remove_custom_model", { id }),
   dictateStart: () => invoke<void>("dictate_start"),
   dictateStop: () => invoke<void>("dictate_stop"),
   dictateCancel: () => invoke<void>("dictate_cancel"),
 };
+
+export const DEFAULT_KEYBINDS: Record<string, string> = {
+  capture: "Ctrl+Shift+C",
+  panel: "Ctrl+Shift+Space",
+  dictate: "Ctrl+Space",
+};
+
+let shortcutRecording = false;
+export function setShortcutRecording(v: boolean) {
+  shortcutRecording = v;
+}
+export function isShortcutRecording() {
+  return shortcutRecording;
+}
 
 export type { ModelProgress };

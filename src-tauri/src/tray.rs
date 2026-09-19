@@ -55,7 +55,10 @@ pub fn create(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
                 };
                 crate::db::set_setting(app, "autostart_enabled", if next { "1" } else { "0" });
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                crate::guardian::mark_clean_exit();
+                app.exit(0);
+            }
             _ => {}
         });
 

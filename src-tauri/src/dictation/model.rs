@@ -89,8 +89,15 @@ fn find(id: &str) -> Option<&'static ModelDef> {
     MODELS.into_iter().find(|d| d.id == id)
 }
 
+fn resolve_path(app: &AppHandle, id: &str) -> Option<PathBuf> {
+    if let Some(def) = find(id) {
+        return Some(model_path(app, def));
+    }
+    crate::db::custom_model_by_id(app, id).map(|c| PathBuf::from(c.local_path))
+}
+
 pub fn models(app: &AppHandle) -> Vec<ModelInfo> {
-    MODELS
+    let mut list: Vec<ModelInfo> = MODELS
         .into_iter()
         .map(|d| ModelInfo {
             id: d.id.to_string(),
@@ -98,30 +105,60 @@ pub fn models(app: &AppHandle) -> Vec<ModelInfo> {
             size_mb: d.size_mb,
             downloaded: model_path(app, d).exists(),
         })
-        .collect()
+        .collect();
+    for c in crate::db::list_custom_models(app) {
+        list.push(ModelInfo {
+            id: c.id.clone(),
+            name: c.file.clone(),
+            size_mb: c.size_mb,
+            downloaded: PathBuf::from(&c.local_path).exists(),
+        });
+    }
+    list
 }
 
 pub fn model_ready(app: &AppHandle) -> bool {
     let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
-    let Some(def) = find(&id) else {
-        return false;
-    };
-    model_path(app, def).exists()
+    resolve_path(app, &id).map(|p| p.exists()).unwrap_or(false)
 }
 
 pub fn model_status(app: &AppHandle) -> ModelStatus {
     let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
-    let def = find(&id).unwrap_or(&MODELS[0]);
+    if let Some(def) = find(&id) {
+        return ModelStatus {
+            id: def.id.to_string(),
+            name: def.name.to_string(),
+            size_mb: def.size_mb,
+            downloaded: model_path(app, def).exists(),
+        };
+    }
+    if let Some(c) = crate::db::custom_model_by_id(app, &id) {
+        return ModelStatus {
+            id: c.id,
+            name: c.file,
+            size_mb: c.size_mb,
+            downloaded: PathBuf::from(&c.local_path).exists(),
+        };
+    }
+    let d = &MODELS[0];
     ModelStatus {
-        id: def.id.to_string(),
-        name: def.name.to_string(),
-        size_mb: def.size_mb,
-        downloaded: model_path(app, def).exists(),
+        id: d.id.to_string(),
+        name: d.name.to_string(),
+        size_mb: d.size_mb,
+        downloaded: model_path(app, d).exists(),
     }
 }
 
 pub fn cancel_download() {
     CANCEL_DOWNLOAD.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn cancel_download_reset() {
+    CANCEL_DOWNLOAD.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn cancel_pending() -> bool {
+    CANCEL_DOWNLOAD.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
@@ -243,10 +280,9 @@ pub fn start_unload_watcher(_app: AppHandle) {
 
 pub fn transcribe(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
     let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
-    let Some(def) = find(&id) else {
+    let Some(path) = resolve_path(app, &id) else {
         return Err("No voice model downloaded.".into());
     };
-    let path = model_path(app, def);
     if !path.exists() {
         return Err("Voice model not downloaded.".into());
     }

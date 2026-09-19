@@ -2,7 +2,7 @@ import { FolderOpen, Minus, Settings, Star, X } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DictationState } from "../App";
-import { api } from "../store";
+import { api, isShortcutRecording } from "../store";
 import type { AppState, Item, ModelProgress, Section } from "../types";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
 import ItemCard from "./ItemCard";
@@ -116,6 +116,7 @@ export default function Panel({
         if (e.key === "Escape") setMenu(null);
         return;
       }
+      if (isShortcutRecording()) return;
       if (showSwitcher) return;
       if (showSettings) return;
       if (typing) {

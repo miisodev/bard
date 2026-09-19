@@ -91,12 +91,63 @@ fn parse_keybind(s: &str) -> Option<Shortcut> {
             "c" => code = Some(Code::KeyC),
             "v" => code = Some(Code::KeyV),
             "a" => code = Some(Code::KeyA),
+            "b" => code = Some(Code::KeyB),
             "enter" | "return" => code = Some(Code::Enter),
             "escape" | "esc" => code = Some(Code::Escape),
+            "tab" => code = Some(Code::Tab),
+            "backspace" => code = Some(Code::Backspace),
+            "delete" | "del" => code = Some(Code::Delete),
+            "insert" => code = Some(Code::Insert),
+            "home" => code = Some(Code::Home),
+            "end" => code = Some(Code::End),
+            "pageup" => code = Some(Code::PageUp),
+            "pagedown" => code = Some(Code::PageDown),
+            "up" => code = Some(Code::ArrowUp),
+            "down" => code = Some(Code::ArrowDown),
+            "left" => code = Some(Code::ArrowLeft),
+            "right" => code = Some(Code::ArrowRight),
+            "f1" => code = Some(Code::F1),
+            "f2" => code = Some(Code::F2),
+            "f3" => code = Some(Code::F3),
+            "f4" => code = Some(Code::F4),
+            "f5" => code = Some(Code::F5),
+            "f6" => code = Some(Code::F6),
+            "f7" => code = Some(Code::F7),
+            "f8" => code = Some(Code::F8),
+            "f9" => code = Some(Code::F9),
+            "f10" => code = Some(Code::F10),
+            "f11" => code = Some(Code::F11),
+            "f12" => code = Some(Code::F12),
             _ => {}
         }
     }
     code.map(|c| Shortcut::new(Some(modifiers), c))
+}
+
+pub fn repair_keybinds(app: &AppHandle) {
+    const DEFAULTS: [(&str, &str); 3] = [
+        ("capture", "Ctrl+Shift+C"),
+        ("panel", "Ctrl+Shift+Space"),
+        ("dictate", "Ctrl+Space"),
+    ];
+    let raw = crate::db::get_setting(app, "keybinds").unwrap_or_default();
+    let mut map: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&raw).unwrap_or_default();
+    let mut changed = raw.is_empty() || raw == "{}";
+    for (key, fallback) in DEFAULTS {
+        let valid = map
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| parse_keybind(s).is_some())
+            .unwrap_or(false);
+        if !valid {
+            map.insert(key.to_string(), serde_json::json!(fallback));
+            changed = true;
+        }
+    }
+    if changed {
+        crate::db::set_setting(app, "keybinds", &serde_json::Value::Object(map).to_string());
+    }
 }
 
 pub fn register_shortcuts(app: &AppHandle) {
@@ -215,4 +266,85 @@ fn send_copy() {
     let _ = enigo.key(Key::Control, Direction::Press);
     let _ = enigo.key(Key::Unicode('c'), Direction::Click);
     let _ = enigo.key(Key::Control, Direction::Release);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri_plugin_global_shortcut::Code;
+
+    fn mods(s: &str) -> Modifiers {
+        parse_keybind(s).map(|sh| sh.mods).unwrap_or(Modifiers::empty())
+    }
+
+    fn code(s: &str) -> Option<Code> {
+        parse_keybind(s).map(|sh| sh.key)
+    }
+
+    #[test]
+    fn parses_defaults() {
+        assert_eq!(code("Ctrl+Shift+C"), Some(Code::KeyC));
+        assert!(mods("Ctrl+Shift+C").contains(Modifiers::CONTROL | Modifiers::SHIFT));
+        assert_eq!(code("Ctrl+Shift+Space"), Some(Code::Space));
+        assert_eq!(code("Ctrl+Space"), Some(Code::Space));
+        assert!(mods("Ctrl+Space").contains(Modifiers::CONTROL));
+        assert!(!mods("Ctrl+Space").contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn parses_case_and_whitespace() {
+        assert_eq!(code("ctrl+shift+c"), Some(Code::KeyC));
+        assert_eq!(code("  ctrl   +  space "), Some(Code::Space));
+        assert_eq!(code("CTRL+ALT+V"), Some(Code::KeyV));
+    }
+
+    #[test]
+    fn parses_special_keys() {
+        assert_eq!(code("Escape"), Some(Code::Escape));
+        assert_eq!(code("esc"), Some(Code::Escape));
+        assert_eq!(code("Enter"), Some(Code::Enter));
+        assert_eq!(code("Tab"), Some(Code::Tab));
+        assert_eq!(code("Backspace"), Some(Code::Backspace));
+        assert_eq!(code("Delete"), Some(Code::Delete));
+        assert_eq!(code("PageUp"), Some(Code::PageUp));
+        assert_eq!(code("Home"), Some(Code::Home));
+    }
+
+    #[test]
+    fn parses_function_keys() {
+        assert_eq!(code("F1"), Some(Code::F1));
+        assert_eq!(code("Ctrl+F5"), Some(Code::F5));
+        assert_eq!(code("f12"), Some(Code::F12));
+    }
+
+    #[test]
+    fn modifier_combos() {
+        assert!(mods("Ctrl+Alt+Shift+A").contains(
+            Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT
+        ));
+        assert!(mods("Alt+Space").contains(Modifiers::ALT));
+        assert!(mods("Super+Space").contains(Modifiers::SUPER));
+        assert_eq!(code("Super+Space"), Some(Code::Space));
+    }
+
+    #[test]
+    fn unknown_tokens_yield_none() {
+        assert!(parse_keybind("Ctrl+Banana").is_none());
+        assert!(parse_keybind("Banana").is_none());
+        assert!(parse_keybind("").is_none());
+        assert!(parse_keybind("+++").is_none());
+    }
+
+    #[test]
+    fn stress_fuzz_none_panic() {
+        let corpus = [
+            "Ctrl+Shift+C", "ctrl+shift+c", "Alt+F4", "Shift+F10", "Ctrl+Alt+Delete",
+            "Escape", "esc", "Space", "Ctrl+Space", "Ctrl+Shift+Space", "F1", "F12",
+            "PageDown", "ArrowDown", "Insert", "Home", "End", "", " ", "+++", "Ctrl+++C",
+            "ctrl+super+shift+alt+space", "Control+Option+Meta", "zzz", "#+c", "Ctrl + Shift + C",
+        ];
+        for s in corpus {
+            let _ = parse_keybind(s);
+        }
+    }
 }

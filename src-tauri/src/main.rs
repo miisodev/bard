@@ -5,6 +5,8 @@ mod commands;
 mod db;
 mod dictation;
 mod glass;
+mod guardian;
+mod hf;
 mod monitor;
 mod panel;
 mod paste;
@@ -18,8 +20,21 @@ use tauri_plugin_autostart::ManagerExt;
 use crate::db::Db;
 
 fn main() {
+    let args = std::env::args().collect::<Vec<_>>();
+    if args.iter().any(|a| a == "--guardian") {
+        guardian::run();
+        return;
+    }
+    if !args.iter().any(|a| a == "--restarted") && std::env::var("BARD_NO_GUARDIAN").is_err() {
+        if let Some(exe) = args.get(0) {
+            if exe.contains(':') || exe.contains('\\') || exe.contains('/') {
+                guardian::spawn(exe);
+            }
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            guardian::mark_clean_exit();
             panel::show_now(app);
         }))
         .plugin(tauri_plugin_autostart::init(
@@ -43,6 +58,16 @@ fn main() {
             if db::get_setting(&handle, "autostart_enabled") == Some("1".into()) {
                 let _ = handle.autolaunch().enable();
             }
+
+            let stored_keybinds = db::get_setting(&handle, "keybinds").unwrap_or_default();
+            if stored_keybinds.is_empty() || stored_keybinds == "{}" {
+                db::set_setting(
+                    &handle,
+                    "keybinds",
+                    "{\"capture\":\"Ctrl+Shift+C\",\"panel\":\"Ctrl+Shift+Space\",\"dictate\":\"Ctrl+Space\"}",
+                );
+            }
+            capture::repair_keybinds(&handle);
 
             monitor::start(handle.clone());
             capture::start(handle.clone());
@@ -115,6 +140,12 @@ fn main() {
             commands::get_sound_on_capture,
             commands::get_microphones,
             commands::set_microphone,
+            commands::hf_cached_models,
+            commands::hf_list_repo,
+            commands::hf_install,
+            commands::hf_use_cached,
+            commands::remove_custom_model,
+            commands::get_custom_models,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run bard");

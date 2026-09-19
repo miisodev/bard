@@ -44,6 +44,16 @@ pub struct Attachment {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct CustomModel {
+    pub id: String,
+    pub repo: String,
+    pub file: String,
+    pub size_mb: u64,
+    pub local_path: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AppState {
     pub sections: Vec<Section>,
     pub items: Vec<Item>,
@@ -91,7 +101,15 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
            position INTEGER NOT NULL DEFAULT 0,
            created_at INTEGER NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS idx_attachments_item ON attachments(item_id);",
+         CREATE INDEX IF NOT EXISTS idx_attachments_item ON attachments(item_id);
+         CREATE TABLE IF NOT EXISTS custom_models(
+           id TEXT PRIMARY KEY,
+           repo TEXT NOT NULL,
+           file TEXT NOT NULL,
+           size_mb INTEGER NOT NULL DEFAULT 0,
+           local_path TEXT NOT NULL,
+           created_at INTEGER NOT NULL
+         );",
     )?;
     let _ = conn.execute(
         "ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL",
@@ -395,6 +413,81 @@ pub fn clear_history(app: &AppHandle) {
     with_conn_mut(app, |c| {
         let _ = c.execute("DELETE FROM items", []);
     });
+}
+
+pub fn register_custom_model(
+    app: &AppHandle,
+    id: &str,
+    repo: &str,
+    file: &str,
+    size: u64,
+    local_path: &str,
+) {
+    with_conn_mut(app, |c| {
+        let _ = c.execute(
+            "INSERT INTO custom_models(id, repo, file, size_mb, local_path, created_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET local_path = excluded.local_path",
+            params![id, repo, file, (size / (1024 * 1024)) as i64, local_path, now_ms()],
+        );
+    });
+}
+
+pub fn custom_model_by_id(app: &AppHandle, id: &str) -> Option<CustomModel> {
+    with_conn(app, |c| {
+        c.query_row(
+            "SELECT id, repo, file, size_mb, local_path FROM custom_models WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok(CustomModel {
+                    id: r.get(0)?,
+                    repo: r.get(1)?,
+                    file: r.get(2)?,
+                    size_mb: r.get(3)?,
+                    local_path: r.get(4)?,
+                })
+            },
+        )
+        .ok()
+    })
+}
+
+pub fn list_custom_models(app: &AppHandle) -> Vec<CustomModel> {
+    with_conn(app, |c| {
+        let mut stmt = c
+            .prepare("SELECT id, repo, file, size_mb, local_path FROM custom_models ORDER BY created_at")
+            .unwrap();
+        stmt.query_map([], |r| {
+            Ok(CustomModel {
+                id: r.get(0)?,
+                repo: r.get(1)?,
+                file: r.get(2)?,
+                size_mb: r.get(3)?,
+                local_path: r.get(4)?,
+            })
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_default()
+    })
+}
+
+pub fn delete_custom_model(app: &AppHandle, id: &str) -> Option<String> {
+    let path = with_conn(app, |c| {
+        c.query_row(
+            "SELECT local_path FROM custom_models WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .ok()
+    });
+    with_conn_mut(app, |c| {
+        let _ = c.execute("DELETE FROM custom_models WHERE id = ?1", params![id]);
+    });
+    if crate::db::get_setting(app, "model_id") == Some(id.to_string()) {
+        crate::db::set_setting(app, "model_id", "");
+    }
+    path
 }
 
 pub fn get_state(app: &AppHandle) -> AppState {

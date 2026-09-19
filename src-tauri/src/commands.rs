@@ -11,6 +11,53 @@ pub fn refresh(app: &AppHandle) {
 }
 
 #[tauri::command]
+pub fn hf_cached_models() -> Vec<crate::hf::CachedHfModel> {
+    crate::hf::cached_models()
+}
+
+#[tauri::command]
+pub async fn hf_list_repo(repo: String) -> Result<Vec<crate::hf::HfFile>, String> {
+    crate::hf::list_repo_files(&repo).await
+}
+
+#[tauri::command]
+pub async fn hf_install(
+    app: AppHandle,
+    repo: String,
+    file: String,
+    size: u64,
+    sha256: String,
+) -> Result<(), String> {
+    crate::hf::install_custom_model(&app, &repo, &file, size, &sha256).await
+}
+
+#[tauri::command]
+pub fn hf_use_cached(
+    app: AppHandle,
+    repo: String,
+    file: String,
+    local_path: String,
+    size: u64,
+) -> Result<(), String> {
+    crate::hf::register_cached(&app, &repo, &file, &local_path, size)
+}
+
+#[tauri::command]
+pub fn remove_custom_model(app: AppHandle, id: String) {
+    if let Some(path) = db::delete_custom_model(&app, &id) {
+        if !path.starts_with(std::env::var("USERPROFILE").unwrap_or_default().as_str()) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    refresh(&app);
+}
+
+#[tauri::command]
+pub fn get_custom_models(app: AppHandle) -> Vec<db::CustomModel> {
+    db::list_custom_models(&app)
+}
+
+#[tauri::command]
 pub fn get_setting_str(app: AppHandle, key: String) -> String {
     db::get_setting(&app, &key).unwrap_or_default()
 }
