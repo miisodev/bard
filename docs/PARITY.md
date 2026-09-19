@@ -57,7 +57,7 @@ Verified against the Copper demo videos and cooper's source.
 | --- | --- | --- | --- |
 | A1 | **Done-state checkboxes** — hollow circle to filled check + strikethrough | **done** | `done` column, `set_done`/`clear_completed`, Space toggles the selection off its lead item. Favorites survive behind the overflow menu as a filter |
 | A2 | **Inline markdown** — bold, italic, strikethrough, code; underscore emphasis deliberately unsupported | **done** | `src/markdown.tsx`; composes with search highlighting so a hit inside emphasis still marks. All four forms verified on screen |
-| A3 | **Glass theme** — DWM acrylic, alongside System/Light/Dark | **done** | Acrylic was previously applied *always*, at an alpha opaque enough to read as a slab, under a web layer that painted over it anyway. Now it is the Glass theme only, cleared otherwise, with `data-glass` switching surfaces translucent. Verified composited: the desktop reads through the panel and the cards |
+| A3 | **Glass theme** — DWM acrylic, alongside System/Light/Dark | **removed by decision** | Built and verified — the desktop genuinely read through the panel — then cut. Copper offers it; bard does not, because a translucent panel over arbitrary desktop content cannot be made to hold contrast, and a theme that looks wrong over the wrong wallpaper is not one to sell. Themes are System / Light / Dark. `glass.rs` and `window-vibrancy` are gone with it |
 | A4 | **Light theme quality** | **done** | Rebuilt off the measured Copper values. Panel `#e6e7ea` vs Copper `#e5e6e9`, card `#f9f9fb` vs `#f8f8f8`, field `#f3f4f7` exact |
 | A5 | **Sub-branches / nesting** — `add_child`, branch style, per-item collapse | **missing** | cooper: `BranchPanel.tsx`, nesting to 10 deep |
 | A6 | **Section collapse** — `##` clears the board, others compress to one-line dropdowns | **missing** | `set_section_collapsed` absent |
@@ -145,7 +145,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | # | Item | Status |
 | --- | --- | --- |
 | E0 | **ONNX Runtime must not be pyke's prebuilt** | **resolved by removal** | `transcribe-rs` is gone, and `ort` with it, so nothing downloads pyke's prebuilt ONNX Runtime any more. The hazard was real — that build runs AVX in a static initialiser and crashes at startup on pre-Haswell CPUs — but it only ever existed because the dependency was added on a wrong premise (B5). **If an ONNX engine is ever genuinely needed, this row comes back**, and the fix is a baseline runtime via `ORT_LIB_LOCATION` |
-| E8 | **Stop downloading models from Handy's CDN** | **blocking, with a known route** | The curated models are fetched from `blob.handy.computer` — Handy's own bandwidth, for a product we charge for. Their catalog shows `blob.handy.computer` is only a *mirror*: the canonical source is Hugging Face, under the `handy-computer` org with a pinned revision per model, so `https://huggingface.co/<id>/resolve/<revision>/<file>` costs them nothing and is checksum-verifiable. **That settles the bandwidth question but not the artifact question** — these are still Handy's conversions. Converting and hosting our own under a miisodev org is the independent answer; a decision for Miiso, not for the ledger |
+| E8 | **Host our own models** | **done for whisper; conversion pipeline outstanding** | Every catalog URL now points at `ggerganov/whisper.cpp` on Hugging Face, **pinned to commit `5359861c`**, with each file's own sha256. Two of the three files were byte-identical to what the old mirror served — same size, same hash — so that mirror was only re-hosting upstream; the third was a mirror-specific Q4_1 and is now upstream's Q5_0. Nothing bard ships depends on another project's infrastructure. **Remaining:** non-whisper families need a GGUF conversion upstream does not publish, so expanding the catalog means building a conversion pipeline and hosting the output under bard's own org — real work, and it gates catalog breadth rather than shipping |
 | E9 | **A release panic is a silent death** | **open** | `panic = "abort"` means any panic exits with no window, no message and no log — exit code `0xC0000409` and nothing else. Release symbols are stripped too, so `RUST_BACKTRACE=full` yields one line and no frames. A customer's crash report would be useless. Needs a panic hook that writes a log before dying, and a decision about shipping symbols |
 | E1 | Licensing — $30 one-time key issue + offline validation | **missing** |
 | E2 | Code signing (SmartScreen) | **missing** |
@@ -169,7 +169,7 @@ someone used the app.
 | Launching sometimes did nothing, and needed a second try | The auto-hide raced the show: summoning a window produces a burst of focus changes as it takes the foreground, and one of those blurs fired the hide 140 ms later. An explicit show now marks the panel for 700 ms, and the auto-hide stands down |
 | Opening the app showed nothing | It only revealed the panel during onboarding, so every later launch appeared to do nothing. It now opens the panel unless Windows started it at login — the autostart entry passes `--autostart`, which is the only way to tell the two apart |
 | The installed app died instantly on every launch | A panic on `db.rs`'s `unwrap` — and `panic = "abort"` in the release profile turns any panic into a silent exit with no window and no message. Windows declared in `tauri.conf` are created *before* `setup()` runs, so a focus change, the webview asking for state, or the clipboard monitor could all reach the database while it was still `None`. Guarding callers one at a time did not work; the database now opens in `main()` before the builder |
-| Windows launched the wrong build at login | Autostart registers whichever executable is running, so a `tauri dev` session repointed the login entry at `target\debugard.exe` — a build that only works while Vite is up. Release builds re-assert their own path; debug builds no longer touch it |
+| Windows launched the wrong build at login | Autostart registers whichever executable is running, so a `tauri dev` session repointed the login entry at `target\debug\bard.exe` — a build that only works while Vite is up. Release builds re-assert their own path; debug builds no longer touch it |
 | The panel grew on every launch | 380 to 396 to 424 to 440 to 476, untouched. `save_geometry` and `set_size` disagree by the window frame, so each launch restored what it saved *plus* the frame and wrote the larger number back. Latent for as long as the panel existed — invisible while the window had no frame, because then the two were the same number, and exposed by turning the shadow on. Saving a different accessor did not help: both sides of the round-trip are lossy once a frame exists. The window has no frame again |
 | A smudge into a hard bottom-right corner | `.app` fills the window exactly and carried `box-shadow: 0 16px 56px`. A shadow with no transparent margin to fall into paints inside the window and is clipped square at the edge — worst at the bottom-right, where both offsets meet. The shadow is the compositor's job; the window now asks for one and the CSS does not draw its own |
 
@@ -437,3 +437,28 @@ Two process notes. The fix was reported as done before it was measured, and
 the measurement is what showed it was not. And this bug predates today — 380
 was already becoming 396 — it simply needed a bigger frame to grow fast enough
 to notice.
+
+**2026-09-19 — Glass removed, models moved to canonical upstream.**
+
+Two decisions from Miiso.
+
+**Glass is out.** It worked — verified composited, the desktop reading through
+the panel and its cards — and it is still the right call to cut. A translucent
+panel cannot hold its contrast over arbitrary desktop content, and a theme that
+looks wrong over the wrong wallpaper is not one to sell. Themes are System /
+Light / Dark. `glass.rs`, the `data-glass` axis and `window-vibrancy` are gone.
+
+**Models now come from their canonical upstream.** Every catalog URL points at
+`ggerganov/whisper.cpp`, pinned to a commit, with each file's sha256 recorded.
+Worth noting what the check found: two of the three files bard was fetching
+from the third-party mirror were **byte-identical to upstream** — same size,
+same hash — so the mirror was only re-hosting ggerganov's reference builds. The
+third was a mirror-specific Q4_1 quantisation, replaced with upstream's Q5_0.
+Range requests and the pinned revision both verified against the live endpoint
+before the switch.
+
+So the bandwidth question is closed for everything bard ships. What remains of
+E8 is narrower and honest: **non-whisper families need a GGUF conversion that
+upstream does not publish.** Handy converts them; we will not take theirs. That
+means a conversion pipeline and our own org — real work, and it gates how wide
+the catalog can get rather than whether bard can ship.

@@ -122,18 +122,13 @@ export default function App() {
   );
 }
 
-/*
-  Four choices, two axes. Glass is presented as a theme because that is how a
-  user thinks about it, but it is really "translucent" layered over whichever of
-  light/dark the OS is in — so picking it still follows the system appearance.
-*/
+/**
+ * Resolve and apply the theme. "system" follows the OS and keeps following it;
+ * `useTheme` re-runs this when the OS appearance changes.
+ */
 export function applyTheme(theme: string) {
   const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  const glass = theme === "glass";
   const resolved =
     theme === "light" || theme === "dark" ? theme : systemDark ? "dark" : "light";
-
-  const root = document.documentElement;
-  root.dataset.theme = resolved;
-  root.dataset.glass = glass ? "1" : "0";
+  document.documentElement.dataset.theme = resolved;
 }

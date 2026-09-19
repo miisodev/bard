@@ -4,19 +4,20 @@
     "bard's curated transcription models.",
     "",
     "This is data, not decoration. `architecture` is what tells the loader which",
-    "engine a model belongs to — whisper-family GGUF goes to transcribe-cpp, every",
-    "other family is a directory of ONNX files for transcribe-rs — and nothing in",
-    "a model's own files states it reliably. Adding a model means adding a row",
-    "here, not a branch in the loader.",
+    "engine a model belongs to, and nothing in a model's own files states it",
+    "reliably. Adding a model means adding a row here, not a branch in the loader.",
     "",
     "`accuracy` and `speed` are 0-100 and deliberately coarse. They exist to let",
     "someone choose without knowing what a mel spectrogram is, and they are",
     "relative to the other rows in this file, not to any benchmark.",
     "",
-    "HOSTING: the whisper URLs below still point at blob.handy.computer, which is",
-    "Handy's own CDN. That is fine for a fork and not fine for a product we sell —",
-    "see docs/PARITY.md E8. Replacing them needs verified checksums for the",
-    "replacement host, so it is a deliberate task rather than a find-and-replace."
+    "HOSTING: every URL points at the model's canonical upstream on Hugging Face,",
+    "pinned to a commit, with the file's own sha256 recorded. The whisper files are",
+    "ggerganov's reference ggml builds - the same bytes bard used to fetch from a",
+    "third-party mirror, verified identical by size and hash before the switch.",
+    "Non-whisper families need a GGUF conversion upstream does not publish; those",
+    "will be converted and hosted under bard's own org rather than taken from",
+    "another project. See docs/PARITY.md E8."
   ],
   "models": [
     {
@@ -38,9 +39,13 @@
       "recommendedRank": 1,
       "file": {
         "filename": "ggml-small.bin",
-        "url": "https://blob.handy.computer/ggml-small.bin",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
         "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
         "sizeBytes": 487601967
+      },
+      "source": {
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       }
     },
     {
@@ -61,11 +66,15 @@
       "recommended": true,
       "recommendedRank": 2,
       "file": {
-        "filename": "whisper-medium-q4_1.bin",
-        "url": "https://blob.handy.computer/whisper-medium-q4_1.bin",
-        "sha256": "79283fc1f9fe12ca3248543fbd54b73292164d8df5a16e095e2bceeaaabddf57",
-        "sizeBytes": 491784704,
-        "quant": "Q4_1"
+        "filename": "ggml-medium-q5_0.bin",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium-q5_0.bin",
+        "sha256": "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
+        "sizeBytes": 539212467,
+        "quant": "Q5_0"
+      },
+      "source": {
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       }
     },
     {
@@ -86,9 +95,13 @@
       "recommended": false,
       "file": {
         "filename": "ggml-large-v3-turbo.bin",
-        "url": "https://blob.handy.computer/ggml-large-v3-turbo.bin",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo.bin",
         "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
         "sizeBytes": 1624555275
+      },
+      "source": {
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       }
     }
   ]

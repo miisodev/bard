@@ -58,6 +58,15 @@ pub struct CatalogFile {
     pub quant: Option<String>,
 }
 
+/// Where a model came from, recorded so a catalog row can be traced back to
+/// an exact upstream commit rather than a URL that may have moved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Source {
+    pub repo: String,
+    pub revision: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogModel {
@@ -77,6 +86,8 @@ pub struct CatalogModel {
     #[serde(default)]
     pub recommended_rank: Option<u32>,
     pub file: CatalogFile,
+    #[serde(default)]
+    pub source: Option<Source>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -6,10 +6,7 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
   return (
     <Pane title="General" description="How bard behaves when you are not looking at it.">
       <Group title="Appearance">
-        <Row
-          label="Theme"
-          hint="Glass follows your system's light or dark setting and lets the desktop through."
-        >
+        <Row label="Theme" hint="System follows your Windows appearance setting.">
           <Segmented
             label="Theme"
             value={state.theme}
@@ -18,7 +15,6 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
               { value: "system", label: "System" },
               { value: "light", label: "Light" },
               { value: "dark", label: "Dark" },
-              { value: "glass", label: "Glass" },
             ]}
           />
         </Row>

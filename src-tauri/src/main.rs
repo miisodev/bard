@@ -5,7 +5,6 @@ mod catalog;
 mod commands;
 mod db;
 mod dictation;
-mod glass;
 mod guardian;
 mod hf;
 mod monitor;
@@ -90,7 +89,7 @@ fn main() {
             // Debug builds are excluded deliberately. Autostart registers
             // whatever executable is running, so a single `tauri dev` session
             // silently repointed the user's login entry at
-            // target\debugard.exe — a build that only works while the Vite
+            // target\debug\bard.exe — a build that only works while the Vite
             // dev server happens to be up. Development must not rewrite what
             // the machine launches at login.
             if !cfg!(debug_assertions)
@@ -115,7 +114,6 @@ fn main() {
 
             tray::create(app)?;
 
-            glass::apply_all(&handle, &db::get_setting(&handle, "theme").unwrap_or_default());
 
             let main = app.get_webview_window("main").unwrap();
             panel::position(&main);

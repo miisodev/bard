@@ -382,7 +382,6 @@ pub fn image_data(app: AppHandle, path: String) -> Option<String> {
 #[tauri::command]
 pub fn set_theme(app: AppHandle, theme: String) {
     db::set_setting(&app, "theme", &theme);
-    crate::glass::apply_all(&app, &theme);
     // Every window reads the theme out of app state, so without this only the
     // window that made the change would repaint — which is exactly how the
     // panel stayed light while settings went dark.
