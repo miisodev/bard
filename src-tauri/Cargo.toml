@@ -27,21 +27,23 @@ window-vibrancy = "0.6"
 cpal = "0.16"
 rubato = "0.16"
 earshot = "1.2"
-# Two engines, because no single one covers the field:
-#   transcribe-cpp  whisper-family GGUF, via ggml
-#   transcribe-rs   ONNX — Parakeet, Moonshine, Canary, SenseVoice, GigaAM
-# bard shipped with only the first, which is why a cached Qwen3/Parakeet model
-# could be installed and then refused at load with "unsupported architecture".
+# transcribe-cpp covers the whole field, and it is the only engine bard needs.
 #
-# transcribe-cpp stays on its default features. Turning them off makes
-# transcribe-cpp-sys build ggml from source, and that build does not currently
-# come up on this machine: it shortens paths through a symlink under
-# %LOCALAPPDATA%	cs that points at a per-build out/ directory, and CMake fails
-# to write into it. Switching to dynamic-backends + vulkan (the Windows
-# acceleration story, PARITY B18) needs that same from-source build, so the two
-# are one problem and neither is a prerequisite for the ONNX engine below.
+# This briefly carried transcribe-rs as well, on the belief that non-whisper
+# architectures required an ONNX engine. They do not. transcribe-cpp 0.2.3
+# ships parakeet.h and moonshine_streaming.h beside whisper.h, and every one of
+# the sixty-nine models in Handy's catalog — seventeen architectures, from
+# canary and gigaam to qwen3_asr and voxtral — is a single GGUF file loaded
+# through it. transcribe-rs is their *legacy* ONNX path, not the one in use.
+#
+# Dropping it removes a blocking shipping hazard it dragged in: ort's default
+# features download pyke's prebuilt ONNX Runtime, which runs AVX in a static
+# initialiser and crashes at startup on pre-Haswell CPUs.
+#
+# Note on features: default-features would have to stay off to reach Vulkan and
+# per-ISA CPU dispatch, but that makes transcribe-cpp-sys build ggml from
+# source, which does not currently come up on this machine (docs/BUILD.md).
 transcribe-cpp = "0.2"
-transcribe-rs = { version = "0.3.8", features = ["onnx"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli", "stream"] }
 sha2 = "0.10"
 futures-util = "0.3"

@@ -11,10 +11,8 @@ import { Button, Group, Meter, Note, Pane, Progress, Row, Tag, TextField, format
     2. models already sitting in the machine's Hugging Face cache, and
     3. any Hugging Face repo, by name.
 
-  (1) is still bard's own small hardcoded set. Handy's catalog.json — ranked
-  recommendations with accuracy and speed, language counts, streaming and
-  translation capability, size and per-quant checksums — is the shape this
-  should take; see docs/PARITY.md B1.
+  (1) comes from src-tauri/src/catalog/, which carries each model's
+  architecture — the field that decides which engine loads it.
 */
 export default function ModelsPane({
   state,
@@ -196,9 +194,9 @@ export default function ModelsPane({
 
       <Note>
         A model is registered only once it has actually loaded, so a repository that
-        looks right but cannot run is refused rather than half-installed. Whisper-family
-        GGUF models work today; Parakeet, Moonshine and Canary need a second engine that
-        is not wired up yet.
+        looks right but cannot run is refused rather than half-installed — a GGUF of an
+        architecture the engine does not know, or one converted to a layout it cannot
+        read, is turned away rather than installed and left broken.
       </Note>
     </Pane>
   );

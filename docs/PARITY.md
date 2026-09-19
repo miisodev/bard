@@ -86,11 +86,11 @@ bard exposes 9 settings; Handy exposes 62. Every row is a user-visible capabilit
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, streaming/translate badges, size, checksums | **done** | `src-tauri/src/catalog/catalog.json`, baked in at compile time so a machine that has never been online still has a list to offer. Carries `architecture`, which is what decides the engine — bard's own curation, not a copy of Handy's file. Not yet: multiple quants per model, and the catalog is still whisper-only because only whisper can be acquired (see B5) |
+| B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, streaming/translate badges, size, checksums | **done** | `src-tauri/src/catalog/catalog.json`, baked in at compile time so a machine that has never been online still has a list to offer. Carries `architecture`, which is what decides the engine — bard's own curation, not a copy of Handy's file. Not yet: multiple quants per model, and the catalog still lists only whisper — not an engine limit (see B5) but a hosting decision (E8) |
 | B2 | **Model manager UI** — downloaded vs available, search, language filter, per-model Active/Delete, progress with speed + cancel | **partial** | Now a real pane, in three groups in the order a person tries them: the curated list, models already in the machine's HF cache, then any repo by name. Still missing search, language filter, delete, and download speed |
 | B3 | **HF repo paste + one-click install** | **done** | Resume, checksum verify, cancel, load-verified registration |
 | B4 | **Discover models already on the machine** | **done** | HF cache scan with one-click Use |
-| B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, cohere) | **in progress** | `transcribe-rs` (`onnx`) is now a dependency alongside `transcribe-cpp`. The remaining work is not the crate but the **shape of a model**: `ParakeetModel::load(dir, quantization)` takes a *directory* of ONNX files, where bard treats a model as a single file path everywhere — acquisition, storage, the loader. And nothing in those files reliably states which family they are, so the loader must be told. **B5 therefore depends on B1**, which is where a model's architecture would be recorded |
+| B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, qwen3, voxtral, granite…) | **reshaped — no engine work needed** | This row was wrong, and so was the work started on it. `transcribe-cpp` 0.2.3 already covers these: it ships `parakeet.h` and `moonshine_streaming.h` beside `whisper.h`, and **all sixty-nine models in Handy's catalog — seventeen architectures — are single GGUF files loaded through it.** `transcribe-rs` is Handy's *legacy* ONNX path, not the one their catalog uses. So there is no second engine, no directory-shaped model, and no new acquisition path: supporting a family is adding catalog rows. What remains is (a) the rows, and (b) the fact that a GGUF must be one this engine can read — a third-party conversion of the same model may not load, which is what the qwen3-asr refusal actually was |
 | B6 | **Transcription history** + retention period + limit | **missing** | Handy: `managers/history.rs`, history settings pane |
 | B7 | **Post-processing via LLM** — provider, base URL, API key, model, prompt library | **missing** | Handy: `llm_client.rs` + post-processing settings. bard removed its Ask layer |
 | B8 | **VAD** — enable, backend selector (earshot/silero), smoothing | **partial** | `dictation/vad.rs` exists; no settings |
@@ -144,8 +144,8 @@ Neither reference does this; it is the reason bard is one app and not two.
 
 | # | Item | Status |
 | --- | --- | --- |
-| E0 | **ONNX Runtime must not be pyke's prebuilt** | **blocking** | Adding `transcribe-rs` pulled `ort`, whose default features download pyke's prebuilt ONNX Runtime — the exact binary Handy's manifest refuses, because it is compiled with a global `/arch:AVX2` baseline that executes BMI2/AVX **in a static initialiser** and so crashes at process start on any pre-Haswell CPU (Sandy/Ivy Bridge, older AMD). It runs here and would crash on a customer's older machine, silently and at launch. bard cannot switch this off from its own manifest: `transcribe-rs` declares `ort` with default features, and Cargo features are additive. The fix is Handy's — supply a baseline ONNX Runtime and point `ORT_LIB_LOCATION` at it at build time. **Until that is done, no installer built from this tree goes to anyone** |
-| E8 | **Stop downloading models from Handy's CDN** | **blocking** | All three curated models are fetched from `blob.handy.computer`. That is Handy's own bandwidth, and bard is a product we charge for — serving our customers' downloads off another project's infrastructure is not something to ship, regardless of licence. Replacing the URLs needs verified checksums for the new host, so it is a deliberate task rather than a find-and-replace |
+| E0 | **ONNX Runtime must not be pyke's prebuilt** | **resolved by removal** | `transcribe-rs` is gone, and `ort` with it, so nothing downloads pyke's prebuilt ONNX Runtime any more. The hazard was real — that build runs AVX in a static initialiser and crashes at startup on pre-Haswell CPUs — but it only ever existed because the dependency was added on a wrong premise (B5). **If an ONNX engine is ever genuinely needed, this row comes back**, and the fix is a baseline runtime via `ORT_LIB_LOCATION` |
+| E8 | **Stop downloading models from Handy's CDN** | **blocking, with a known route** | The curated models are fetched from `blob.handy.computer` — Handy's own bandwidth, for a product we charge for. Their catalog shows `blob.handy.computer` is only a *mirror*: the canonical source is Hugging Face, under the `handy-computer` org with a pinned revision per model, so `https://huggingface.co/<id>/resolve/<revision>/<file>` costs them nothing and is checksum-verifiable. **That settles the bandwidth question but not the artifact question** — these are still Handy's conversions. Converting and hosting our own under a miisodev org is the independent answer; a decision for Miiso, not for the ledger |
 | E9 | **A release panic is a silent death** | **open** | `panic = "abort"` means any panic exits with no window, no message and no log — exit code `0xC0000409` and nothing else. Release symbols are stripped too, so `RUST_BACKTRACE=full` yields one line and no frames. A customer's crash report would be useless. Needs a panic hook that writes a log before dying, and a decision about shipping symbols |
 | E1 | Licensing — $30 one-time key issue + offline validation | **missing** |
 | E2 | Code signing (SmartScreen) | **missing** |
@@ -380,3 +380,30 @@ curation and empty bars would read as "measured, and found wanting".
 **And one thing the catalog made impossible to keep ignoring: every curated
 model downloads from `blob.handy.computer`** — Handy's CDN. Fine for a fork,
 not fine for something we sell. Logged as **E8, blocking**.
+
+**2026-09-19 — B5 was wrong, and checking it cost less than building it.**
+
+The premise was that non-whisper architectures need an ONNX engine, so bard
+took on `transcribe-rs`. Before building the acquisition path that premise
+implied — ONNX models are directories, so storage and download would both have
+had to change — two cheap checks contradicted it:
+
+- `transcribe-cpp` 0.2.3 ships `parakeet.h` and `moonshine_streaming.h`
+  alongside `whisper.h`.
+- Every one of the **sixty-nine** models in Handy's catalog is a single GGUF,
+  across **seventeen** architectures — canary, gigaam, qwen3_asr, voxtral,
+  granite_speech, sensevoice, moss, medasr and the rest.
+
+`transcribe-rs` is their legacy ONNX path, not the one in use. So supporting a
+family is adding catalog rows, not adding an engine. The dependency is removed,
+and **E0 goes with it** — the pyke ONNX Runtime that crashes at startup on
+pre-Haswell CPUs was dragged in by a dependency bard never needed.
+
+The qwen3-asr refusal that started this has a better explanation than
+"unsupported architecture": the cached model is a *third-party* GGUF conversion
+(`unslothai/…`), and the engine reads the conversions Handy publishes. Which
+GGUF, not which architecture.
+
+Worth stating plainly, because it is the second time today: the earlier
+conclusion was recorded confidently from one failed load, and generalised into
+a plan. One contradicting check was thirty seconds of reading a header.
