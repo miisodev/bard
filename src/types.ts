@@ -22,11 +22,35 @@ export interface Attachment {
   position: number;
 }
 
+export type Architecture =
+  | "whisper"
+  | "parakeet"
+  | "moonshine"
+  | "canary"
+  | "sensevoice"
+  | "gigaam"
+  | "cohere";
+
+export interface ModelCapabilities {
+  streaming: boolean;
+  translate: boolean;
+  languageDetect: boolean;
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
+  description: string;
   sizeMb: number;
   downloaded: boolean;
+  architecture: Architecture;
+  /** 0 for a model installed from Hugging Face, which carries no curation. */
+  languages: number;
+  capabilities: ModelCapabilities;
+  /** 0-100, relative to the other catalog entries rather than a benchmark. */
+  accuracy: number;
+  speed: number;
+  recommended: boolean;
 }
 
 export interface ModelStatus {

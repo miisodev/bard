@@ -12,6 +12,9 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 use transcribe_cpp::{Model, RunOptions, Session};
 
+/// A model as the downloader needs it. Sourced from the catalog rather than
+/// declared here — see `crate::catalog`, where a model's architecture also
+/// lives, because that is what decides which engine loads it.
 pub struct ModelDef {
     pub id: &'static str,
     pub name: &'static str,
@@ -21,40 +24,35 @@ pub struct ModelDef {
     pub size_mb: u64,
 }
 
-pub const MODELS: &[ModelDef] = &[
+fn def_of(m: &'static crate::catalog::CatalogModel) -> ModelDef {
     ModelDef {
-        id: "whisper-small",
-        name: "Whisper Small",
-        filename: "ggml-small.bin",
-        url: "https://blob.handy.computer/ggml-small.bin",
-        sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
-        size_mb: 465,
-    },
-    ModelDef {
-        id: "whisper-medium",
-        name: "Whisper Medium",
-        filename: "whisper-medium-q4_1.bin",
-        url: "https://blob.handy.computer/whisper-medium-q4_1.bin",
-        sha256: "79283fc1f9fe12ca3248543fbd54b73292164d8df5a16e095e2bceeaaabddf57",
-        size_mb: 469,
-    },
-    ModelDef {
-        id: "whisper-turbo",
-        name: "Whisper Turbo",
-        filename: "ggml-large-v3-turbo.bin",
-        url: "https://blob.handy.computer/ggml-large-v3-turbo.bin",
-        sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
-        size_mb: 1549,
-    },
-];
+        id: &m.id,
+        name: &m.name,
+        filename: &m.file.filename,
+        url: &m.file.url,
+        sha256: &m.file.sha256,
+        size_mb: m.file.size_bytes / 1_048_576,
+    }
+}
+
+pub fn models_defs() -> Vec<ModelDef> {
+    crate::catalog::ordered().into_iter().map(def_of).collect()
+}
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
+    pub description: String,
     pub size_mb: u64,
     pub downloaded: bool,
+    pub architecture: crate::catalog::Architecture,
+    pub languages: u32,
+    pub capabilities: crate::catalog::Capabilities,
+    pub accuracy: u32,
+    pub speed: u32,
+    pub recommended: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -85,33 +83,55 @@ fn model_path(app: &AppHandle, def: &ModelDef) -> PathBuf {
     models_dir(app).join(def.filename)
 }
 
-fn find(id: &str) -> Option<&'static ModelDef> {
-    MODELS.into_iter().find(|d| d.id == id)
+fn find(id: &str) -> Option<ModelDef> {
+    crate::catalog::find(id).map(def_of)
 }
 
 fn resolve_path(app: &AppHandle, id: &str) -> Option<PathBuf> {
     if let Some(def) = find(id) {
-        return Some(model_path(app, def));
+        return Some(model_path(app, &def));
     }
     crate::db::custom_model_by_id(app, id).map(|c| PathBuf::from(c.local_path))
 }
 
 pub fn models(app: &AppHandle) -> Vec<ModelInfo> {
-    let mut list: Vec<ModelInfo> = MODELS
+    let mut list: Vec<ModelInfo> = crate::catalog::ordered()
         .into_iter()
-        .map(|d| ModelInfo {
-            id: d.id.to_string(),
-            name: d.name.to_string(),
-            size_mb: d.size_mb,
-            downloaded: model_path(app, d).exists(),
+        .map(|m| ModelInfo {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            description: m.description.clone(),
+            size_mb: m.file.size_bytes / 1_048_576,
+            downloaded: model_path(app, &def_of(m)).exists(),
+            architecture: m.architecture,
+            languages: m.languages,
+            capabilities: m.capabilities.clone(),
+            accuracy: m.accuracy,
+            speed: m.speed,
+            recommended: m.recommended,
         })
         .collect();
+    // A model installed from Hugging Face is not in the catalog, so it carries
+    // no curation: it is listed with what we actually know about it and nothing
+    // invented. Its architecture is whisper because that is the only family the
+    // custom-install path can currently register — see PARITY B5.
     for c in crate::db::list_custom_models(app) {
         list.push(ModelInfo {
             id: c.id.clone(),
             name: c.file.clone(),
+            description: c.repo.clone(),
             size_mb: c.size_mb,
             downloaded: PathBuf::from(&c.local_path).exists(),
+            architecture: crate::catalog::Architecture::Whisper,
+            languages: 0,
+            capabilities: crate::catalog::Capabilities {
+                streaming: false,
+                translate: false,
+                language_detect: false,
+            },
+            accuracy: 0,
+            speed: 0,
+            recommended: false,
         });
     }
     list
@@ -129,7 +149,7 @@ pub fn model_status(app: &AppHandle) -> ModelStatus {
             id: def.id.to_string(),
             name: def.name.to_string(),
             size_mb: def.size_mb,
-            downloaded: model_path(app, def).exists(),
+            downloaded: model_path(app, &def).exists(),
         };
     }
     if let Some(c) = crate::db::custom_model_by_id(app, &id) {
@@ -140,12 +160,14 @@ pub fn model_status(app: &AppHandle) -> ModelStatus {
             downloaded: PathBuf::from(&c.local_path).exists(),
         };
     }
-    let d = &MODELS[0];
+    // Nothing chosen yet: report the top recommendation, so the UI has a
+    // concrete thing to offer rather than an empty state.
+    let d = def_of(crate::catalog::ordered()[0]);
     ModelStatus {
         id: d.id.to_string(),
         name: d.name.to_string(),
         size_mb: d.size_mb,
-        downloaded: model_path(app, d).exists(),
+        downloaded: model_path(app, &d).exists(),
     }
 }
 
@@ -165,7 +187,7 @@ pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
     let Some(def) = find(id) else {
         return Err(format!("Unknown model: {id}"));
     };
-    let path = model_path(app, def);
+    let path = model_path(app, &def);
     if path.exists() {
         crate::db::set_setting(app, "model_id", def.id);
         let _ = app.emit("model-ready", ());
@@ -257,7 +279,7 @@ pub fn delete_model(app: &AppHandle, id: &str) {
     let Some(def) = find(id) else {
         return;
     };
-    let _ = fs::remove_file(&model_path(app, def));
+    let _ = fs::remove_file(&model_path(app, &def));
     *SESSION.lock().unwrap() = None;
     if crate::db::get_setting(app, "model_id") == Some(def.id.to_string()) {
         crate::db::set_setting(app, "model_id", "");

@@ -86,7 +86,7 @@ bard exposes 9 settings; Handy exposes 62. Every row is a user-visible capabilit
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, streaming/translate badges, size, multi-quant with sha256, mirror | **missing, and now load-bearing** | Handy's `catalog/catalog.json` is the exact pattern. It is no longer just presentation: an ONNX model cannot be loaded without knowing its family (parakeet / moonshine / canary / …), and the catalog is where that belongs. Do this before B5's second half |
+| B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, streaming/translate badges, size, checksums | **done** | `src-tauri/src/catalog/catalog.json`, baked in at compile time so a machine that has never been online still has a list to offer. Carries `architecture`, which is what decides the engine — bard's own curation, not a copy of Handy's file. Not yet: multiple quants per model, and the catalog is still whisper-only because only whisper can be acquired (see B5) |
 | B2 | **Model manager UI** — downloaded vs available, search, language filter, per-model Active/Delete, progress with speed + cancel | **partial** | Now a real pane, in three groups in the order a person tries them: the curated list, models already in the machine's HF cache, then any repo by name. Still missing search, language filter, delete, and download speed |
 | B3 | **HF repo paste + one-click install** | **done** | Resume, checksum verify, cancel, load-verified registration |
 | B4 | **Discover models already on the machine** | **done** | HF cache scan with one-click Use |
@@ -145,6 +145,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | # | Item | Status |
 | --- | --- | --- |
 | E0 | **ONNX Runtime must not be pyke's prebuilt** | **blocking** | Adding `transcribe-rs` pulled `ort`, whose default features download pyke's prebuilt ONNX Runtime — the exact binary Handy's manifest refuses, because it is compiled with a global `/arch:AVX2` baseline that executes BMI2/AVX **in a static initialiser** and so crashes at process start on any pre-Haswell CPU (Sandy/Ivy Bridge, older AMD). It runs here and would crash on a customer's older machine, silently and at launch. bard cannot switch this off from its own manifest: `transcribe-rs` declares `ort` with default features, and Cargo features are additive. The fix is Handy's — supply a baseline ONNX Runtime and point `ORT_LIB_LOCATION` at it at build time. **Until that is done, no installer built from this tree goes to anyone** |
+| E8 | **Stop downloading models from Handy's CDN** | **blocking** | All three curated models are fetched from `blob.handy.computer`. That is Handy's own bandwidth, and bard is a product we charge for — serving our customers' downloads off another project's infrastructure is not something to ship, regardless of licence. Replacing the URLs needs verified checksums for the new host, so it is a deliberate task rather than a find-and-replace |
 | E1 | Licensing — $30 one-time key issue + offline validation | **missing** |
 | E2 | Code signing (SmartScreen) | **missing** |
 | E3 | Auto-update channel + signed releases | **missing** |
@@ -336,3 +337,30 @@ removed from the outside. The fix is the one Handy uses: supply a baseline
 ONNX Runtime and set `ORT_LIB_LOCATION` at build time. Logged as **E0, and it
 blocks shipping** — not because it is urgent today, but because an installer
 built from this tree right now would crash for a stranger.
+
+**2026-09-19 — the catalog (B1).** `src-tauri/src/catalog/` is bard's own
+curated list, baked in at compile time: a machine that has never been online
+still has something to offer, and updating the list is shipping a build, which
+is the right cadence for entries that carry checksums.
+
+It is deliberately not a copy of Handy's `catalog.json`. The *facts* in such a
+file — sizes, checksums, what a model can do — are facts, but the curation is
+theirs, and we have just taken credits out of About on the grounds that a paid
+product does not carry a list of what it learned from. So the schema is ours
+and the rows are ours.
+
+`architecture` is the load-bearing field, and the reason this had to come
+before B5: it decides which engine loads a model, and nothing in a model's own
+files states it reliably. Adding a model is now a row in a JSON file rather
+than a branch in the loader.
+
+The Models pane reads like Handy's now — recommendation badge, description,
+accuracy and speed as coarse bars, capability tags. The bars are deliberately
+bars: a number would imply a precision these scores do not have, since they
+rank the catalog against itself rather than against any benchmark. A model
+installed from Hugging Face shows no bars at all, because it carries no
+curation and empty bars would read as "measured, and found wanting".
+
+**And one thing the catalog made impossible to keep ignoring: every curated
+model downloads from `blob.handy.computer`** — Handy's CDN. Fine for a fork,
+not fine for something we sell. Logged as **E8, blocking**.

@@ -1,0 +1,95 @@
+{
+  "catalogVersion": 1,
+  "note": [
+    "bard's curated transcription models.",
+    "",
+    "This is data, not decoration. `architecture` is what tells the loader which",
+    "engine a model belongs to — whisper-family GGUF goes to transcribe-cpp, every",
+    "other family is a directory of ONNX files for transcribe-rs — and nothing in",
+    "a model's own files states it reliably. Adding a model means adding a row",
+    "here, not a branch in the loader.",
+    "",
+    "`accuracy` and `speed` are 0-100 and deliberately coarse. They exist to let",
+    "someone choose without knowing what a mel spectrogram is, and they are",
+    "relative to the other rows in this file, not to any benchmark.",
+    "",
+    "HOSTING: the whisper URLs below still point at blob.handy.computer, which is",
+    "Handy's own CDN. That is fine for a fork and not fine for a product we sell —",
+    "see docs/PARITY.md E8. Replacing them needs verified checksums for the",
+    "replacement host, so it is a deliberate task rather than a find-and-replace."
+  ],
+  "models": [
+    {
+      "id": "whisper-small",
+      "name": "Whisper Small",
+      "description": "Reliable multilingual transcription. The sensible default.",
+      "architecture": "whisper",
+      "family": "whisper",
+      "parameters": "244M",
+      "languages": 99,
+      "capabilities": {
+        "streaming": false,
+        "translate": true,
+        "languageDetect": true
+      },
+      "accuracy": 72,
+      "speed": 58,
+      "recommended": true,
+      "recommendedRank": 1,
+      "file": {
+        "filename": "ggml-small.bin",
+        "url": "https://blob.handy.computer/ggml-small.bin",
+        "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+        "sizeBytes": 487601967
+      }
+    },
+    {
+      "id": "whisper-medium",
+      "name": "Whisper Medium",
+      "description": "More accurate on accents and noise, at some cost in speed.",
+      "architecture": "whisper",
+      "family": "whisper",
+      "parameters": "769M",
+      "languages": 99,
+      "capabilities": {
+        "streaming": false,
+        "translate": true,
+        "languageDetect": true
+      },
+      "accuracy": 84,
+      "speed": 41,
+      "recommended": true,
+      "recommendedRank": 2,
+      "file": {
+        "filename": "whisper-medium-q4_1.bin",
+        "url": "https://blob.handy.computer/whisper-medium-q4_1.bin",
+        "sha256": "79283fc1f9fe12ca3248543fbd54b73292164d8df5a16e095e2bceeaaabddf57",
+        "sizeBytes": 491784704,
+        "quant": "Q4_1"
+      }
+    },
+    {
+      "id": "whisper-turbo",
+      "name": "Whisper Turbo",
+      "description": "Highest accuracy here, and large. Best on a machine with headroom.",
+      "architecture": "whisper",
+      "family": "whisper",
+      "parameters": "809M",
+      "languages": 99,
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "languageDetect": true
+      },
+      "accuracy": 91,
+      "speed": 52,
+      "recommended": false,
+      "file": {
+        "filename": "ggml-large-v3-turbo.bin",
+        "url": "https://blob.handy.computer/ggml-large-v3-turbo.bin",
+        "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+        "sizeBytes": 1624555275
+      }
+    }
+  ]
+}

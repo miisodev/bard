@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../store";
 import type { CachedHfModel, HfFile, ModelInfo, ModelProgress } from "../../types";
 import type { PaneProps } from "../SettingsWindow";
-import { Button, Group, Note, Pane, Progress, Row, TextField, formatBytes } from "../ui";
+import { Button, Group, Meter, Note, Pane, Progress, Row, Tag, TextField, formatBytes } from "../ui";
 
 /*
   Three ways to get a model, in the order a person would try them:
@@ -52,27 +52,54 @@ export default function ModelsPane({
 
   return (
     <Pane title="Models" description="Transcription runs offline. Pick the model it runs.">
-      <Group title="Recommended">
+      <Group title="Transcription models">
         {models.map((m) => {
           const downloading = progress?.id === m.id && progress.percent < 100;
+          const active = m.id === state.modelId;
           return (
-            <div key={m.id} className="model">
-              <Row
-                label={m.name}
-                hint={m.downloaded ? "Installed" : `${m.sizeMb} MB · runs offline`}
-              >
-                {downloading ? (
-                  <Button onClick={() => void api.downloadModelCancel()}>Cancel</Button>
-                ) : !m.downloaded ? (
-                  <Button variant="primary" onClick={() => void api.downloadModel(m.id)}>
-                    Download
-                  </Button>
-                ) : m.id !== state.modelId ? (
-                  <Button onClick={() => void api.setModel(m.id).then(refresh)}>Use</Button>
-                ) : (
-                  <span className="active-tag">Active</span>
-                )}
-              </Row>
+            <div key={m.id} className={`model${active ? " active" : ""}`}>
+              <div className="model-top">
+                <div className="model-id">
+                  <div className="model-name">
+                    {m.name}
+                    {active ? <span className="active-tag">Active</span> : null}
+                    {!active && m.recommended ? <span className="rec-tag">Recommended</span> : null}
+                  </div>
+                  <div className="model-desc">{m.description}</div>
+                </div>
+                {/* Scores are curation, so a model installed from Hugging Face
+                    has none — showing empty bars would imply we had measured it
+                    and found it wanting. */}
+                {m.accuracy > 0 || m.speed > 0 ? (
+                  <div className="model-meters">
+                    <Meter label="accuracy" value={m.accuracy} />
+                    <Meter label="speed" value={m.speed} />
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="model-foot">
+                <div className="model-tags">
+                  {m.languages > 0 ? (
+                    <Tag>{m.languages === 1 ? "English only" : `${m.languages} languages`}</Tag>
+                  ) : null}
+                  {m.capabilities.streaming ? <Tag>Streaming</Tag> : null}
+                  {m.capabilities.translate ? <Tag>Translate</Tag> : null}
+                  <Tag>{m.downloaded ? "Installed" : `${m.sizeMb} MB`}</Tag>
+                </div>
+                <div className="model-actions">
+                  {downloading ? (
+                    <Button onClick={() => void api.downloadModelCancel()}>Cancel</Button>
+                  ) : !m.downloaded ? (
+                    <Button variant="primary" onClick={() => void api.downloadModel(m.id)}>
+                      Download
+                    </Button>
+                  ) : !active ? (
+                    <Button onClick={() => void api.setModel(m.id).then(refresh)}>Use</Button>
+                  ) : null}
+                </div>
+              </div>
+
               {progress?.id === m.id ? <Progress percent={progress.percent} /> : null}
             </div>
           );

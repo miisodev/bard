@@ -190,6 +190,22 @@ export function Progress({ percent }: { percent: number }) {
   );
 }
 
+/**
+ * A coarse 0-100 reading, shown as a bar rather than a number because the
+ * number would imply a precision these scores do not have. They rank the
+ * catalog against itself; they are not a benchmark.
+ */
+export function Meter({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="meter">
+      <span className="meter-label">{label}</span>
+      <span className="meter-track" role="img" aria-label={`${label}: ${value} out of 100`}>
+        <span className="meter-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      </span>
+    </div>
+  );
+}
+
 /** Reads as a capability rather than a label: "English only", "Streaming". */
 export function Tag({ children }: { children: ReactNode }) {
   return <span className="tag">{children}</span>;
