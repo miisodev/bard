@@ -714,7 +714,7 @@ function EmptyState({ section }: { section: string | null }) {
         What should we build{section ? ` in ${section}` : ""}?
       </div>
       <div className="hint">
-        Select text anywhere and tap <kbd>Shift</kbd> <kbd>Shift</kbd> to capture it.
+        Select text anywhere, then tap <kbd>Shift</kbd> <kbd>Shift</kbd>.
       </div>
     </div>
   );

@@ -57,7 +57,7 @@ Verified against the Copper demo videos and cooper's source.
 | --- | --- | --- | --- |
 | A1 | **Done-state checkboxes** — hollow circle to filled check + strikethrough | **done** | `done` column, `set_done`/`clear_completed`, Space toggles the selection off its lead item. Favorites survive behind the overflow menu as a filter |
 | A2 | **Inline markdown** — bold, italic, strikethrough, code; underscore emphasis deliberately unsupported | **done** | `src/markdown.tsx`; composes with search highlighting so a hit inside emphasis still marks. All four forms verified on screen |
-| A3 | **Glass theme** — DWM acrylic, alongside System/Light/Dark | **built, unverified** | Acrylic was previously applied *always*, at an alpha opaque enough to read as a slab, under a web layer that painted over it anyway. Now it is the Glass theme only, cleared otherwise, with `data-glass` switching surfaces translucent. Not yet looked at |
+| A3 | **Glass theme** — DWM acrylic, alongside System/Light/Dark | **done** | Acrylic was previously applied *always*, at an alpha opaque enough to read as a slab, under a web layer that painted over it anyway. Now it is the Glass theme only, cleared otherwise, with `data-glass` switching surfaces translucent. Verified composited: the desktop reads through the panel and the cards |
 | A4 | **Light theme quality** | **done** | Rebuilt off the measured Copper values. Panel `#e6e7ea` vs Copper `#e5e6e9`, card `#f9f9fb` vs `#f8f8f8`, field `#f3f4f7` exact |
 | A5 | **Sub-branches / nesting** — `add_child`, branch style, per-item collapse | **missing** | cooper: `BranchPanel.tsx`, nesting to 10 deep |
 | A6 | **Section collapse** — `##` clears the board, others compress to one-line dropdowns | **missing** | `set_section_collapsed` absent |
@@ -72,7 +72,7 @@ Verified against the Copper demo videos and cooper's source.
 | A15 | **Merge notes** | **missing** | Named on Copper's own feature list |
 | A16 | **Update checker** + in-app update banner | **missing** | cooper: `update.ts`; Handy: full `update-checker/` |
 | A17 | **Sound preferences** — per-event sounds, themes, volume | **partial** | bard has one `sound_on_capture` boolean; cooper has prefs, Handy a picker + volume |
-| A18 | **Empty state** — contextual, uses the active section name | **built, unverified** | Asks "What should we build in &lt;section&gt;?", with a first-run hint about double-shift. Not yet seen — the panel had items |
+| A18 | **Empty state** — contextual, uses the active section name | **done** | Asks "What should we build in &lt;section&gt;?" over a quiet glyph, with a first-run hint about double-shift. Verified, then centred and the hint re-cut to stop it orphaning a word |
 | A19 | **No window chrome** — frameless, keyboard-dismissed | **done** | Titlebar row removed |
 | A20 | **No branding in the panel** | **done** | Wordmark removed; the header is a search pill and one overflow button |
 | A21 | **No timestamps on cards** | **done** | The whole per-card action row went with it — actions are keyboard and context menu, as in Copper |
@@ -130,11 +130,12 @@ Neither reference does this; it is the reason bard is one app and not two.
 | --- | --- | --- | --- |
 | D1 | **Design system** — tokens, type scale, spacing, motion, both themes | **done** | `src/styles/tokens.css`: type, space, shape, motion, four themes on two axes, reduced-motion. A legacy-alias block at the end shrinks to nothing as components migrate |
 | D2 | **Motion** — panel in/out, card insert, state changes; measured, never bouncy | **partial** | Tokens and per-control transitions are in. The panel's own show/hide and list reordering still need a pass |
-| D3 | **Startup** — cold boot time, no flash, no crash | **partial** | Guardian self-heals a ~1-in-15 WebView2 startup crash. **A guardian is a patch, not a fix — find the root cause** |
+| D3 | **Startup** — cold boot time, no flash, no crash | **partial** | Guardian self-heals a ~1-in-15 WebView2 startup crash. **A guardian is a patch, not a fix — find the root cause.** It also has a side effect nobody chose: because it relaunches any death inside 20s that left no clean-exit marker, **End Task in Task Manager resurrects the app.** An app that will not stay killed is user-hostile; whatever replaces the guardian must not do this |
 | D4 | **Dictation engine** | **resolved** | Two engines, as Handy does it: `transcribe-cpp` (+ `dynamic-backends`, `vulkan` on Windows x86_64) for whisper-family GGUF, `transcribe-rs` (`onnx`) for Parakeet/Moonshine/Canary/SenseVoice/GigaAM/Cohere. No rebuild needed. Handy is **MIT**, so its approach and code are ours to use with attribution |
+| D10 | **Settings needs its own window** | **decided, not built** | The sheet is a 380px-wide scroll inside the panel and already feels cramped at 9 settings. Handy's 62 live in a 696x609 window behind a General / History / Models / Advanced / About sidebar, and a Handy user expects that shape. Build the window before the B rows land, not after |
 | D9 | **Generate `types.ts` instead of hand-mirroring it** | **missing** | Today a Rust struct change breaks the frontend with no compile error. Handy generates bindings with `specta` + `tauri-specta`. Worth adopting before the surface triples |
 | D5 | **Real-audio verification** — the mic has never been exercised | **missing** | |
-| D6 | **Visual QA of every surface** | **in progress** | Panel verified in light and dark. Settings, overlay, onboarding, empty state and Glass still unseen |
+| D6 | **Visual QA of every surface** | **in progress** | Verified: panel (light, dark, glass), overflow menu, empty state, settings sheet. Still unseen: onboarding, the dictation overlay, the section switcher, the context menu |
 | D7 | **Accessibility** — keyboard reachability, focus rings, contrast, screen reader | **missing** | |
 | D8 | **Empty / error / loading states everywhere** | **missing** | |
 
@@ -186,3 +187,37 @@ Two things worth remembering:
 - **A9 was recorded wrong.** `copy_item` had handled images all along; only the
   click affordance was missing. Rows here are claims, and they get re-checked
   against the code before being worked.
+
+**2026-09-19 (later) — verification pass, and the tooling that makes it possible.**
+Four surfaces seen for the first time: the overflow menu, the settings sheet,
+the empty state and Glass. Glass genuinely works — the desktop reads through
+the panel and its cards.
+
+The day's real lesson was that *looking* is harder than it sounds, and three
+separate things were quietly lying:
+
+- **`sed -i` breaks Vite HMR.** It replaces the file by rename rather than
+  writing in place, the watcher misses it, and Vite keeps serving the old
+  module while still printing `hmr update` for every save. Two captures were
+  of stale UI before this surfaced. Edit in place.
+- **A hidden window returns its last painted frame.** `PrintWindow` on a panel
+  the app has blur-hidden is not an error, it is yesterday's picture. Always
+  show the window first (`shot.ps1 -Show`).
+- **`MainWindowHandle` is not the panel.** A Tauri process owns a crowd of
+  helper windows — single-instance, tray, global-hotkey, IME — and Windows
+  names one of those as the main window; in a debug build the largest visible
+  one is a 1200x618 helper. The app's real windows are exactly those of class
+  `Tauri Window`.
+
+`scripts/` now carries `shot.ps1` (capture, `-Show`, `-Screen`, `-Title`),
+`drive.ps1` (click and type, refusing to click at a hidden window's zero rect)
+and `stop.ps1` (stop without the guardian resurrecting the app).
+
+**The stylesheet was quietly broken and a screenshot could not show it.** The
+block-replacement regex used while rebuilding the panel was not anchored, so
+`^\.search` matched `.search-field {` and ate its rule; five selectors ended up
+defined twice, and CSS being last-wins, the *stale* copy won each time — the
+intended selection ring and search pill were never what was on screen, and the
+captures looked close enough to pass. `scripts/css-audit.mjs` now checks for
+duplicate selectors, undefined custom properties and unused classes, and
+`bun run build` fails on the first two.

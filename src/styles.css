@@ -22,6 +22,7 @@ body {
   background: transparent;
   overflow: hidden;
   user-select: none;
+  color: var(--text);
 }
 
 ::selection {
@@ -37,10 +38,6 @@ body {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
-}
-
-body {
-  color: var(--text);
 }
 
 .app {
@@ -75,6 +72,22 @@ body {
   font-size: var(--fs-base);
 }
 
+.search-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 34px;
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-3);
+  box-shadow: inset 0 0 0 1px var(--border);
+  transition: box-shadow var(--t-fast) var(--ease-out);
+  -webkit-app-region: no-drag;
+}
+
 .search-field:focus-within {
   box-shadow: var(--focus-ring);
 }
@@ -102,18 +115,6 @@ body {
 .h-lb { left: 0; bottom: 0; width: 14px; height: 14px; cursor: nesw-resize; }
 .h-rb { right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; }
 
-.search {
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: 12.5px;
-  padding: 0 9px;
-  outline: none;
-}
 
 .search::placeholder {
   color: var(--text-3);
@@ -255,11 +256,6 @@ body {
   gap: var(--sp-4);
 }
 
-.item-card.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-  background: linear-gradient(0deg, var(--surface), var(--surface));
-}
 
 .item-body {
   min-width: 0;
@@ -302,11 +298,6 @@ body {
   transition: opacity var(--t-fast) var(--ease-out);
 }
 
-.item-card:hover .item-actions,
-.star {
-  color: var(--accent);
-  fill: var(--accent);
-}
 
 @keyframes card-in {
   from {
@@ -320,14 +311,21 @@ body {
 }
 
 .empty-state {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: var(--sp-5);
-  padding: 56px var(--sp-8);
+  padding: var(--sp-8);
+  padding-bottom: 88px;   /* optical centre: the composer occupies the foot */
   text-align: center;
   color: var(--text-2);
   animation: card-in var(--t-slow) var(--ease-out);
+}
+
+.empty-state .hint {
+  max-width: 25ch;   /* keeps the shortcut and its sentence on two tidy lines */
 }
 
 .empty-glyph {
@@ -345,13 +343,6 @@ body {
   color: var(--text);
 }
 
-.empty-state .hint {
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--text-2);
-  text-align: center;
-  max-width: 300px;
-}
 
 .empty-state .hint kbd {
   background: var(--surface-2);
@@ -436,10 +427,6 @@ body {
   color: var(--text-3);
 }
 
-.composer-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent-soft);
-}
 
 .dictate-indicator {
   display: flex;
@@ -1029,10 +1016,6 @@ body {
 
 .group-header:first-child {
   padding-top: 4px;
-}
-
-.group-header:hover {
-  color: var(--accent-text);
 }
 
 .inline-edit {
