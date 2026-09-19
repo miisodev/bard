@@ -376,7 +376,7 @@ export default function SettingsSheet({
             <div className="label">Theme</div>
           </span>
           <div className="segmented">
-            {["system", "light", "dark"].map((t) => (
+            {["system", "light", "dark", "glass"].map((t) => (
               <button
                 key={t}
                 className={state.theme === t ? "on" : ""}

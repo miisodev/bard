@@ -10,6 +10,7 @@ export interface Item {
   kind: "text" | "image";
   imagePath: string | null;
   favorite: number;
+  done: number;
   createdAt: number;
   updatedAt: number;
 }

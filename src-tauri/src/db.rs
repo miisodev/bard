@@ -29,6 +29,7 @@ pub struct Item {
     pub kind: String,
     pub image_path: Option<String>,
     pub favorite: i64,
+    pub done: i64,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -111,8 +112,14 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
            created_at INTEGER NOT NULL
          );",
     )?;
+    // Additive migrations whose errors are ignored: a duplicate-column error is
+    // the expected result on every launch after the first.
     let _ = conn.execute(
         "ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE items ADD COLUMN done INTEGER NOT NULL DEFAULT 0",
         [],
     );
     Ok(conn)
@@ -336,6 +343,27 @@ pub fn set_favorite(app: &AppHandle, id: i64, favorite: bool) {
     });
 }
 
+pub fn set_done(app: &AppHandle, id: i64, done: bool) {
+    with_conn_mut(app, |c| {
+        let _ = c.execute(
+            "UPDATE items SET done = ?1, updated_at = ?2 WHERE id = ?3",
+            params![done as i64, now_ms(), id],
+        );
+    });
+}
+
+/// Items cleared this way are gone, images and all — the caller unlinks the
+/// files first, exactly as clear_history does.
+pub fn completed_items(app: &AppHandle) -> Vec<Item> {
+    list_items(app).into_iter().filter(|i| i.done != 0).collect()
+}
+
+pub fn clear_completed(app: &AppHandle) {
+    with_conn_mut(app, |c| {
+        let _ = c.execute("DELETE FROM items WHERE done != 0", []);
+    });
+}
+
 pub fn add_note_to_image(app: &AppHandle, id: i64) -> Option<String> {
     let path = with_conn(app, |c| {
         c.query_row("SELECT image_path FROM items WHERE id = ?1", params![id], |r| r.get::<_, Option<String>>(0)).ok().flatten()
@@ -376,7 +404,8 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
     with_conn(app, |c| {
         let mut stmt = c
             .prepare(
-                "SELECT id, section_id, content, kind, image_path, favorite, created_at, updated_at
+                "SELECT id, section_id, content, kind, image_path, favorite, done,
+                        created_at, updated_at
                  FROM items ORDER BY id DESC",
             )
             .unwrap();
@@ -388,8 +417,9 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
                 kind: r.get(3)?,
                 image_path: r.get(4)?,
                 favorite: r.get(5)?,
-                created_at: r.get(6)?,
-                updated_at: r.get(7)?,
+                done: r.get(6)?,
+                created_at: r.get(7)?,
+                updated_at: r.get(8)?,
             })
         })
         .unwrap()

@@ -296,6 +296,25 @@ pub fn set_favorite(app: AppHandle, id: i64, favorite: bool) {
 }
 
 #[tauri::command]
+pub fn set_done(app: AppHandle, id: i64, done: bool) {
+    db::set_done(&app, id, done);
+    refresh(&app);
+}
+
+#[tauri::command]
+pub fn clear_completed(app: AppHandle) {
+    for item in db::completed_items(&app) {
+        if item.kind == "image" {
+            if let Some(p) = item.image_path {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+    db::clear_completed(&app);
+    refresh(&app);
+}
+
+#[tauri::command]
 pub fn clear_history(app: AppHandle) {
     for item in db::list_items(&app) {
         if item.kind == "image" {

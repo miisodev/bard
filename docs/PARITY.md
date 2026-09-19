@@ -1,0 +1,188 @@
+# bard — parity ledger
+
+The build plan. bard ships when every row below is **done** and the whole thing
+survives the two tests:
+
+> **The Copper test.** A long-time heavy user of shadcn's Copper picks up bard and
+> uses it with no caveats and no friction.
+>
+> **The Handy test.** A long-time heavy user of Handy picks up bard and uses it
+> with no caveats and no friction.
+
+And the standard above both: *would Apple ship this, and would they show it at WWDC.*
+
+## What bard is
+
+A paid ($30, one-time) native Windows app: Copper's capture/clipboard workspace and
+best-in-class offline dictation in one keyboard-first panel. Sold on miiso.dev,
+possibly the Microsoft Store later.
+
+Dictation targets Wispr Flow's *capability* (minus notetaking) but delivers it
+**fully offline on open weights**, with genuine freedom of model choice — paste a
+Hugging Face repo link, or pick up a model already on the machine — without the
+configuration sprawl that would lose a non-technical user. Handy's curated
+recommendation list is the pattern to follow.
+
+## Reference material
+
+| Source | What it is | Where |
+| --- | --- | --- |
+| **shadcn's Copper** | **The target.** Mac app, closed source | `~/Downloads/Cooper/*.mp4` (3 demos), shadcn.com/copper |
+| `cooper/` | TouchMyBar/cooper — Apache-2.0 open-source Copper recreation, v0.3.75. Code reference, *not* the target | fork of `TouchMyBar/cooper` |
+| `Handy/` | Handy — dictation app, forked for reference. Also installed on this machine | `OneDrive/Desktop/Handy/handy.exe` |
+| `bard/` | us | `miisodev/bard` |
+
+**cooper is a means, Copper is the end.** Where cooper deviates from Copper, Copper wins.
+
+## Where we actually stand
+
+Measured 2026-09-19, first session with vision on the project.
+
+| | bard | cooper | Handy |
+| --- | --- | --- | --- |
+| Source LOC | 6,274 | 6,393 | 43,952 |
+| Tauri commands | 52 | 40 | 53 |
+| User-facing settings | **9** | ~15 | **62** |
+
+bard is roughly *one* of its two references in size while owing the surface of both.
+The v0.1.0 build is a working skeleton with both halves sketched — not a parity build.
+
+---
+
+## A. Copper parity — the capture/clipboard half
+
+Verified against the Copper demo videos and cooper's source.
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| A1 | **Done-state checkboxes** — hollow circle to filled check + strikethrough | **done** | `done` column, `set_done`/`clear_completed`, Space toggles the selection off its lead item. Favorites survive behind the overflow menu as a filter |
+| A2 | **Inline markdown** — bold, italic, strikethrough, code; underscore emphasis deliberately unsupported | **done** | `src/markdown.tsx`; composes with search highlighting so a hit inside emphasis still marks. All four forms verified on screen |
+| A3 | **Glass theme** — DWM acrylic, alongside System/Light/Dark | **built, unverified** | Acrylic was previously applied *always*, at an alpha opaque enough to read as a slab, under a web layer that painted over it anyway. Now it is the Glass theme only, cleared otherwise, with `data-glass` switching surfaces translucent. Not yet looked at |
+| A4 | **Light theme quality** | **done** | Rebuilt off the measured Copper values. Panel `#e6e7ea` vs Copper `#e5e6e9`, card `#f9f9fb` vs `#f8f8f8`, field `#f3f4f7` exact |
+| A5 | **Sub-branches / nesting** — `add_child`, branch style, per-item collapse | **missing** | cooper: `BranchPanel.tsx`, nesting to 10 deep |
+| A6 | **Section collapse** — `##` clears the board, others compress to one-line dropdowns | **missing** | `set_section_collapsed` absent |
+| A7 | **Drawing** — composer plus-menu to "Create Drawing…" to canvas window (pen, text, rect, ellipse, arrow, line, colour, stroke) to thumbnail chip in composer | **missing** | Whole subsystem. cooper: `DrawWindow.tsx` + `draw/shapes.ts` |
+| A8 | **Composer plus-menu** — "Attach Files…" / "Create Drawing…" | **missing** | bard's composer has no affordance at all |
+| A9 | **Click thumbnail to copy image to clipboard** | **done** | The row was wrong: `copy_item` already handled images, only the click affordance was missing. Card images and attachment thumbnails now copy on click |
+| A10 | **Copy as List** — multi-select to Markdown list (`Ctrl+Shift+C`) | **verify** | Multi-select exists; list-copy path unconfirmed |
+| A11 | **Shortcuts sheet** (`Ctrl+/`) and shortcuts editor | **missing** | `set_keybinds` exists; no UI. cooper has both |
+| A12 | **Focus hand-back** — Esc returns focus to the previous app | **verify** | `panel.rs` mentions it; untested |
+| A13 | **Right-Shift x2 toggles panel** (Left-Shift x2 captures) | **verify** | bard binds double-shift; side-specific behaviour unconfirmed |
+| A14 | **Obsidian export** — vault detection, one file per section | **missing** | cooper has all three commands |
+| A15 | **Merge notes** | **missing** | Named on Copper's own feature list |
+| A16 | **Update checker** + in-app update banner | **missing** | cooper: `update.ts`; Handy: full `update-checker/` |
+| A17 | **Sound preferences** — per-event sounds, themes, volume | **partial** | bard has one `sound_on_capture` boolean; cooper has prefs, Handy a picker + volume |
+| A18 | **Empty state** — contextual, uses the active section name | **built, unverified** | Asks "What should we build in &lt;section&gt;?", with a first-run hint about double-shift. Not yet seen — the panel had items |
+| A19 | **No window chrome** — frameless, keyboard-dismissed | **done** | Titlebar row removed |
+| A20 | **No branding in the panel** | **done** | Wordmark removed; the header is a search pill and one overflow button |
+| A21 | **No timestamps on cards** | **done** | The whole per-card action row went with it — actions are keyboard and context menu, as in Copper |
+| A22 | **Section header style** — small-caps letterspaced label + hairline rule | **done** | |
+| A23 | **Composer copy** — "Add a note, type a prompt, or describe a task" | **done** | `#`/`##` still work; the placeholder no longer teaches syntax |
+
+## B. Handy parity — the dictation half
+
+bard exposes 9 settings; Handy exposes 62. Every row is a user-visible capability.
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, streaming/translate badges, size, multi-quant with sha256, mirror | **missing** | Handy's `catalog/catalog.json` is the exact pattern. bard hardcodes tiers |
+| B2 | **Model manager UI** — downloaded vs available, search, language filter, per-model Active/Delete, progress with speed + cancel | **partial** | bard has HF browse/install; no curated catalog UI |
+| B3 | **HF repo paste + one-click install** | **done** | Resume, checksum verify, cancel, load-verified registration |
+| B4 | **Discover models already on the machine** | **done** | HF cache scan with one-click Use |
+| B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, cohere) | **known fix** | Not an engine limit — a **missing dependency**. Handy runs two engines side by side: `transcribe-cpp` for whisper-family GGUF and `transcribe-rs 0.3.8 + features=["onnx"]` for everything else. bard has only the first. Add the second |
+| B6 | **Transcription history** + retention period + limit | **missing** | Handy: `managers/history.rs`, history settings pane |
+| B7 | **Post-processing via LLM** — provider, base URL, API key, model, prompt library | **missing** | Handy: `llm_client.rs` + post-processing settings. bard removed its Ask layer |
+| B8 | **VAD** — enable, backend selector (earshot/silero), smoothing | **partial** | `dictation/vad.rs` exists; no settings |
+| B9 | **Paste method / clipboard handling / paste delay / reliable paste** | **partial** | `paste.rs` is 47 LOC; Handy has per-OS `paste_tx/` + 5 settings |
+| B10 | **Auto-submit** (+ key) | **missing** | |
+| B11 | **Append trailing space** | **missing** | |
+| B12 | **Custom words / vocabulary** + correction threshold | **missing** | |
+| B13 | **Filler-word removal** + custom filler list | **partial** | Filler cleanup exists; not configurable |
+| B14 | **Translate to English** / language selector | **missing** | |
+| B15 | **Mute while recording** / output device / volume | **missing** | |
+| B16 | **Always-on microphone**, channel selector | **missing** | |
+| B17 | **Model unload timeout** | **partial** | Fixed 5-minute idle unload; not configurable |
+| B18 | **Hardware acceleration** — GPU backend + runtime CPU-ISA dispatch, and a selector | **known fix** | bard links plain `transcribe-cpp = "0.2"`. On Windows x86_64 Handy links it with `features = ["dynamic-backends", "vulkan"]`: a **Vulkan GPU backend** plus per-ISA CPU modules scored at runtime. That is the 1–4x-realtime fix. (ONNX Runtime stays CPU-only on Windows on purpose — DirectML pulled a prebuilt with an AVX2 static initialiser that crashes pre-Haswell CPUs) |
+| B19 | **Recording overlay** — position, style, on/off | **partial** | Overlay exists; unverified by eye, no settings |
+| B20 | **Shortcut activation mode** (hold vs toggle) + hold threshold | **missing** | |
+| B21 | **Audio feedback** — start/stop sounds, theme, volume | **partial** | Capture sound only |
+| B22 | **Start hidden / show tray icon / autostart** | **partial** | Autostart done; others missing |
+| B23 | **Debug pane** — log level, live log viewer, paths, keyboard diagnostic | **missing** | |
+| B24 | **What's new on update** | **missing** | |
+| B25 | **i18n** — app language | **missing** | Handy ships a full i18n layer. *Scope call needed* |
+
+## C. Cohesion — where bard earns its own existence
+
+Neither reference does this; it is the reason bard is one app and not two.
+
+| # | Item | Status |
+| --- | --- | --- |
+| C1 | Dictation lands in the panel when open, pastes into the focused app when closed | **verify** |
+| C2 | Dictate directly into the composer (voice to note) | **missing** |
+| C3 | Dictate into an existing card (voice to edit / append) | **missing** |
+| C4 | One coherent shortcut map across both halves, no collisions | **missing** |
+| C5 | One settings surface where dictation and clipboard read as one product | **missing** |
+| C6 | One onboarding covering both halves | **partial** |
+
+## D. Apple-standard polish
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| D1 | **Design system** — tokens, type scale, spacing, motion, both themes | **done** | `src/styles/tokens.css`: type, space, shape, motion, four themes on two axes, reduced-motion. A legacy-alias block at the end shrinks to nothing as components migrate |
+| D2 | **Motion** — panel in/out, card insert, state changes; measured, never bouncy | **partial** | Tokens and per-control transitions are in. The panel's own show/hide and list reordering still need a pass |
+| D3 | **Startup** — cold boot time, no flash, no crash | **partial** | Guardian self-heals a ~1-in-15 WebView2 startup crash. **A guardian is a patch, not a fix — find the root cause** |
+| D4 | **Dictation engine** | **resolved** | Two engines, as Handy does it: `transcribe-cpp` (+ `dynamic-backends`, `vulkan` on Windows x86_64) for whisper-family GGUF, `transcribe-rs` (`onnx`) for Parakeet/Moonshine/Canary/SenseVoice/GigaAM/Cohere. No rebuild needed. Handy is **MIT**, so its approach and code are ours to use with attribution |
+| D9 | **Generate `types.ts` instead of hand-mirroring it** | **missing** | Today a Rust struct change breaks the frontend with no compile error. Handy generates bindings with `specta` + `tauri-specta`. Worth adopting before the surface triples |
+| D5 | **Real-audio verification** — the mic has never been exercised | **missing** | |
+| D6 | **Visual QA of every surface** | **in progress** | Panel verified in light and dark. Settings, overlay, onboarding, empty state and Glass still unseen |
+| D7 | **Accessibility** — keyboard reachability, focus rings, contrast, screen reader | **missing** | |
+| D8 | **Empty / error / loading states everywhere** | **missing** | |
+
+## E. Ship
+
+| # | Item | Status |
+| --- | --- | --- |
+| E1 | Licensing — $30 one-time key issue + offline validation | **missing** |
+| E2 | Code signing (SmartScreen) | **missing** |
+| E3 | Auto-update channel + signed releases | **missing** |
+| E4 | miiso.dev purchase + download page | **missing** |
+| E5 | Microsoft Store packaging | **later** |
+| E6 | Licence review — cooper is Apache-2.0, Handy is its own; attribution and compliance | **open** |
+| E7 | Name/brand check against shadcn's Copper — bard must not read as a clone or a knock-off | **open** |
+
+---
+
+## Status vocabulary
+
+**done** verified working · **partial** exists, incomplete · **missing** not built ·
+**verify** may exist, unconfirmed · **off** built but wrong against the target ·
+**regression** built in a way that actively breaks a reference behaviour ·
+**blocked** needs a decision or an upstream fix · **open** decision not yet made
+
+## Working rules
+
+1. **Nothing is done until it has been looked at.** Capture the window
+   (`scripts/shot.ps1`) and inspect it. v0.1.0 shipped unseen; that does not happen again.
+2. **Copper over cooper** wherever they disagree.
+3. **No feature creep.** Every row here traces to Copper, Handy, or cohesion.
+4. **A workaround is logged as a workaround**, never as a fix (see D3).
+
+---
+
+## Log
+
+**2026-09-19 — design system and the Copper shell.** Ledger opened. Built
+`tokens.css` and rebuilt the panel against it: done-state checkboxes, inline
+markdown, no window chrome, no wordmark, no timestamps, Copper's section headers
+and composer copy, an overflow menu for what the removed buttons carried, and
+Glass promoted from an always-on backdrop to a real theme.
+
+Two things worth remembering:
+
+- **`font-synthesis: none` silently disabled italics.** Segoe UI Variable ships
+  no italic face, so `*emphasis*` rendered upright with no warning anywhere —
+  invisible to a typecheck and to a colour measurement, and only caught by
+  reading the rendered text. Now `font-synthesis: style`.
+- **A9 was recorded wrong.** `copy_item` had handled images all along; only the
+  click affordance was missing. Rows here are claims, and they get re-checked
+  against the code before being worked.

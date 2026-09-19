@@ -100,6 +100,8 @@ fn main() {
             commands::add_image,
             commands::delete_item,
             commands::set_favorite,
+            commands::set_done,
+            commands::clear_completed,
             commands::clear_history,
             commands::copy_text,
             commands::copy_item,

@@ -1,4 +1,4 @@
-import { FolderOpen, Minus, Settings, Star, X } from "lucide-react";
+import { MoreHorizontal, Search } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DictationState } from "../App";
@@ -50,6 +50,7 @@ export default function Panel({
   const [composer, setComposer] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
+  const [showOverflow, setShowOverflow] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
@@ -117,6 +118,10 @@ export default function Panel({
         return;
       }
       if (isShortcutRecording()) return;
+      if (showOverflow) {
+        if (e.key === "Escape") setShowOverflow(false);
+        return;
+      }
       if (showSwitcher) return;
       if (showSettings) return;
       if (typing) {
@@ -180,12 +185,13 @@ export default function Panel({
           break;
         }
         case " ": {
+          // Space marks done, as in Copper. Toggling the whole selection off
+          // the lead item's state keeps a mixed selection from splitting.
           if (sel.length > 0) {
             e.preventDefault();
-            for (const id of sel) {
-              const item = state.items.find((i) => i.id === id);
-              if (item) void api.setFavorite(id, !item.favorite);
-            }
+            const lead = state.items.find((i) => i.id === sel[0]);
+            const next = lead ? lead.done === 0 : true;
+            for (const id of sel) void api.setDone(id, next);
             refresh();
           }
           break;
@@ -200,7 +206,17 @@ export default function Panel({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state, query, onlyFavorites, selectedIds, anchorId, menu, showSwitcher, showSettings]);
+  }, [
+    state,
+    query,
+    onlyFavorites,
+    selectedIds,
+    anchorId,
+    menu,
+    showSwitcher,
+    showSettings,
+    showOverflow,
+  ]);
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -375,42 +391,34 @@ export default function Panel({
   };
 
   const grouped = groupBySection(state, query, onlyFavorites);
+  const activeSectionName =
+    state.sections.find((s) => s.id === state.activeSectionId)?.name ?? null;
+  const doneCount = state.items.filter((i) => i.done !== 0).length;
 
   return (
     <>
+      {/* No wordmark and no window controls: the panel is dismissed from the
+          keyboard, and its chrome is a search field and one overflow button. */}
       <header className="header" onMouseDown={onDrag}>
-        <span className="wordmark">
-          b<span className="dot">a</span>rd
-        </span>
-        <input
-          ref={searchRef}
-          className="search"
-          placeholder="Search clipboard…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        <div className="search-field">
+          <Search size={14} strokeWidth={2} aria-hidden="true" />
+          <input
+            ref={searchRef}
+            className="search"
+            placeholder="Search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
         <button
-          className={`icon-btn${onlyFavorites ? " active" : ""}`}
-          title="Favorites only"
-          onClick={() => setOnlyFavorites(!onlyFavorites)}
+          className={`icon-btn${showOverflow ? " active" : ""}`}
+          aria-label="More"
+          aria-haspopup="menu"
+          aria-expanded={showOverflow}
+          onClick={() => setShowOverflow((v) => !v)}
         >
-          <Star size={15} strokeWidth={1.8} />
+          <MoreHorizontal size={16} strokeWidth={2} />
         </button>
-        <button className="icon-btn" title="Settings" onClick={() => setShowSettings(true)}>
-          <Settings size={15} strokeWidth={1.8} />
-        </button>
-        <span className="win-controls">
-          <button className="icon-btn win-btn" title="Minimize" onClick={() => void api.minimizePanel()}>
-            <Minus size={15} strokeWidth={1.8} />
-          </button>
-          <button
-            className="icon-btn win-btn close"
-            title="Close (hides to tray)"
-            onClick={() => void api.hidePanel()}
-          >
-            <X size={15} strokeWidth={1.8} />
-          </button>
-        </span>
       </header>
 
       <div className="resize-layer">
@@ -421,7 +429,7 @@ export default function Panel({
 
       <div className="timeline">
         {state.items.length === 0 ? (
-          <EmptyState />
+          <EmptyState section={activeSectionName} />
         ) : grouped.length === 0 ? (
           <div className="empty-state">
             <div className="title">No matches</div>
@@ -430,18 +438,26 @@ export default function Panel({
         ) : (
           grouped.map((group) => (
             <div key={group.section ? `s${group.section.id}` : "inbox"}>
-              <div
-                className="group-header"
-                style={{ cursor: "pointer" }}
+              {/* A letterspaced label and a hairline reaching the edge — the
+                  count and the folder glyph were noise on a list you already
+                  see in full. */}
+              <button
+                type="button"
+                className={`group-header${
+                  (group.section ? group.section.id : null) === state.activeSectionId
+                    ? " active"
+                    : ""
+                }`}
                 onClick={() => {
                   void api.setActiveSection(group.section ? group.section.id : null);
                   refresh();
                 }}
               >
-                <FolderOpen size={12} strokeWidth={1.8} />
-                <span>{group.section ? group.section.name : "Inbox"}</span>
-                <span className="group-count">{group.items.length}</span>
-              </div>
+                <span className="group-name">
+                  {group.section ? group.section.name : "Inbox"}
+                </span>
+                <span className="group-rule" aria-hidden="true" />
+              </button>
               {group.items.map((it) => (
                 <ItemCard
                   key={it.id}
@@ -452,9 +468,9 @@ export default function Panel({
                   search={query}
                   onClick={(e) => onItemClick(it, e)}
                   onContextMenu={(e) => onContextMenu(it, e)}
-                  onCopy={() => copySelection(state, [it.id], setToast)}
-                  onFavorite={() => {
-                    void api.setFavorite(it.id, !it.favorite).then(refresh);
+                  onCopyImage={() => copySelection(state, [it.id], setToast)}
+                  onToggleDone={() => {
+                    void api.setDone(it.id, it.done === 0).then(refresh);
                   }}
                   onDelete={() => {
                     void api.deleteItem(it.id).then(() => {
@@ -483,7 +499,7 @@ export default function Panel({
             ref={composerRef}
             className="composer-input"
             rows={1}
-            placeholder="Type a note, or # Section name — Enter to add"
+            placeholder="Add a note, type a prompt, or describe a task"
             value={composer}
             onChange={(e) => setComposer(e.target.value)}
             onKeyDown={(e) => {
@@ -495,6 +511,57 @@ export default function Panel({
           />
         </div>
       </div>
+
+      {showOverflow ? (
+        <>
+          <div className="overflow-scrim" onClick={() => setShowOverflow(false)} />
+          <div className="overflow-menu" role="menu">
+            <button
+              role="menuitemcheckbox"
+              aria-checked={onlyFavorites}
+              onClick={() => {
+                setOnlyFavorites(!onlyFavorites);
+                setShowOverflow(false);
+              }}
+            >
+              Favorites only
+              {onlyFavorites ? <span className="tick">✓</span> : null}
+            </button>
+            <button
+              role="menuitem"
+              disabled={doneCount === 0}
+              onClick={() => {
+                void api.clearCompleted().then(refresh);
+                setShowOverflow(false);
+                setToast(`Cleared ${doneCount} completed`);
+              }}
+            >
+              Clear completed
+              {doneCount > 0 ? <span className="count">{doneCount}</span> : null}
+            </button>
+            <div className="menu-sep" />
+            <button
+              role="menuitem"
+              onClick={() => {
+                void api.exportMarkdown().then((p) => setToast(p ? "Exported" : "Export failed"));
+                setShowOverflow(false);
+              }}
+            >
+              Export to Markdown
+            </button>
+            <div className="menu-sep" />
+            <button
+              role="menuitem"
+              onClick={() => {
+                setShowSettings(true);
+                setShowOverflow(false);
+              }}
+            >
+              Settings
+            </button>
+          </div>
+        </>
+      ) : null}
 
       {showSwitcher ? (
         <SectionSwitcher
@@ -627,13 +694,27 @@ function playPop() {
   }
 }
 
-function EmptyState() {
+/*
+  The empty state asks about the section you are actually in — "What should we
+  build in ui?" rather than a generic nothing-here. It is the one place the app
+  addresses you, so it stays a question, and the hint under it exists only
+  because a first-run user cannot know about double-shift yet.
+*/
+function EmptyState({ section }: { section: string | null }) {
   return (
     <div className="empty-state">
-      <div className="title">Nothing captured yet</div>
+      <svg className="empty-glyph" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9.25" fill="none" strokeWidth="1.5" />
+        <path d="M8.6 14.2a4.2 4.2 0 0 0 6.8 0" fill="none" strokeWidth="1.5"
+              strokeLinecap="round" />
+        <circle cx="9.2" cy="10" r="1" stroke="none" />
+        <circle cx="14.8" cy="10" r="1" stroke="none" />
+      </svg>
+      <div className="title">
+        What should we build{section ? ` in ${section}` : ""}?
+      </div>
       <div className="hint">
-        Copy anything, anywhere — it lands here. Or tap <kbd>Shift</kbd>{" "}
-        <kbd>Shift</kbd> to capture a selection without copying it.
+        Select text anywhere and tap <kbd>Shift</kbd> <kbd>Shift</kbd> to capture it.
       </div>
     </div>
   );

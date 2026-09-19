@@ -1,8 +1,16 @@
-import { Copy, Star, Trash2 } from "lucide-react";
-import { Fragment, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { renderInline } from "../markdown";
 import { api } from "../store";
 import type { Attachment, Item } from "../types";
 
+/*
+  A card is a checkbox and its text. That is the whole of it.
+
+  Copper puts no timestamp, no action row and no branding on a card: everything
+  a card can do is reachable from the keyboard or the context menu, which keeps
+  the list scannable at a glance and stops the chrome competing with the content.
+  Resist adding affordances here — the empty space is the design.
+*/
 export default function ItemCard({
   item,
   attachments,
@@ -11,8 +19,8 @@ export default function ItemCard({
   search,
   onClick,
   onContextMenu,
-  onCopy,
-  onFavorite,
+  onToggleDone,
+  onCopyImage,
   onDelete,
   onEdit,
   onEditDone,
@@ -24,8 +32,8 @@ export default function ItemCard({
   search: string;
   onClick: (e: ReactMouseEvent) => void;
   onContextMenu: (e: ReactMouseEvent) => void;
-  onCopy: () => void;
-  onFavorite: () => void;
+  onToggleDone: () => void;
+  onCopyImage: () => void;
   onDelete: () => void;
   onEdit: () => void;
   onEditDone: () => void;
@@ -33,6 +41,8 @@ export default function ItemCard({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [draft, setDraft] = useState(item.content);
   const [thumbUrls, setThumbUrls] = useState<Map<number, string>>(new Map());
+
+  const done = item.done !== 0;
 
   useEffect(() => {
     if (item.kind !== "image" || !item.imagePath) return;
@@ -62,127 +72,91 @@ export default function ItemCard({
 
   return (
     <div
-      className={`item-card${selected ? " selected" : ""}`}
+      className={`item-card${selected ? " selected" : ""}${done ? " done" : ""}`}
       data-item-id={item.id}
       data-item-kind={item.kind}
       onClick={onClick}
       onContextMenu={onContextMenu}
     >
-      {item.kind === "image" && imageUrl ? (
-        <img src={imageUrl} alt="" />
-      ) : editing && item.kind === "text" ? (
-        <textarea
-          className="inline-edit"
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              commitEdit();
-            }
-            if (e.key === "Escape") onEditDone();
-          }}
-          onBlur={commitEdit}
-        />
-      ) : (
-        <div className="item-body" onDoubleClick={item.kind === "text" ? onEdit : undefined}>
-          <RichText text={item.content} search={search} />
-        </div>
-      )}
-      {attachments.length > 0 ? (
-        <div className="thumb-row">
-          {attachments.map((a) => {
-            const url = thumbUrls.get(a.id);
-            return (
-              <span key={a.id} className="thumb">
-                {url ? <img src={url} alt="" onClick={onCopy} /> : null}
-                <button
-                  className="thumb-x"
-                  onClick={(e) => {
+      <button
+        type="button"
+        className="check"
+        role="checkbox"
+        aria-checked={done}
+        aria-label={done ? "Mark as not done" : "Mark as done"}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleDone();
+        }}
+      >
+        {done ? (
+          <svg viewBox="0 0 18 18" aria-hidden="true">
+            <circle cx="9" cy="9" r="9" />
+            <path d="M5 9.2l2.6 2.6L13 6.6" fill="none" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 18 18" aria-hidden="true">
+            <circle cx="9" cy="9" r="8.25" fill="none" strokeWidth="1.5" />
+          </svg>
+        )}
+      </button>
+
+      <div className="item-main">
+        {item.kind === "image" && imageUrl ? (
+          // Clicking the image copies it back to the clipboard, as Copper does.
+          <img src={imageUrl} alt="" className="item-image" onClick={(e) => {
+            e.stopPropagation();
+            onCopyImage();
+          }} />
+        ) : editing && item.kind === "text" ? (
+          <textarea
+            className="inline-edit"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                commitEdit();
+              }
+              if (e.key === "Escape") onEditDone();
+            }}
+            onBlur={commitEdit}
+          />
+        ) : (
+          <div className="item-body" onDoubleClick={item.kind === "text" ? onEdit : undefined}>
+            {renderInline(item.content, search)}
+          </div>
+        )}
+
+        {attachments.length > 0 ? (
+          <div className="thumb-row">
+            {attachments.map((a) => {
+              const url = thumbUrls.get(a.id);
+              return (
+                <span key={a.id} className="thumb">
+                  {url ? <img src={url} alt="" onClick={(e) => {
                     e.stopPropagation();
-                    void api.detachAttachment(a.id);
-                  }}
-                >
-                  ×
-                </button>
-              </span>
-            );
-          })}
-        </div>
-      ) : null}
-      <div className="row">
-        <span className="item-meta">{formatTime(item.createdAt)}</span>
-        <span className="item-actions">
-          <button
-            className={`mini-btn${item.favorite ? " on" : ""}`}
-            title="Favorite (Space)"
-            onClick={(e) => {
-              e.stopPropagation();
-              onFavorite();
-            }}
-          >
-            <Star size={13} strokeWidth={1.8} className={item.favorite ? "star" : undefined} />
-          </button>
-          <button
-            className="mini-btn"
-            title="Copy (Enter)"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCopy();
-            }}
-          >
-            <Copy size={13} strokeWidth={1.8} />
-          </button>
-          <button
-            className="mini-btn danger"
-            title="Delete (Del)"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            <Trash2 size={13} strokeWidth={1.8} />
-          </button>
-        </span>
+                    onCopyImage();
+                  }} /> : null}
+                  <button
+                    type="button"
+                    className="thumb-x"
+                    aria-label="Remove attachment"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void api.detachAttachment(a.id);
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     </div>
-  );
-}
-
-function formatTime(ms: number): string {
-  const d = new Date(ms);
-  const now = new Date();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  if (d.toDateString() === now.toDateString()) return `${hh}:${mm}`;
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${hh}:${mm}`;
-  return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
-function RichText({ text, search }: { text: string; search: string }) {
-  if (!search) return <>{text}</>;
-  const lower = text.toLowerCase();
-  const q = search.toLowerCase();
-  const parts: { hit: boolean; text: string }[] = [];
-  let i = 0;
-  for (;;) {
-    const j = lower.indexOf(q, i);
-    if (j < 0) {
-      parts.push({ hit: false, text: text.slice(i) });
-      break;
-    }
-    if (j > i) parts.push({ hit: false, text: text.slice(i, j) });
-    parts.push({ hit: true, text: text.slice(j, j + q.length) });
-    i = j + q.length;
-  }
-  return (
-    <>
-      {parts.map((p, k) =>
-        p.hit ? <mark key={k}>{p.text}</mark> : <Fragment key={k}>{p.text}</Fragment>
-      )}
-    </>
   );
 }

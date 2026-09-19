@@ -13,6 +13,8 @@ export const api = {
     invoke<void>("update_item", { id, content }),
   setFavorite: (id: number, favorite: boolean) =>
     invoke<void>("set_favorite", { id, favorite }),
+  setDone: (id: number, done: boolean) => invoke<void>("set_done", { id, done }),
+  clearCompleted: () => invoke<void>("clear_completed"),
   clearHistory: () => invoke<void>("clear_history"),
   copyText: (text: string) => invoke<unknown>("copy_text", { text }),
   copyItem: (id: number) => invoke<unknown>("copy_item", { id }),
