@@ -44,7 +44,19 @@ fn apply_saved_geometry(app: &tauri::AppHandle, win: &tauri::WebviewWindow) -> b
     if !visible {
         return false;
     }
-    let _ = win.set_size(tauri::PhysicalSize::new(w.max(340) as u32, h.max(420) as u32));
+    // Clamped at both ends: a stored size is data from a previous run, and a
+    // run that got it wrong should not be able to hand this one a window
+    // bigger than the screen.
+    let (max_w, max_h) = app
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| (m.size().width as i64, m.size().height as i64))
+        .fold((1280, 1440), |acc, s| (acc.0.max(s.0), acc.1.max(s.1)));
+    let _ = win.set_size(tauri::PhysicalSize::new(
+        w.clamp(340, max_w) as u32,
+        h.clamp(420, max_h) as u32,
+    ));
     let _ = win.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
     true
 }
@@ -53,7 +65,14 @@ fn save_geometry(app: &tauri::AppHandle, win: &tauri::WebviewWindow) {
     let Ok(pos) = win.outer_position() else {
         return;
     };
-    let Ok(size) = win.outer_size() else {
+    // Saving and restoring a size is only safe while the window has no frame.
+    // With one, `set_size` and the size accessors disagree by the frame, so a
+    // launch restores what it saved *plus* the frame and saves the larger
+    // number back: 380 to 396 to 424 to 440 to 476, with nobody touching it.
+    // `shadow: false` keeps the two equal. If the panel ever gains a real
+    // drop shadow it must come from a transparent margin inside the window
+    // (see docs/PARITY.md D2) rather than from a frame, or this returns.
+    let Ok(size) = win.inner_size() else {
         return;
     };
     let geo = serde_json::json!({

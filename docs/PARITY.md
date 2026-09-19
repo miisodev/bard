@@ -130,7 +130,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
 | D1 | **Design system** — tokens, type scale, spacing, motion, both themes | **done** | `src/styles/tokens.css`: type, space, shape, motion, four themes on two axes, reduced-motion. A legacy-alias block at the end shrinks to nothing as components migrate |
-| D2 | **Motion** — panel in/out, card insert, state changes; measured, never bouncy | **partial** | Tokens and per-control transitions are in. The panel's own show/hide and list reordering still need a pass |
+| D2 | **Motion and depth** — panel in/out, card insert, state changes; measured, never bouncy | **partial** | Tokens and per-control transitions are in. The panel's own show/hide and list reordering still need a pass. **The panel also has no drop shadow**, and cannot simply be given one: a window-frame shadow makes save/restore of the window size non-idempotent and the panel grows every launch. A real shadow has to be drawn by the web layer into a transparent margin *inside* the window, which means the app no longer fills its own window — a deliberate change to layout, positioning and the resize handles |
 | D3 | **Startup** — cold boot time, no flash, no crash | **partial** | Guardian self-heals a ~1-in-15 WebView2 startup crash. **A guardian is a patch, not a fix — find the root cause.** It also has a side effect nobody chose: because it relaunches any death inside 20s that left no clean-exit marker, **End Task in Task Manager resurrects the app.** An app that will not stay killed is user-hostile; whatever replaces the guardian must not do this |
 | D4 | **Dictation engine** | **resolved** | Two engines, as Handy does it: `transcribe-cpp` (+ `dynamic-backends`, `vulkan` on Windows x86_64) for whisper-family GGUF, `transcribe-rs` (`onnx`) for Parakeet/Moonshine/Canary/SenseVoice/GigaAM/Cohere. No rebuild needed. Handy is **MIT**, so its approach and code are ours to use with attribution |
 | D10 | **Settings has its own window** | **done** | 760x620, native chrome, sidebar: General / Capture / Dictation / Models / Shortcuts / Data / About. `src/settings/ui.tsx` carries the primitives — Pane, Group, Row, Toggle, Segmented, Select, Button, TextField, Note, Progress — so a new setting is a line of markup rather than a design decision taken again. The old sheet is deleted |
@@ -170,6 +170,7 @@ someone used the app.
 | Opening the app showed nothing | It only revealed the panel during onboarding, so every later launch appeared to do nothing. It now opens the panel unless Windows started it at login — the autostart entry passes `--autostart`, which is the only way to tell the two apart |
 | The installed app died instantly on every launch | A panic on `db.rs`'s `unwrap` — and `panic = "abort"` in the release profile turns any panic into a silent exit with no window and no message. Windows declared in `tauri.conf` are created *before* `setup()` runs, so a focus change, the webview asking for state, or the clipboard monitor could all reach the database while it was still `None`. Guarding callers one at a time did not work; the database now opens in `main()` before the builder |
 | Windows launched the wrong build at login | Autostart registers whichever executable is running, so a `tauri dev` session repointed the login entry at `target\debugard.exe` — a build that only works while Vite is up. Release builds re-assert their own path; debug builds no longer touch it |
+| The panel grew on every launch | 380 to 396 to 424 to 440 to 476, untouched. `save_geometry` and `set_size` disagree by the window frame, so each launch restored what it saved *plus* the frame and wrote the larger number back. Latent for as long as the panel existed — invisible while the window had no frame, because then the two were the same number, and exposed by turning the shadow on. Saving a different accessor did not help: both sides of the round-trip are lossy once a frame exists. The window has no frame again |
 | A smudge into a hard bottom-right corner | `.app` fills the window exactly and carried `box-shadow: 0 16px 56px`. A shadow with no transparent margin to fall into paints inside the window and is clipped square at the edge — worst at the bottom-right, where both offsets meet. The shadow is the compositor's job; the window now asks for one and the CSS does not draw its own |
 
 ## Status vocabulary
@@ -407,3 +408,32 @@ GGUF, not which architecture.
 Worth stating plainly, because it is the second time today: the earlier
 conclusion was recorded confidently from one failed load, and generalised into
 a plan. One contradicting check was thirty seconds of reading a header.
+
+**2026-09-19 — the panel was growing, and the first fix for it was wrong.**
+
+380 to 396 to 424 to 440 to 476, with nobody touching it. `save_geometry` and
+`set_size` disagree by the window frame, so each launch restored what it had
+saved *plus* the frame and wrote the larger number back.
+
+The first attempt — save `inner_size()` instead of `outer_size()` — was
+reasoning rather than measurement, and it did not work: the panel still grew,
+and the stored value still tracked the outer rect. Both sides of that
+round-trip are lossy once a frame exists, so changing which accessor is read
+cannot fix it.
+
+The frame was mine. It arrived with `shadow: true`, added while fixing the
+bottom-right corner — but the corner fix was *removing the CSS box-shadow*
+that the window edge was clipping square. The compositor shadow was extra, and
+it was the part that broke geometry. Off again: four cold launches, 380x620
+every time, all four corners clean.
+
+**Cost of the trade, recorded in D2:** the panel now has no drop shadow at all.
+Giving it one means drawing it in the web layer into a transparent margin
+inside the window — which means `.app` stops filling its own window, and
+layout, positioning and the resize handles all have to account for that. Not a
+setting to flip.
+
+Two process notes. The fix was reported as done before it was measured, and
+the measurement is what showed it was not. And this bug predates today — 380
+was already becoming 396 — it simply needed a bigger frame to grow fast enough
+to notice.
