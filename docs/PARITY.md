@@ -86,11 +86,11 @@ bard exposes 9 settings; Handy exposes 62. Every row is a user-visible capabilit
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, streaming/translate badges, size, multi-quant with sha256, mirror | **missing** | Handy's `catalog/catalog.json` is the exact pattern. bard hardcodes tiers |
+| B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, streaming/translate badges, size, multi-quant with sha256, mirror | **missing, and now load-bearing** | Handy's `catalog/catalog.json` is the exact pattern. It is no longer just presentation: an ONNX model cannot be loaded without knowing its family (parakeet / moonshine / canary / …), and the catalog is where that belongs. Do this before B5's second half |
 | B2 | **Model manager UI** — downloaded vs available, search, language filter, per-model Active/Delete, progress with speed + cancel | **partial** | Now a real pane, in three groups in the order a person tries them: the curated list, models already in the machine's HF cache, then any repo by name. Still missing search, language filter, delete, and download speed |
 | B3 | **HF repo paste + one-click install** | **done** | Resume, checksum verify, cancel, load-verified registration |
 | B4 | **Discover models already on the machine** | **done** | HF cache scan with one-click Use |
-| B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, cohere) | **known fix** | Not an engine limit — a **missing dependency**. Handy runs two engines side by side: `transcribe-cpp` for whisper-family GGUF and `transcribe-rs 0.3.8 + features=["onnx"]` for everything else. bard has only the first. Add the second |
+| B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, cohere) | **in progress** | `transcribe-rs` (`onnx`) is now a dependency alongside `transcribe-cpp`. The remaining work is not the crate but the **shape of a model**: `ParakeetModel::load(dir, quantization)` takes a *directory* of ONNX files, where bard treats a model as a single file path everywhere — acquisition, storage, the loader. And nothing in those files reliably states which family they are, so the loader must be told. **B5 therefore depends on B1**, which is where a model's architecture would be recorded |
 | B6 | **Transcription history** + retention period + limit | **missing** | Handy: `managers/history.rs`, history settings pane |
 | B7 | **Post-processing via LLM** — provider, base URL, API key, model, prompt library | **missing** | Handy: `llm_client.rs` + post-processing settings. bard removed its Ask layer |
 | B8 | **VAD** — enable, backend selector (earshot/silero), smoothing | **partial** | `dictation/vad.rs` exists; no settings |
@@ -103,7 +103,7 @@ bard exposes 9 settings; Handy exposes 62. Every row is a user-visible capabilit
 | B15 | **Mute while recording** / output device / volume | **missing** | |
 | B16 | **Always-on microphone**, channel selector | **missing** | |
 | B17 | **Model unload timeout** | **partial** | Fixed 5-minute idle unload; not configurable |
-| B18 | **Hardware acceleration** — GPU backend + runtime CPU-ISA dispatch, and a selector | **known fix** | bard links plain `transcribe-cpp = "0.2"`. On Windows x86_64 Handy links it with `features = ["dynamic-backends", "vulkan"]`: a **Vulkan GPU backend** plus per-ISA CPU modules scored at runtime. That is the 1–4x-realtime fix. (ONNX Runtime stays CPU-only on Windows on purpose — DirectML pulled a prebuilt with an AVX2 static initialiser that crashes pre-Haswell CPUs) |
+| B18 | **Hardware acceleration** — GPU backend + runtime CPU-ISA dispatch, and a selector | **blocked on the build** | The change itself is one line: on Windows x86_64, `transcribe-cpp` with `features = ["dynamic-backends", "vulkan"]` — a Vulkan GPU backend plus per-ISA CPU modules scored at runtime. But any non-default feature set makes `transcribe-cpp-sys` compile ggml from source, and that build does not come up on this machine: it shortens paths through a symlink under `%LOCALAPPDATA%	cs` pointing at a per-build `out/` directory, and CMake cannot write into it (`os error 267`, then `Unable to open check cache file for write`). CMake also is not on PATH — see `docs/BUILD.md`. Solve the from-source build first; it is the gate for the whole acceleration story. (ONNX Runtime stays CPU-only on Windows on purpose — DirectML pulled a prebuilt with an AVX2 static initialiser that crashes pre-Haswell CPUs) |
 | B19 | **Recording overlay** — position, style, on/off | **partial** | Overlay exists; unverified by eye, no settings |
 | B20 | **Shortcut activation mode** (hold vs toggle) + hold threshold | **missing** | |
 | B21 | **Audio feedback** — start/stop sounds, theme, volume | **partial** | Capture sound only |
@@ -144,6 +144,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 
 | # | Item | Status |
 | --- | --- | --- |
+| E0 | **ONNX Runtime must not be pyke's prebuilt** | **blocking** | Adding `transcribe-rs` pulled `ort`, whose default features download pyke's prebuilt ONNX Runtime — the exact binary Handy's manifest refuses, because it is compiled with a global `/arch:AVX2` baseline that executes BMI2/AVX **in a static initialiser** and so crashes at process start on any pre-Haswell CPU (Sandy/Ivy Bridge, older AMD). It runs here and would crash on a customer's older machine, silently and at launch. bard cannot switch this off from its own manifest: `transcribe-rs` declares `ort` with default features, and Cargo features are additive. The fix is Handy's — supply a baseline ONNX Runtime and point `ORT_LIB_LOCATION` at it at build time. **Until that is done, no installer built from this tree goes to anyone** |
 | E1 | Licensing — $30 one-time key issue + offline validation | **missing** |
 | E2 | Code signing (SmartScreen) | **missing** |
 | E3 | Auto-update channel + signed releases | **missing** |
@@ -292,3 +293,46 @@ one exception now closed: the markdown tokenizer's regex was character for
 character cooper's, and cooper is Apache-2.0. It is now an independent scanner,
 which also states marker precedence explicitly and leaves an unclosed marker as
 plain text instead of swallowing the rest of the line.
+
+**2026-09-19 (late) — the second engine, and what it actually costs.**
+
+`transcribe-rs` with the `onnx` feature is now a dependency beside
+`transcribe-cpp`. That was the easy half, and the hard half turns out not to be
+the crate at all:
+
+- **An ONNX model is a directory, not a file.** `ParakeetModel::load(dir,
+  quantization)` wants a folder of encoder/decoder/tokenizer files. bard treats
+  a model as a single path in acquisition, in storage, and in the loader.
+- **Nothing in those files says which family they belong to**, so the loader
+  has to be told. That makes the curated catalog (B1) load-bearing rather than
+  decorative: it is where a model's architecture is recorded. **B5 depends on
+  B1**, which was not obvious from the outside.
+
+**B18 is blocked, and it is a build problem rather than a code one.** Any
+non-default feature set on `transcribe-cpp` makes `transcribe-cpp-sys` compile
+ggml from source, and that build does not come up here. Two obstacles, both now
+in `docs/BUILD.md`: CMake is installed but on nobody's PATH, and the crate
+shortens paths through a symlink under `%LOCALAPPDATA%	cs` whose target
+directory CMake cannot write into. The acceleration story — Vulkan, per-ISA CPU
+dispatch, the selector — all sits behind that one build.
+
+**2026-09-19 — `transcribe-rs` builds, and brings a shipping hazard with it.**
+The crate compiles into bard and the app still starts, so the ONNX path is
+open. But `ort`'s default features downloaded pyke's prebuilt ONNX Runtime —
+`DirectML.dll` now sits beside the binary as a symlink into
+`%LOCALAPPDATA%\ort.pyke.io\dfbin\…`.
+
+That is precisely the binary Handy's manifest refuses, and its reasoning
+applies to us exactly: the prebuilt is compiled with a global `/arch:AVX2`
+baseline and runs BMI2/AVX **in a static initialiser**, so it crashes at
+process start on any pre-Haswell CPU. It works on this machine and would fail
+at launch on a customer's older one — the worst shape a bug can have in a paid
+product, because nothing here will ever show it.
+
+bard cannot disable it from its own manifest. `transcribe-rs` declares
+`ort = { version = "=2.0.0-rc.12", optional = true }` with default features
+left on, and Cargo features are additive, so `download-binaries` cannot be
+removed from the outside. The fix is the one Handy uses: supply a baseline
+ONNX Runtime and set `ORT_LIB_LOCATION` at build time. Logged as **E0, and it
+blocks shipping** — not because it is urgent today, but because an installer
+built from this tree right now would crash for a stranger.
