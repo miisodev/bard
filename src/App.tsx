@@ -146,7 +146,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Panel state={state} modelProgress={modelProgress} dictation={dictation} onState={setState} />
+      <Panel state={state} dictation={dictation} onState={setState} />
     </div>
   );
 }

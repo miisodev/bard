@@ -364,21 +364,6 @@ body {
   background: transparent;
 }
 
-.context-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  border-radius: 999px;
-  font-size: 11px;
-  padding: 3px 9px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 .context-chip button {
   border: none;
   background: transparent;
@@ -461,35 +446,10 @@ body {
   }
 }
 
-.attach-btn {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text-2);
-  cursor: pointer;
-}
-
 .attach-btn.active {
   color: var(--accent);
   background: var(--accent-soft);
   border-color: var(--accent);
-}
-
-.send-btn {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: white;
-  cursor: pointer;
-  transition: background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
 }
 
 .send-btn:hover {
@@ -604,21 +564,6 @@ body {
   color: var(--text);
 }
 
-.sheet-close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-}
-
-.section-title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-3);
-  margin: 0;
-}
-
 .setting-row {
   display: flex;
   align-items: center;
@@ -635,23 +580,6 @@ body {
 .setting-row .sub {
   font-size: 11px;
   color: var(--text-3);
-}
-
-.field {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: 12.5px;
-  padding: 7px 9px;
-  outline: none;
-  font-family: inherit;
-}
-
-.field:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent-soft);
 }
 
 .btn {
@@ -772,14 +700,6 @@ body {
 .model-card .meta {
   font-size: 11.5px;
   color: var(--text-3);
-}
-
-.keybind-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 2px;
 }
 
 .keybind-row .keys {
@@ -1152,36 +1072,6 @@ body {
   color: var(--accent-text);
 }
 
-.model-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.select {
-  width: auto;
-  max-width: 170px;
-}
-
-.hf-add {
-  display: flex;
-  gap: 6px;
-}
-
-.hf-files {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.danger-btn {
-  color: var(--danger);
-  border-color: rgba(229, 72, 77, 0.3);
-}
-
 .danger-btn:hover {
   background: rgba(229, 72, 77, 0.1);
   color: var(--danger);
@@ -1296,5 +1186,87 @@ mark {
 
 .composer-add:focus-visible {
   outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------- shared controls (panel, settings, switcher) ---------- */
+
+.select-wrap { position: relative; display: inline-flex; }
+
+.select {
+  appearance: none;
+  min-width: 168px;
+  padding: var(--sp-4) var(--sp-9) var(--sp-4) var(--sp-5);
+  border: none;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+  cursor: pointer;
+}
+
+.select:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.select-chevron {
+  position: absolute;
+  right: var(--sp-5);
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  pointer-events: none;
+  color: var(--text-3);
+}
+
+.field {
+  padding: var(--sp-4) var(--sp-5);
+  border: none;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+  outline: none;
+}
+
+.field:focus { box-shadow: var(--focus-ring); }
+.field::placeholder { color: var(--text-3); }
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--sp-4);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.keys {
+  min-width: 132px;
+  padding: var(--sp-4) var(--sp-5);
+  border: none;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: box-shadow var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
+}
+
+.keys:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+.keys:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Recording takes the accent so it is obvious the next keypress is captured
+   rather than typed. */
+.keys.recording {
+  color: var(--accent);
   box-shadow: var(--focus-ring);
 }

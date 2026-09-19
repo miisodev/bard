@@ -6,6 +6,7 @@ export const api = {
   getSettingStr: (key: string) => invoke<string>("get_setting_str", { key }),
   addItem: (content: string) => invoke<void>("add_item", { content }),
   openDraw: () => invoke<void>("open_draw"),
+  openSettings: () => invoke<void>("open_settings"),
   addImage: (dataBase64: string, ext: string) =>
     invoke<number>("add_image", { dataBase64, ext }),
   addFiles: (paths: string[]) => invoke<number>("add_files", { paths }),

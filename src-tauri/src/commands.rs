@@ -283,6 +283,17 @@ pub fn add_image(app: AppHandle, data_base64: String, ext: String) -> i64 {
 }
 
 #[tauri::command]
+pub fn open_settings(app: AppHandle) {
+    use tauri::Manager;
+    let Some(win) = app.get_webview_window("settings") else {
+        return;
+    };
+    let _ = win.show();
+    let _ = win.unminimize();
+    let _ = win.set_focus();
+}
+
+#[tauri::command]
 pub fn open_draw(app: AppHandle) {
     use tauri::Manager;
     let Some(win) = app.get_webview_window("draw") else {

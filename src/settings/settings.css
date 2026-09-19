@@ -1,0 +1,177 @@
+/*
+  The settings window.
+
+  A sidebar and a scrolling pane, in a window with native chrome. Everything
+  here is built from the tokens and the primitives in ui.tsx — if a pane ever
+  needs a one-off rule, the primitive is missing.
+*/
+
+.settings-root {
+  display: flex;
+  height: 100vh;
+  background: var(--canvas);
+  color: var(--text);
+}
+
+/* ---------- sidebar ---------- */
+
+.settings-nav {
+  flex: none;
+  width: 184px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-7) var(--sp-5);
+  border-right: 1px solid var(--rule);
+}
+
+.settings-nav button {
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--text-2);
+  transition: background var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
+}
+
+.settings-nav button:hover { background: var(--surface-2); color: var(--text); }
+
+.settings-nav button.on {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.settings-nav button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------- content ---------- */
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.pane {
+  max-width: 620px;
+  padding: var(--sp-9) var(--sp-9) var(--sp-11);
+}
+
+.pane-head { margin-bottom: var(--sp-8); }
+
+.pane-head h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-tight);
+}
+
+.pane-head p {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  color: var(--text-2);
+}
+
+.group { margin-bottom: var(--sp-9); }
+
+.group > h2 {
+  margin: 0 0 var(--sp-4);
+  font-family: var(--font-small);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-caption);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.group-note {
+  margin: 0 var(--sp-1) var(--sp-4);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--text-2);
+}
+
+/* One card per group, with hairlines between rows: the rows belong together,
+   and a card each would turn a settings page into a list of floating slabs. */
+.group-body {
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--el-card);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-7);
+  padding: var(--sp-6) var(--sp-7);
+}
+
+.row + .row,
+.model + .model,
+.model + .row,
+.row + .model { border-top: 1px solid var(--rule); }
+
+.row.stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-5);
+}
+
+.row-text { flex: 1; min-width: 0; }
+
+.row-label {
+  font-size: var(--fs-base);
+  color: var(--text);
+}
+
+.row-hint {
+  margin-top: var(--sp-1);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--text-2);
+}
+
+.row-control { flex: none; }
+.row.stacked .row-control { flex: 1; }
+
+.note {
+  margin: var(--sp-5) var(--sp-1) 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--text-3);
+}
+
+.note.danger { color: var(--danger); }
+
+.ellipsis {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-form {
+  display: flex;
+  gap: var(--sp-4);
+}
+
+.inline-form .field { flex: 1; min-width: 0; }
+
+.active-tag {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--accent);
+}
+
+.model { padding-bottom: var(--sp-2); }
+.model .progress { margin: 0 var(--sp-7) var(--sp-5); }

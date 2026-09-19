@@ -88,7 +88,10 @@ pub fn cached_models() -> Vec<CachedHfModel> {
                 if !is_transcript_file(&fname) {
                     continue;
                 }
-                if let Ok(meta) = file.metadata() {
+                // fs::metadata follows symlinks; DirEntry::metadata does not.
+                // A Hugging Face snapshot entry is a link into blobs/, so the
+                // latter measures the link and every model reported as 0 bytes.
+                if let Ok(meta) = std::fs::metadata(file.path()) {
                     out.push(CachedHfModel {
                         repo: repo.clone(),
                         file: fname,

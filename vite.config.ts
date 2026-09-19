@@ -29,6 +29,7 @@ export default defineConfig({
         main: resolve(root, "index.html"),
         overlay: resolve(root, "overlay.html"),
         draw: resolve(root, "draw.html"),
+        settings: resolve(root, "settings.html"),
       },
     },
   },

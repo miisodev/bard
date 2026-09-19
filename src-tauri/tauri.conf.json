@@ -57,6 +57,19 @@
         "visible": false,
         "center": true,
         "skipTaskbar": false
+      },
+      {
+        "label": "settings",
+        "title": "Bard Settings",
+        "url": "settings.html",
+        "width": 760,
+        "height": 620,
+        "minWidth": 620,
+        "minHeight": 460,
+        "resizable": true,
+        "visible": false,
+        "center": true,
+        "skipTaskbar": false
       }
     ],
     "security": {

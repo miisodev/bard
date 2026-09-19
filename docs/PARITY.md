@@ -86,7 +86,7 @@ bard exposes 9 settings; Handy exposes 62. Every row is a user-visible capabilit
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
 | B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, streaming/translate badges, size, multi-quant with sha256, mirror | **missing** | Handy's `catalog/catalog.json` is the exact pattern. bard hardcodes tiers |
-| B2 | **Model manager UI** — downloaded vs available, search, language filter, per-model Active/Delete, progress with speed + cancel | **partial** | bard has HF browse/install; no curated catalog UI |
+| B2 | **Model manager UI** — downloaded vs available, search, language filter, per-model Active/Delete, progress with speed + cancel | **partial** | Now a real pane, in three groups in the order a person tries them: the curated list, models already in the machine's HF cache, then any repo by name. Still missing search, language filter, delete, and download speed |
 | B3 | **HF repo paste + one-click install** | **done** | Resume, checksum verify, cancel, load-verified registration |
 | B4 | **Discover models already on the machine** | **done** | HF cache scan with one-click Use |
 | B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, cohere) | **known fix** | Not an engine limit — a **missing dependency**. Handy runs two engines side by side: `transcribe-cpp` for whisper-family GGUF and `transcribe-rs 0.3.8 + features=["onnx"]` for everything else. bard has only the first. Add the second |
@@ -106,7 +106,7 @@ bard exposes 9 settings; Handy exposes 62. Every row is a user-visible capabilit
 | B19 | **Recording overlay** — position, style, on/off | **partial** | Overlay exists; unverified by eye, no settings |
 | B20 | **Shortcut activation mode** (hold vs toggle) + hold threshold | **missing** | |
 | B21 | **Audio feedback** — start/stop sounds, theme, volume | **partial** | Capture sound only |
-| B22 | **Start hidden / show tray icon / autostart** | **partial** | Autostart done; others missing |
+| B22 | **Start hidden / show tray icon / autostart** | **partial** | Autostart done and now in General; start-hidden and tray-icon toggles still missing |
 | B23 | **Debug pane** — log level, live log viewer, paths, keyboard diagnostic | **missing** | |
 | B24 | **What's new on update** | **missing** | |
 | B25 | **i18n** — app language | **missing** | Handy ships a full i18n layer. *Scope call needed* |
@@ -132,10 +132,10 @@ Neither reference does this; it is the reason bard is one app and not two.
 | D2 | **Motion** — panel in/out, card insert, state changes; measured, never bouncy | **partial** | Tokens and per-control transitions are in. The panel's own show/hide and list reordering still need a pass |
 | D3 | **Startup** — cold boot time, no flash, no crash | **partial** | Guardian self-heals a ~1-in-15 WebView2 startup crash. **A guardian is a patch, not a fix — find the root cause.** It also has a side effect nobody chose: because it relaunches any death inside 20s that left no clean-exit marker, **End Task in Task Manager resurrects the app.** An app that will not stay killed is user-hostile; whatever replaces the guardian must not do this |
 | D4 | **Dictation engine** | **resolved** | Two engines, as Handy does it: `transcribe-cpp` (+ `dynamic-backends`, `vulkan` on Windows x86_64) for whisper-family GGUF, `transcribe-rs` (`onnx`) for Parakeet/Moonshine/Canary/SenseVoice/GigaAM/Cohere. No rebuild needed. Handy is **MIT**, so its approach and code are ours to use with attribution |
-| D10 | **Settings needs its own window** | **decided, not built** | The sheet is a 380px-wide scroll inside the panel and already feels cramped at 9 settings. Handy's 62 live in a 696x609 window behind a General / History / Models / Advanced / About sidebar, and a Handy user expects that shape. Build the window before the B rows land, not after |
+| D10 | **Settings has its own window** | **done** | 760x620, native chrome, sidebar: General / Capture / Dictation / Models / Shortcuts / Data / About. `src/settings/ui.tsx` carries the primitives — Pane, Group, Row, Toggle, Segmented, Select, Button, TextField, Note, Progress — so a new setting is a line of markup rather than a design decision taken again. The old sheet is deleted |
 | D9 | **Generate `types.ts` instead of hand-mirroring it** | **missing** | Today a Rust struct change breaks the frontend with no compile error. Handy generates bindings with `specta` + `tauri-specta`. Worth adopting before the surface triples |
 | D5 | **Real-audio verification** — the mic has never been exercised | **missing** | |
-| D6 | **Visual QA of every surface** | **in progress** | Verified: panel (light, dark, glass), overflow menu, empty state, settings sheet, composer menu, the drawing window and its whole round trip. Still unseen: onboarding, the dictation overlay, the section switcher, the context menu |
+| D6 | **Visual QA of every surface** | **in progress** | Verified: panel (light, dark, glass), overflow menu, empty state, composer menu, the drawing window and its round trip, and the settings window's General, Models and Shortcuts panes. Still unseen: onboarding, the dictation overlay, the section switcher, the context menu, and the Capture / Dictation / Data / About panes |
 | D7 | **Accessibility** — keyboard reachability, focus rings, contrast, screen reader | **missing** | |
 | D8 | **Empty / error / loading states everywhere** | **missing** | |
 
@@ -242,3 +242,21 @@ chained in one session because both declared a type called `Win32` and
 the composer's plus button, placed *beside* the field as a 42px control, took
 enough width to clip the placeholder — Copper puts it inside the field, which
 is both the faithful answer and the one that fits.
+
+**2026-09-19 (evening) — settings becomes a window.** D10 built and verified.
+The sheet is gone; `src/settings/` holds the window, the primitives and one
+file per pane, which is the shape the sixty-odd B rows need to land in.
+
+**A real bug fell out of finally seeing the data.** Every model in the Hugging
+Face cache reported its size as `—`. `DirEntry::metadata()` does not follow
+symlinks, and a Hugging Face snapshot entry is a link into `blobs/` — so the
+scan was measuring the link, not the model. `fs::metadata` follows it: the two
+cached Qwen3 files now read 204 MB and 767 MB. The symlink layout was written
+down in this very thread the night before; the code still got it wrong, and
+only looking at the rendered pane caught it.
+
+Two smaller notes from the same pass. `.keys` — the shortcut recorder's button
+— had **no CSS rule at all** and had been rendering unstyled; the audit's
+unused-class list is what surfaced it, from the other direction. And a `Note`
+placed inside a `Group` renders inside the card, where it reads as a setting
+rather than as commentary; `Group` now takes a `note` that sits above the card.

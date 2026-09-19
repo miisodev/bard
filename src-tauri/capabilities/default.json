@@ -5,7 +5,8 @@
   "windows": [
     "main",
     "overlay",
-    "draw"
+    "draw",
+    "settings"
   ],
   "permissions": [
     "core:default",

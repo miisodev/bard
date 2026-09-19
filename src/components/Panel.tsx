@@ -3,12 +3,11 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DictationState } from "../App";
 import { api, isShortcutRecording } from "../store";
-import type { AppState, Item, ModelProgress, Section } from "../types";
+import type { AppState, Item, Section } from "../types";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
 import ItemCard from "./ItemCard";
 import Menu from "./Menu";
 import SectionSwitcher from "./SectionSwitcher";
-import SettingsSheet from "./SettingsSheet";
 
 const win = getCurrentWindow();
 
@@ -35,12 +34,10 @@ const RESIZE_DIRS: [string, ResizeDir][] = [
 
 export default function Panel({
   state,
-  modelProgress,
   dictation,
   onState,
 }: {
   state: AppState;
-  modelProgress: ModelProgress | null;
   dictation: DictationState;
   onState: (s: AppState) => void;
 }) {
@@ -49,7 +46,6 @@ export default function Panel({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [anchorId, setAnchorId] = useState<number | null>(null);
   const [composer, setComposer] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
   const [composerMenu, setComposerMenu] = useState<{ x: number; y: number } | null>(null);
@@ -126,7 +122,6 @@ export default function Panel({
         return;
       }
       if (showSwitcher) return;
-      if (showSettings) return;
       if (typing) {
         if (
           e.key === "Escape" &&
@@ -217,7 +212,6 @@ export default function Panel({
     anchorId,
     menu,
     showSwitcher,
-    showSettings,
     showOverflow,
   ]);
 
@@ -578,7 +572,7 @@ export default function Panel({
             {
               label: "Settings",
               separated: true,
-              onClick: () => setShowSettings(true),
+              onClick: () => void api.openSettings(),
             },
           ]}
         />
@@ -605,15 +599,6 @@ export default function Panel({
             setShowSwitcher(false);
             refresh();
           }}
-        />
-      ) : null}
-
-      {showSettings ? (
-        <SettingsSheet
-          state={state}
-          modelProgress={modelProgress}
-          onClose={() => setShowSettings(false)}
-          onState={onState}
         />
       ) : null}
 
