@@ -61,23 +61,29 @@ guardian considers clean; the env var avoids the problem entirely.
 than writing in place, so Vite keeps serving the previous module while still
 logging `hmr update` for every save. Edit in place.
 
-## The two transcription engines
+## One transcription engine
 
-bard links both, because neither covers the field alone:
+`transcribe-cpp` is the only engine bard links. It loads GGUF/ggml models
+through ggml and covers every architecture in the catalogue — whisper,
+parakeet, moonshine, canary, sensevoice, gigaam, qwen3, voxtral. **A model is
+always a single file at a path.**
 
-| Crate | Handles | Model on disk |
-| --- | --- | --- |
-| `transcribe-cpp` | whisper-family, via ggml | a single `.gguf` / `ggml-*.bin` file |
-| `transcribe-rs` (`onnx`) | Parakeet, Moonshine, Canary, SenseVoice, GigaAM, Cohere | a **directory** of ONNX files |
+**There is no ONNX runtime in the tree, and adding one is not a free
+dependency.** `transcribe-rs` was briefly linked here on the belief that
+non-whisper architectures needed it; they do not — `transcribe-cpp` ships
+`parakeet.h` and `moonshine_streaming.h`, and every model Handy offers is GGUF.
+It pulled in `ort`, which fetches pyke's prebuilt ONNX Runtime, which executes
+AVX2 in a static initialiser and crashes at process start on any pre-Haswell
+CPU. That could not be turned off from bard's manifest, because the dependency
+declared `ort` with default features and Cargo features are additive.
 
-**`ort` downloads a prebuilt ONNX Runtime that must not be shipped.** Its
-default features fetch pyke's build, which runs AVX in a static initialiser and
-crashes at startup on pre-Haswell CPUs. It cannot be turned off from bard's
-manifest, because `transcribe-rs` declares `ort` with default features and
-Cargo features are additive. Release builds must supply a baseline ONNX Runtime
-via `ORT_LIB_LOCATION`. See `docs/PARITY.md` E0 — this blocks shipping.
+**Loading failures are about the conversion, not the family.** A model that
+will not open is almost always a GGUF laid out in a way the engine does not
+read, not an unsupported architecture. Third-party conversions of the same
+model are not interchangeable — which is why catalogue entries pin a revision
+and carry a checksum.
 
-That difference is not cosmetic. `ParakeetModel::load(dir, quantization)` takes
-a directory, so a model is no longer "a file at a path" — acquisition, storage
-and the loader all have to carry which family a model belongs to, because
-nothing in the files reliably says. See `docs/PARITY.md` B1 and B5.
+**Acceleration is off by default.** `transcribe-cpp` reaches a Vulkan GPU
+backend and per-ISA CPU dispatch through non-default features, and those make
+`transcribe-cpp-sys` build ggml from source — which is what needs CMake on
+PATH and the short symlink above.

@@ -3,6 +3,11 @@
 The build plan. bard ships when every row below is **done** and the whole thing
 survives the two tests:
 
+**The specification lives in `docs/blueprints/`** — five documents describing
+the finished product. This ledger is the plan for getting there and tracks
+status; the blueprints carry no status and never will. Where the two disagree,
+the blueprints are the product and this file is behind.
+
 > **The Copper test.** A long-time heavy user of shadcn's Copper picks up bard and
 > uses it with no caveats and no friction.
 >
@@ -132,7 +137,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | D1 | **Design system** — tokens, type scale, spacing, motion, both themes | **done** | `src/styles/tokens.css`: type, space, shape, motion, four themes on two axes, reduced-motion. A legacy-alias block at the end shrinks to nothing as components migrate |
 | D2 | **Motion and depth** — panel in/out, card insert, state changes; measured, never bouncy | **partial** | Tokens and per-control transitions are in. The panel's own show/hide and list reordering still need a pass. **The panel also has no drop shadow**, and cannot simply be given one: a window-frame shadow makes save/restore of the window size non-idempotent and the panel grows every launch. A real shadow has to be drawn by the web layer into a transparent margin *inside* the window, which means the app no longer fills its own window — a deliberate change to layout, positioning and the resize handles |
 | D3 | **Startup** — cold boot time, no flash, no crash | **partial** | Guardian self-heals a ~1-in-15 WebView2 startup crash. **A guardian is a patch, not a fix — find the root cause.** It also has a side effect nobody chose: because it relaunches any death inside 20s that left no clean-exit marker, **End Task in Task Manager resurrects the app.** An app that will not stay killed is user-hostile; whatever replaces the guardian must not do this |
-| D4 | **Dictation engine** | **resolved** | Two engines, as Handy does it: `transcribe-cpp` (+ `dynamic-backends`, `vulkan` on Windows x86_64) for whisper-family GGUF, `transcribe-rs` (`onnx`) for Parakeet/Moonshine/Canary/SenseVoice/GigaAM/Cohere. No rebuild needed. Handy is **MIT**, so its approach and code are ours to use with attribution |
+| D4 | **Dictation engine** | **resolved** | One engine: `transcribe-cpp`, which loads every architecture in the catalogue as a single GGUF — whisper, parakeet, moonshine, canary, sensevoice, gigaam, qwen3, voxtral. No ONNX runtime is linked; see B5 and E0 for why the second engine was removed. Acceleration (`dynamic-backends`, `vulkan` on Windows x86_64) is a feature flag away and gated on B18's from-source build |
 | D10 | **Settings has its own window** | **done** | 760x620, native chrome, sidebar: General / Capture / Dictation / Models / Shortcuts / Data / About. `src/settings/ui.tsx` carries the primitives — Pane, Group, Row, Toggle, Segmented, Select, Button, TextField, Note, Progress — so a new setting is a line of markup rather than a design decision taken again. The old sheet is deleted |
 | D9 | **Generate `types.ts` instead of hand-mirroring it** | **missing** | Today a Rust struct change breaks the frontend with no compile error. Handy generates bindings with `specta` + `tauri-specta`. Worth adopting before the surface triples |
 | D5 | **Real-audio verification** — the mic has never been exercised | **missing** | |
