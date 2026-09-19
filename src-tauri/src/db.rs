@@ -84,7 +84,6 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
            name TEXT NOT NULL,
            created_at INTEGER NOT NULL
          );
-         ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL;
          CREATE TABLE IF NOT EXISTS attachments(
            id INTEGER PRIMARY KEY AUTOINCREMENT,
            item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
@@ -94,6 +93,10 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
          );
          CREATE INDEX IF NOT EXISTS idx_attachments_item ON attachments(item_id);",
     )?;
+    let _ = conn.execute(
+        "ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL",
+        [],
+    );
     Ok(conn)
 }
 
