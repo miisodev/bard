@@ -21,6 +21,9 @@ export const api = {
   setCaptureDoubleShift: (enabled: boolean) =>
     invoke<void>("set_capture_double_shift", { enabled }),
   captureNow: () => invoke<void>("capture_now"),
+  saveWindowGeometry: (x: number, y: number, width: number, height: number) =>
+    invoke<void>("save_window_geometry", { x, y, width, height }),
+  minimizePanel: () => invoke<void>("minimize_panel"),
   showPanel: () => invoke<void>("show_panel"),
   hidePanel: () => invoke<void>("hide_panel"),
   togglePanel: () => invoke<void>("toggle_panel"),

@@ -65,7 +65,7 @@ fn main() {
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    let _ = window.hide();
+                    panel::hide_now(window.app_handle());
                 }
             }
         })
@@ -86,6 +86,8 @@ fn main() {
             commands::set_autostart,
             commands::set_capture_double_shift,
             commands::capture_now,
+            commands::save_window_geometry,
+            commands::minimize_panel,
             commands::show_panel,
             commands::hide_panel,
             commands::toggle_panel,

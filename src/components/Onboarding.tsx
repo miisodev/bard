@@ -47,6 +47,11 @@ export default function Onboarding({
             Capture anything you copy. Dictate offline with your own voice. Ask an AI
             anything — all from one minimal panel on your desktop.
           </p>
+          <div className="actions">
+            <button className="btn primary" onClick={() => setStep(1)}>
+              Continue
+            </button>
+          </div>
         </>
       ) : step === 1 ? (
         <>

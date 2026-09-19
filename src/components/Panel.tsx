@@ -1,11 +1,35 @@
-import { ArrowUpRight, Paperclip, Settings, Star } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowUpRight, Minus, Paperclip, Settings, Star, X } from "lucide-react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DictationState } from "../App";
 import { api } from "../store";
 import type { AppState, ModelProgress } from "../types";
 import AskResult from "./AskResult";
 import ItemCard from "./ItemCard";
 import SettingsSheet from "./SettingsSheet";
+
+const win = getCurrentWindow();
+
+type ResizeDir =
+  | "East"
+  | "North"
+  | "NorthEast"
+  | "NorthWest"
+  | "South"
+  | "SouthEast"
+  | "SouthWest"
+  | "West";
+
+const RESIZE_DIRS: [string, ResizeDir][] = [
+  ["t", "North"],
+  ["b", "South"],
+  ["l", "West"],
+  ["r", "East"],
+  ["lt", "NorthWest"],
+  ["rt", "NorthEast"],
+  ["lb", "SouthWest"],
+  ["rb", "SouthEast"],
+];
 
 export default function Panel({
   state,
@@ -54,7 +78,39 @@ export default function Panel({
     void api.getState().then(onState);
   }, []);
 
+  useEffect(() => {
+    const unlisteners: Promise<() => void>[] = [];
+    let timer: number | undefined;
+    const save = () => {
+      void Promise.all([win.outerPosition(), win.outerSize()]).then(([p, s]) => {
+        void api.saveWindowGeometry(p.x, p.y, s.width, s.height);
+      });
+    };
+    const debounced = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(save, 400);
+    };
+    unlisteners.push(win.onMoved(debounced));
+    unlisteners.push(win.onResized(debounced));
+    return () => {
+      for (const u of unlisteners) void u.then((fn) => fn());
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
+
   const refresh = () => void api.getState().then(onState);
+
+  const onDrag = (e: ReactMouseEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("button, input, textarea")) return;
+    void win.startDragging();
+  };
+
+  const onResizeStart = (dir: ResizeDir) => (e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void win.startResizeDragging(dir);
+  };
 
   const items = state.items;
   const filtered = items.filter((it) => {
@@ -85,7 +141,7 @@ export default function Panel({
 
   return (
     <>
-      <header className="header" data-tauri-drag-region>
+      <header className="header" onMouseDown={onDrag}>
         <span className="wordmark">
           b<span className="dot">a</span>rd
         </span>
@@ -105,7 +161,29 @@ export default function Panel({
         <button className="icon-btn" title="Settings" onClick={() => setShowSettings(true)}>
           <Settings size={15} strokeWidth={1.8} />
         </button>
+        <span className="win-controls">
+          <button
+            className="icon-btn win-btn"
+            title="Minimize"
+            onClick={() => void api.minimizePanel()}
+          >
+            <Minus size={15} strokeWidth={1.8} />
+          </button>
+          <button
+            className="icon-btn win-btn close"
+            title="Close (hides to tray)"
+            onClick={() => void api.hidePanel()}
+          >
+            <X size={15} strokeWidth={1.8} />
+          </button>
+        </span>
       </header>
+
+      <div className="resize-layer">
+        {RESIZE_DIRS.map(([cls, dir]) => (
+          <div key={cls} className={`resize-handle h-${cls}`} onMouseDown={onResizeStart(dir)} />
+        ))}
+      </div>
 
       <div className="timeline" ref={timelineRef}>
         {items.length === 0 ? (

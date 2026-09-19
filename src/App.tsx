@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
 import { api } from "./store";
 import type { AppState, ModelProgress } from "./types";
@@ -91,6 +92,32 @@ export default function App() {
     stateRef.current = state;
     if (state) applyTheme(state.theme);
   }, [state?.theme]);
+
+  useEffect(() => {
+    if (!state?.onboardingCompleted) return;
+    let timer: number | undefined;
+    const onBlur = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void getCurrentWindow().isMinimized().then((m) => {
+          if (!m) void api.hidePanel();
+        });
+      }, 150);
+    };
+    const onFocus = () => {
+      if (timer) {
+        window.clearTimeout(timer);
+        timer = undefined;
+      }
+    };
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [state?.onboardingCompleted]);
 
   if (!state) {
     return <div className="app" />;

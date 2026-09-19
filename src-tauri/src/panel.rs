@@ -13,22 +13,77 @@ pub fn position(win: &tauri::WebviewWindow) {
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-pub fn show_now(app: &AppHandle) {
+fn apply_saved_geometry(app: &tauri::AppHandle, win: &tauri::WebviewWindow) -> bool {
+    let Some(raw) = crate::db::get_setting(app, "window_geometry") else {
+        return false;
+    };
+    let Ok(geo) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    let (Some(x), Some(y), Some(w), Some(h)) = (
+        geo.get("x").and_then(|v| v.as_i64()),
+        geo.get("y").and_then(|v| v.as_i64()),
+        geo.get("width").and_then(|v| v.as_i64()),
+        geo.get("height").and_then(|v| v.as_i64()),
+    ) else {
+        return false;
+    };
+    let visible = app
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .any(|m| {
+            let r = m.position();
+            let s = m.size();
+            let ox = x.max(r.x as i64).min((r.x + s.width as i32) as i64);
+            let oy = y.max(r.y as i64).min((r.y + s.height as i32) as i64);
+            let ow = w - (x - ox);
+            let oh = h - (y - oy);
+            ow > 120 && oh > 120
+        });
+    if !visible {
+        return false;
+    }
+    let _ = win.set_size(tauri::PhysicalSize::new(w.max(340) as u32, h.max(420) as u32));
+    let _ = win.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
+    true
+}
+
+fn save_geometry(app: &tauri::AppHandle, win: &tauri::WebviewWindow) {
+    let Ok(pos) = win.outer_position() else {
+        return;
+    };
+    let Ok(size) = win.outer_size() else {
+        return;
+    };
+    let geo = serde_json::json!({
+        "x": pos.x,
+        "y": pos.y,
+        "width": size.width,
+        "height": size.height
+    });
+    crate::db::set_setting(app, "window_geometry", &geo.to_string());
+}
+
+pub fn show_now(app: &tauri::AppHandle) {
     remember_foreground();
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
-    position(&win);
+    if !apply_saved_geometry(app, &win) {
+        position(&win);
+    }
     let _ = win.show();
     let _ = win.unminimize();
     let _ = win.set_focus();
     let _ = app.emit("panel-shown", ());
 }
 
-pub fn hide_now(app: &AppHandle) {
+pub fn hide_now(app: &tauri::AppHandle) {
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
+    save_geometry(app, &win);
     let _ = win.hide();
     restore_foreground();
 }

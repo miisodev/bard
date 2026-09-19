@@ -1,6 +1,6 @@
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
-    tray::{TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_autostart::ManagerExt;
 
@@ -27,7 +27,12 @@ pub fn create(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { .. } = event {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 crate::panel::toggle_now(tray.app_handle());
             }
         })

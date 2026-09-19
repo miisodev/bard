@@ -16,6 +16,19 @@ pub fn get_setting_str(app: AppHandle, key: String) -> String {
 }
 
 #[tauri::command]
+pub fn save_window_geometry(app: AppHandle, x: i32, y: i32, width: u32, height: u32) {
+    let geo = serde_json::json!({ "x": x, "y": y, "width": width, "height": height });
+    db::set_setting(&app, "window_geometry", &geo.to_string());
+}
+
+#[tauri::command]
+pub fn minimize_panel(app: AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.minimize();
+    }
+}
+
+#[tauri::command]
 pub fn get_state(app: AppHandle) -> db::AppState {
     db::get_state(&app)
 }
