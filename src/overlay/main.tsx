@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { applyTheme } from "../App";
@@ -32,6 +33,9 @@ function Overlay() {
           <i key={i} style={{ height: `${Math.max(3, l * 12)}px` }} />
         ))}
       </span>
+      <button className="overlay-x" title="Cancel" onClick={() => void invoke("dictate_cancel")}>
+        ✕
+      </button>
     </div>
   );
 }

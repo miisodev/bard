@@ -791,15 +791,15 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   height: 100vh;
   background: var(--canvas);
-  padding: 24px;
-  gap: 14px;
+  padding: 26px 24px 22px;
+  gap: 12px;
   overflow-y: auto;
 }
 
 .onboarding .mark {
+  margin-top: auto;
   width: 84px;
   height: 84px;
   border-radius: 24px;
@@ -835,6 +835,7 @@ body {
 .onboarding .steps {
   display: flex;
   gap: 6px;
+  margin-top: 8px;
 }
 
 .onboarding .steps .step {
@@ -854,6 +855,9 @@ body {
   display: flex;
   gap: 8px;
   justify-content: center;
+  margin-top: auto;
+  margin-bottom: 2vh;
+  padding-top: 12px;
 }
 
 /* ---------- overlay ---------- */
@@ -896,6 +900,24 @@ body {
   background: var(--accent);
   border-radius: 1px;
   transition: height 80ms linear;
+}
+
+.overlay-x {
+  border: none;
+  background: var(--surface-2);
+  color: var(--text-2);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.overlay-x:hover {
+  color: var(--danger);
 }
 
 @keyframes fade-in {
@@ -943,6 +965,187 @@ body {
     opacity: 1;
     transform: translate(-50%, 0);
   }
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 12px 4px 6px;
+}
+
+.group-header:first-child {
+  padding-top: 4px;
+}
+
+.group-header:hover {
+  color: var(--accent-text);
+}
+
+.group-count {
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.inline-edit {
+  width: 100%;
+  min-height: 40px;
+  resize: vertical;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.thumb-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.thumb {
+  position: relative;
+  display: inline-block;
+}
+
+.thumb img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  display: block;
+  cursor: pointer;
+}
+
+.thumb-x {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: none;
+}
+
+.thumb:hover .thumb-x {
+  display: grid;
+  place-items: center;
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 170px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 5px;
+  animation: sheet-in var(--t-fast) var(--ease);
+}
+
+.ctx-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.ctx-row:hover {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.ctx-row.danger:hover {
+  background: rgba(229, 72, 77, 0.12);
+  color: var(--danger);
+}
+
+.ctx-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 5px;
+}
+
+.sheet-card.compact {
+  width: 280px;
+  gap: 10px;
+}
+
+.switcher-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.switcher-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.switcher-row.on {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.model-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.select {
+  width: auto;
+  max-width: 170px;
+}
+
+.danger-btn {
+  color: var(--danger);
+  border-color: rgba(229, 72, 77, 0.3);
+}
+
+.danger-btn:hover {
+  background: rgba(229, 72, 77, 0.1);
+  color: var(--danger);
 }
 
 mark {

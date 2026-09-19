@@ -144,6 +144,19 @@ pub fn register_shortcuts(app: &AppHandle) {
     }
 }
 
+pub fn capture_clipboard(app: &AppHandle) {
+    let mut cb = match arboard::Clipboard::new() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if let Ok(text) = cb.get_text() {
+        let t = text.trim().to_string();
+        if !t.is_empty() && t != SENTINEL {
+            crate::monitor::capture_text(app, &t);
+        }
+    }
+}
+
 pub fn capture_selection(app: &AppHandle) {
     if CAPTURING.swap(true, Ordering::SeqCst) {
         return;

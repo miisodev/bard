@@ -21,9 +21,6 @@ export default function Onboarding({
 }) {
   const [step, setStep] = useState(0);
   const [model, setModel] = useState<ModelInfo | null>(null);
-  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
-  const [apiKey, setApiKey] = useState("");
-  const [aiModel, setAiModel] = useState("");
   const [autostart, setAutostart] = useState(true);
 
   useState(() => {
@@ -44,14 +41,9 @@ export default function Onboarding({
         <>
           <h1>Bard</h1>
           <p>
-            Capture anything you copy. Dictate offline with your own voice. Ask an AI
-            anything — all from one minimal panel on your desktop.
+            Capture anything you copy. Dictate offline with your own voice. Everything
+            you capture stays on this machine, in one minimal panel.
           </p>
-          <div className="actions">
-            <button className="btn primary" onClick={() => setStep(1)}>
-              Continue
-            </button>
-          </div>
         </>
       ) : step === 1 ? (
         <>
@@ -63,11 +55,16 @@ export default function Onboarding({
           <div className="model-card">
             <div className="name">{model?.name ?? "Whisper Small"}</div>
             <div className="meta">
-              {modelReady ? "Installed and ready" : `${model?.sizeMb ?? 465} MB · runs fully offline`}
+              {modelReady
+                ? "Installed and ready"
+                : `${model?.sizeMb ?? 465} MB · runs fully offline`}
             </div>
             {installing ? (
               <div className="progress">
-                <div className="fill" style={{ width: `${Math.min(100, modelProgress.percent)}%` }} />
+                <div
+                  className="fill"
+                  style={{ width: `${Math.min(100, modelProgress.percent)}%` }}
+                />
               </div>
             ) : !modelReady ? (
               <button
@@ -77,54 +74,6 @@ export default function Onboarding({
                 Download {model?.sizeMb ?? 465} MB
               </button>
             ) : null}
-          </div>
-          {!installing ? (
-            <button className="btn" onClick={() => setStep(2)}>
-              {modelReady ? "Continue" : "Skip for now"}
-            </button>
-          ) : null}
-        </>
-      ) : step === 2 ? (
-        <>
-          <h1>Your AI</h1>
-          <p>
-            Optional. Connect any OpenAI-compatible provider to ask questions with
-            captured context. Your key stays on this machine.
-          </p>
-          <input
-            className="field"
-            placeholder="Base URL"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-          />
-          <input
-            className="field"
-            type="password"
-            placeholder="API key"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-          />
-          <input
-            className="field"
-            placeholder="Model — e.g. gpt-4o-mini"
-            value={aiModel}
-            onChange={(e) => setAiModel(e.target.value)}
-          />
-          <div className="actions">
-            <button
-              className="btn primary"
-              disabled={!aiModel.trim() || !apiKey.trim()}
-              onClick={() => {
-                void api.setProvider(baseUrl.trim(), apiKey.trim(), aiModel.trim()).then(() =>
-                  setStep(3)
-                );
-              }}
-            >
-              Connect
-            </button>
-            <button className="btn" onClick={() => setStep(3)}>
-              Skip
-            </button>
           </div>
         </>
       ) : (
@@ -147,23 +96,44 @@ export default function Onboarding({
               <span className="knob" />
             </button>
           </div>
-          <div className="actions">
-            <button
-              className="btn primary"
-              onClick={() => {
-                if (autostart) void api.setAutostart(true);
-                onDone();
-              }}
-            >
-              Start using Bard
-            </button>
-          </div>
         </>
       )}
+
       <div className="steps">
-        {[0, 1, 2, 3].map((i) => (
+        {[0, 1, 2].map((i) => (
           <div key={i} className={`step${i <= step ? " on" : ""}`} />
         ))}
+      </div>
+
+      <div className="actions">
+        {step === 0 ? (
+          <button className="btn primary" onClick={() => setStep(1)}>
+            Continue
+          </button>
+        ) : step === 1 ? (
+          installing ? null : (
+            <>
+              {modelReady ? (
+                <button className="btn primary" onClick={() => setStep(2)}>
+                  Continue
+                </button>
+              ) : null}
+              <button className="btn" onClick={() => setStep(2)}>
+                Skip for now
+              </button>
+            </>
+          )
+        ) : (
+          <button
+            className="btn primary"
+            onClick={() => {
+              if (autostart) void api.setAutostart(true);
+              onDone();
+            }}
+          >
+            Start using Bard
+          </button>
+        )}
       </div>
     </div>
   );

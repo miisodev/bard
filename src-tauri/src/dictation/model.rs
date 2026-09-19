@@ -21,14 +21,32 @@ pub struct ModelDef {
     pub size_mb: u64,
 }
 
-pub const MODELS: &[ModelDef] = &[ModelDef {
-    id: "whisper-small",
-    name: "Whisper Small",
-    filename: "ggml-small.bin",
-    url: "https://blob.handy.computer/ggml-small.bin",
-    sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
-    size_mb: 465,
-}];
+pub const MODELS: &[ModelDef] = &[
+    ModelDef {
+        id: "whisper-small",
+        name: "Whisper Small",
+        filename: "ggml-small.bin",
+        url: "https://blob.handy.computer/ggml-small.bin",
+        sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+        size_mb: 465,
+    },
+    ModelDef {
+        id: "whisper-medium",
+        name: "Whisper Medium",
+        filename: "whisper-medium-q4_1.bin",
+        url: "https://blob.handy.computer/whisper-medium-q4_1.bin",
+        sha256: "79283fc1f9fe12ca3248543fbd54b73292164d8df5a16e095e2bceeaaabddf57",
+        size_mb: 469,
+    },
+    ModelDef {
+        id: "whisper-turbo",
+        name: "Whisper Turbo",
+        filename: "ggml-large-v3-turbo.bin",
+        url: "https://blob.handy.computer/ggml-large-v3-turbo.bin",
+        sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+        size_mb: 1549,
+    },
+];
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +68,11 @@ pub struct ModelStatus {
 
 static SESSION: Mutex<Option<(String, Session)>> = Mutex::new(None);
 static INIT_BACKENDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CANCEL_DOWNLOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LAST_USE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static WATCHER_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+const UNLOAD_IDLE_MS: u64 = 5 * 60 * 1000;
 
 fn models_dir(app: &AppHandle) -> PathBuf {
     let data = app.path().app_data_dir().unwrap();
@@ -97,6 +120,10 @@ pub fn model_status(app: &AppHandle) -> ModelStatus {
     }
 }
 
+pub fn cancel_download() {
+    CANCEL_DOWNLOAD.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
     let Some(def) = find(id) else {
         return Err(format!("Unknown model: {id}"));
@@ -107,6 +134,7 @@ pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
         let _ = app.emit("model-ready", ());
         return Ok(());
     }
+    CANCEL_DOWNLOAD.store(false, std::sync::atomic::Ordering::SeqCst);
     let part = path.with_extension("part");
     let mut received = part.metadata().map(|m| m.len()).unwrap_or(0);
     let client = reqwest::Client::builder()
@@ -138,11 +166,16 @@ pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
     let mut last_progress: u64 = 0;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
+        if CANCEL_DOWNLOAD.load(std::sync::atomic::Ordering::SeqCst) {
+            drop(file);
+            return Err("Download cancelled.".into());
+        }
         let chunk = chunk.map_err(|e| e.to_string())?;
         file.write_all(&chunk).map_err(|e| e.to_string())?;
         hasher.update(&chunk);
         received += chunk.len() as u64;
-        if received - last_progress > 1024 * 1024 || last_emit.elapsed() > Duration::from_millis(120) {
+        if received - last_progress > 1024 * 1024 || last_emit.elapsed() > Duration::from_millis(120)
+        {
             last_progress = received;
             last_emit = Instant::now();
             let _ = app.emit(
@@ -162,6 +195,10 @@ pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
     }
     file.flush().map_err(|e| e.to_string())?;
     drop(file);
+
+    if CANCEL_DOWNLOAD.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Download cancelled.".into());
+    }
 
     let digest = hasher.finalize();
     let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
@@ -190,6 +227,20 @@ pub fn delete_model(app: &AppHandle, id: &str) {
     }
 }
 
+pub fn start_unload_watcher(_app: AppHandle) {
+    if WATCHER_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(30));
+        let last = LAST_USE.load(std::sync::atomic::Ordering::SeqCst);
+        if last > 0 && crate::db::now_ms() - last as i64 > UNLOAD_IDLE_MS as i64 {
+            *SESSION.lock().unwrap() = None;
+            LAST_USE.store(0, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+}
+
 pub fn transcribe(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
     let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
     let Some(def) = find(&id) else {
@@ -216,5 +267,6 @@ pub fn transcribe(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
     }
     let (_, session) = guard.as_mut().unwrap();
     let result = session.run(samples, &RunOptions::default()).map_err(|e| e.to_string())?;
+    LAST_USE.store(crate::db::now_ms() as u64, std::sync::atomic::Ordering::SeqCst);
     Ok(result.text.trim().to_string())
 }

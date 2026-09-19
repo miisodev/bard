@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod ask;
 mod capture;
 mod commands;
 mod db;
@@ -95,13 +94,27 @@ fn main() {
             commands::get_model,
             commands::set_model,
             commands::download_model,
+            commands::download_model_cancel,
             commands::delete_model,
             commands::dictate_start,
             commands::dictate_stop,
             commands::dictate_cancel,
-            commands::set_provider,
-            commands::clear_provider,
-            commands::ask,
+            commands::create_section,
+            commands::set_active_section,
+            commands::rename_section,
+            commands::delete_section,
+            commands::update_item,
+            commands::add_files,
+            commands::attach_image,
+            commands::detach_attachment,
+            commands::add_note_to_image,
+            commands::export_markdown,
+            commands::set_export_dir,
+            commands::get_export_dir,
+            commands::set_sound_on_capture,
+            commands::get_sound_on_capture,
+            commands::get_microphones,
+            commands::set_microphone,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run bard");

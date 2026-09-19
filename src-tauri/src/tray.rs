@@ -17,7 +17,12 @@ pub fn create(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
         None::<&str>,
     )?;
     let quit = MenuItem::with_id(app, "quit", "Quit Bard", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &capture, &dictate, &autostart, &quit])?;
+    let capture_clip =
+        MenuItem::with_id(app, "capture-clipboard", "Capture clipboard", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[&show, &capture, &capture_clip, &dictate, &autostart, &quit],
+    )?;
 
     let icon = app.default_window_icon().cloned().unwrap();
 
@@ -39,6 +44,7 @@ pub fn create(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => crate::panel::show_now(app),
             "capture" => crate::capture::capture_selection(app),
+            "capture-clipboard" => crate::capture::capture_clipboard(app),
             "dictate" => crate::dictation::start(app),
             "autostart" => {
                 let next = !db_autostart_handle(app);

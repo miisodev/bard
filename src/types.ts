@@ -1,11 +1,24 @@
+export interface Section {
+  id: number;
+  name: string;
+}
+
 export interface Item {
   id: number;
+  sectionId: number | null;
   content: string;
   kind: "text" | "image";
   imagePath: string | null;
   favorite: number;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface Attachment {
+  id: number;
+  itemId: number;
+  path: string;
+  position: number;
 }
 
 export interface ModelInfo {
@@ -23,7 +36,10 @@ export interface ModelStatus {
 }
 
 export interface AppState {
+  sections: Section[];
   items: Item[];
+  attachments: Attachment[];
+  activeSectionId: number | null;
   theme: string;
   appVersion: string;
   keybinds: string;
@@ -32,7 +48,6 @@ export interface AppState {
   captureDoubleShift: boolean;
   modelId: string;
   modelReady: boolean;
-  providerConfigured: boolean;
   micReady: boolean;
 }
 

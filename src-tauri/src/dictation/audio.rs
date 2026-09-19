@@ -32,6 +32,29 @@ pub fn mic_ready() -> bool {
         .is_some()
 }
 
+pub fn list_input_devices() -> Vec<String> {
+    let host = cpal::default_host();
+    host.input_devices()
+        .map(|devs| {
+            devs.filter_map(|d| d.name().ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn resolve_device(app: &AppHandle) -> Option<cpal::Device> {
+    let wanted = crate::db::get_setting(app, "selected_microphone")?;
+    if wanted.is_empty() {
+        return None;
+    }
+    let host = cpal::default_host();
+    host.input_devices()
+        .ok()
+        .and_then(|devs| {
+            devs.into_iter().find(|d| d.name().ok().as_deref() == Some(wanted.as_str()))
+        })
+}
+
 fn process_chunk(shared: &Shared, app: &AppHandle, sample_rate: u32) {
     let mut res_guard = shared.resampler.lock().unwrap();
     let resampler = res_guard.get_or_insert_with(|| {
@@ -79,7 +102,8 @@ fn process_chunk(shared: &Shared, app: &AppHandle, sample_rate: u32) {
 
 pub fn start(app: AppHandle) {
     let host = cpal::default_host();
-    let Some(device) = host.default_input_device() else {
+    let device = resolve_device(&app).or_else(|| host.default_input_device());
+    let Some(device) = device else {
         return;
     };
     let Ok(config) = device.default_input_config() else {

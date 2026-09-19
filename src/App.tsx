@@ -33,15 +33,21 @@ export default function App() {
     void api.getState().then(setState);
     unlisteners.push(listen("refresh", refresh));
     unlisteners.push(
+      listen("captured", () => {
+        window.dispatchEvent(new CustomEvent("bard-captured"));
+      })
+    );
+    unlisteners.push(
       listen("panel-shown", () => {
         refresh();
       })
     );
     unlisteners.push(
-      listen("dictation-result", (e) => {
+      listen("dictation-panel", (e) => {
         window.dispatchEvent(
-          new CustomEvent("bard-dictation", { detail: e.payload as string })
+          new CustomEvent("bard-toast", { detail: "Dictated — saved to clipboard" })
         );
+        void (e.payload as string);
       })
     );
     unlisteners.push(
