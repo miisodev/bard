@@ -20,6 +20,9 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::db::Db;
 
+/// Passed by the autostart registration, and by nothing else.
+const AUTOSTART_FLAG: &str = "--autostart";
+
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
     if args.iter().any(|a| a == "--guardian") {
@@ -38,9 +41,12 @@ fn main() {
             guardian::mark_clean_exit();
             panel::show_now(app);
         }))
+        // The autostart entry carries a flag so the app can tell "Windows
+        // started me at login" from "someone opened me", and behave
+        // differently: the first belongs in the tray, the second on screen.
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![AUTOSTART_FLAG]),
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -81,12 +87,29 @@ fn main() {
             let main = app.get_webview_window("main").unwrap();
             panel::position(&main);
 
-            if db::get_setting(&handle, "onboarding_completed") != Some("1".into()) {
+            // Opening the app should open the app. It lives in the tray, but
+            // launching it and being shown nothing reads as a failure to
+            // start — so the panel appears unless Windows launched us at
+            // login, which is the one case where staying quiet is the point.
+            let launched_at_login = std::env::args().any(|a| a == AUTOSTART_FLAG);
+            if !launched_at_login {
                 panel::show_now(&handle);
             }
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Closing a secondary window must hide it, not destroy it. Tauri
+            // drops a closed window, after which get_webview_window returns
+            // None and "open settings" silently does nothing — which is what
+            // made settings and the canvas unreachable once either had been
+            // closed.
+            if matches!(window.label(), "settings" | "draw") {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                return;
+            }
             if window.label() != "main" {
                 return;
             }

@@ -284,24 +284,25 @@ pub fn add_image(app: AppHandle, data_base64: String, ext: String) -> i64 {
 
 #[tauri::command]
 pub fn open_settings(app: AppHandle) {
+    show_secondary(&app, "settings", false);
+}
+
+pub fn show_secondary(app: &AppHandle, label: &str, center: bool) {
     use tauri::Manager;
-    let Some(win) = app.get_webview_window("settings") else {
+    let Some(win) = app.get_webview_window(label) else {
         return;
     };
-    let _ = win.show();
+    if center {
+        let _ = win.center();
+    }
     let _ = win.unminimize();
+    let _ = win.show();
     let _ = win.set_focus();
 }
 
 #[tauri::command]
 pub fn open_draw(app: AppHandle) {
-    use tauri::Manager;
-    let Some(win) = app.get_webview_window("draw") else {
-        return;
-    };
-    let _ = win.center();
-    let _ = win.show();
-    let _ = win.set_focus();
+    show_secondary(&app, "draw", true);
 }
 
 #[tauri::command]
@@ -382,6 +383,10 @@ pub fn image_data(app: AppHandle, path: String) -> Option<String> {
 pub fn set_theme(app: AppHandle, theme: String) {
     db::set_setting(&app, "theme", &theme);
     crate::glass::apply_all(&app, &theme);
+    // Every window reads the theme out of app state, so without this only the
+    // window that made the change would repaint — which is exactly how the
+    // panel stayed light while settings went dark.
+    refresh(&app);
 }
 
 #[tauri::command]

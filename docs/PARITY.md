@@ -156,6 +156,19 @@ Neither reference does this; it is the reason bard is one app and not two.
 
 ---
 
+## Fixed defects
+
+Kept because each one was invisible from the code and obvious the moment
+someone used the app.
+
+| Symptom | Cause |
+| --- | --- |
+| Switching theme changed only the window you switched it in | `set_theme` wrote the setting but emitted no `refresh`, so no other window re-read it. The drawing canvas was worse — it never applied a theme at all, and the overlay hardcoded `"system"`. All four windows now share one `useTheme` hook that reads on open and follows later changes |
+| Settings and the canvas could not be reopened | Closing them *destroyed* them. `get_webview_window` then returned `None` and the open command returned silently. Their close is now intercepted and hides instead |
+| Launching sometimes did nothing, and needed a second try | The auto-hide raced the show: summoning a window produces a burst of focus changes as it takes the foreground, and one of those blurs fired the hide 140 ms later. An explicit show now marks the panel for 700 ms, and the auto-hide stands down |
+| Opening the app showed nothing | It only revealed the panel during onboarding, so every later launch appeared to do nothing. It now opens the panel unless Windows started it at login — the autostart entry passes `--autostart`, which is the only way to tell the two apart |
+| A smudge into a hard bottom-right corner | `.app` fills the window exactly and carried `box-shadow: 0 16px 56px`. A shadow with no transparent margin to fall into paints inside the window and is clipped square at the edge — worst at the bottom-right, where both offsets meet. The shadow is the compositor's job; the window now asks for one and the CSS does not draw its own |
+
 ## Status vocabulary
 
 **done** verified working · **partial** exists, incomplete · **missing** not built ·

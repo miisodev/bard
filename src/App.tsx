@@ -4,6 +4,7 @@ import { api } from "./store";
 import type { AppState, ModelProgress } from "./types";
 import Panel from "./components/Panel";
 import Onboarding from "./components/Onboarding";
+import { useTheme } from "./useTheme";
 
 export interface DictationState {
   listening: boolean;
@@ -12,6 +13,8 @@ export interface DictationState {
 }
 
 export default function App() {
+  useTheme();
+
   const [state, setState] = useState<AppState | null>(null);
   const [modelProgress, setModelProgress] = useState<ModelProgress | null>(null);
   const [dictation, setDictation] = useState<DictationState>({
@@ -83,10 +86,6 @@ export default function App() {
       })
     );
 
-    const onTheme = () => {
-      if (alive && stateRef.current) applyTheme(stateRef.current.theme);
-    };
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", onTheme);
     return () => {
       alive = false;
       for (const u of unlisteners) void u.then((fn) => fn());
@@ -95,7 +94,6 @@ export default function App() {
 
   useEffect(() => {
     stateRef.current = state;
-    if (state) applyTheme(state.theme);
   }, [state?.theme]);
 
   if (!state) {

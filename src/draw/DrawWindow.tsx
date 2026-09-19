@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "../store";
+import { useTheme } from "../useTheme";
 import {
   bounds,
   exportPng,
@@ -38,6 +39,8 @@ const TOOLS: { tool: Tool; label: string; icon: JSX.Element }[] = [
   width, and which shape is selected.
 */
 export default function DrawWindow() {
+  useTheme();
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const shapesRef = useRef<Shape[]>([]);
   const draftRef = useRef<Shape | null>(null);

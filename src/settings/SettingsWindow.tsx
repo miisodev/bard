@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../store";
-import { applyTheme } from "../App";
+import { useTheme } from "../useTheme";
 import type { AppState, ModelProgress } from "../types";
 
 import GeneralPane from "./panes/General";
@@ -38,6 +38,8 @@ const SECTIONS = [
 type SectionId = (typeof SECTIONS)[number]["id"];
 
 export default function SettingsWindow() {
+  useTheme();
+
   const [state, setState] = useState<AppState | null>(null);
   const [progress, setProgress] = useState<ModelProgress | null>(null);
   const [section, setSection] = useState<SectionId>("general");
@@ -62,12 +64,6 @@ export default function SettingsWindow() {
       for (const u of unlisteners) void u.then((fn) => fn());
     };
   }, []);
-
-  // The settings window follows the app's theme, including Glass — which here
-  // only means its own surfaces, since acrylic is applied to the panel.
-  useEffect(() => {
-    if (state) applyTheme(state.theme);
-  }, [state?.theme]);
 
   const refresh = () => void api.getState().then(setState);
 

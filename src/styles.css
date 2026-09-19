@@ -40,14 +40,20 @@ body {
   background: transparent;
 }
 
+/*
+  No drop shadow here. `.app` fills the window exactly, so a shadow has no
+  transparent margin to fall into: it paints inside the window bounds and gets
+  clipped square at the edge, which reads as a dirty smudge along the bottom
+  and right and is worst in the bottom-right corner where both offsets meet.
+  The window's own shadow is the compositor's job — see tauri.conf.json.
+*/
 .app {
   display: flex;
   flex-direction: column;
   height: 100vh;
   background: var(--canvas);
-  border-radius: 12px;
+  border-radius: var(--r-panel);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow);
   overflow: hidden;
 }
 

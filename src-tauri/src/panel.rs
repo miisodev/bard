@@ -65,8 +65,31 @@ fn save_geometry(app: &tauri::AppHandle, win: &tauri::WebviewWindow) {
     crate::db::set_setting(app, "window_geometry", &geo.to_string());
 }
 
+/// Set when the panel is shown deliberately. The auto-hide checks it and
+/// stands down, because a window that has just been summoned goes through a
+/// burst of focus changes while it takes the foreground — and hiding on one of
+/// those is why summoning sometimes appeared to do nothing and needed a second
+/// try.
+static SHOWN_AT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How long after a deliberate show the auto-hide keeps out of the way.
+const SETTLE_MS: u64 = 700;
+
+fn mark_shown() {
+    SHOWN_AT.store(
+        crate::db::now_ms() as u64,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+}
+
+fn just_shown() -> bool {
+    let at = SHOWN_AT.load(std::sync::atomic::Ordering::SeqCst);
+    at > 0 && (crate::db::now_ms() as u64).saturating_sub(at) < SETTLE_MS
+}
+
 pub fn show_now(app: &tauri::AppHandle) {
     remember_foreground();
+    mark_shown();
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
@@ -152,6 +175,9 @@ pub fn on_focus_change(app: &AppHandle, focused: bool) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(HIDE_GRACE_MS));
         if FOCUS_GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if just_shown() {
             return;
         }
         // Settings and the drawing canvas are ours; opening one should not
