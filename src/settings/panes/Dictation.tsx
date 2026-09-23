@@ -11,9 +11,15 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { api } from "../../store";
-import type { PostprocessingSettings, PostprocessingTestResponse } from "../../types";
+import type {
+  OverlayHorizontal,
+  OverlayPosition,
+  OverlayVertical,
+  PostprocessingSettings,
+  PostprocessingTestResponse,
+} from "../../types";
 import type { PaneProps } from "../SettingsWindow";
-import { Button, Group, Note, Pane, Row, Select, Tag, TextField, Toggle } from "../ui";
+import { Button, Group, Note, Pane, Row, Segmented, Select, Tag, TextField, Toggle } from "../ui";
 
 function errorText(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -21,25 +27,64 @@ function errorText(error: unknown): string {
   return text.replace(/^Error:\s*/i, "").trim() || "Something went wrong.";
 }
 
+const DEFAULT_OVERLAY_POSITION: OverlayPosition = "bottom-middle";
+const OVERLAY_POSITIONS: OverlayPosition[] = [
+  "top-left",
+  "top-middle",
+  "top-right",
+  "bottom-left",
+  "bottom-middle",
+  "bottom-right",
+];
+const OVERLAY_VERTICAL_OPTIONS: { value: OverlayVertical; label: string }[] = [
+  { value: "top", label: "Top" },
+  { value: "bottom", label: "Bottom" },
+];
+const OVERLAY_HORIZONTAL_OPTIONS: { value: OverlayHorizontal; label: string }[] = [
+  { value: "left", label: "Left" },
+  { value: "middle", label: "Middle" },
+  { value: "right", label: "Right" },
+];
+
+function parseOverlayPosition(value: string): OverlayPosition {
+  return OVERLAY_POSITIONS.includes(value as OverlayPosition)
+    ? (value as OverlayPosition)
+    : DEFAULT_OVERLAY_POSITION;
+}
+
+function overlayParts(position: OverlayPosition): [OverlayVertical, OverlayHorizontal] {
+  const [vertical, horizontal] = position.split("-");
+  return [vertical as OverlayVertical, horizontal as OverlayHorizontal];
+}
+
 export default function DictationPane(_: PaneProps) {
   const [microphones, setMicrophones] = useState<string[]>([]);
   const [selectedMic, setSelectedMic] = useState("");
+  const [overlayPosition, setOverlayPosition] = useState<OverlayPosition>(DEFAULT_OVERLAY_POSITION);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    Promise.all([api.getMicrophones(), api.getSettingStr("selected_microphone")])
-      .then(([available, selected]) => {
+    setLoadError(null);
+    setError(null);
+    Promise.all([
+      api.getMicrophones(),
+      api.getSettingStr("selected_microphone"),
+      api.getSettingStr("dictation_overlay_position"),
+    ])
+      .then(([available, selected, position]) => {
         if (!alive) return;
         setMicrophones(available);
         setSelectedMic(selected);
+        setOverlayPosition(parseOverlayPosition(position));
         setError(null);
       })
       .catch((reason: unknown) => {
-        if (alive) setError(errorText(reason));
+        if (alive) setLoadError(errorText(reason));
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -49,6 +94,18 @@ export default function DictationPane(_: PaneProps) {
     };
   }, [loadAttempt]);
 
+  const [overlayVertical, overlayHorizontal] = overlayParts(overlayPosition);
+  const changeOverlayPosition = (vertical: OverlayVertical, horizontal: OverlayHorizontal) => {
+    const next = `${vertical}-${horizontal}` as OverlayPosition;
+    const previous = overlayPosition;
+    setOverlayPosition(next);
+    setError(null);
+    void api.setDictationOverlayPosition(next).catch((reason: unknown) => {
+      setOverlayPosition(previous);
+      setError(errorText(reason));
+    });
+  };
+
   return (
     <Pane title="Dictation" description="Speech to text, entirely on this machine.">
       <Group title="Input">
@@ -56,7 +113,7 @@ export default function DictationPane(_: PaneProps) {
           <Select
             label="Microphone"
             value={selectedMic}
-            disabled={loading || Boolean(error)}
+            disabled={loading || Boolean(loadError)}
             onChange={(name) => {
               setSelectedMic(name);
               setError(null);
@@ -70,27 +127,50 @@ export default function DictationPane(_: PaneProps) {
         </Row>
       </Group>
 
+      <Group
+        title="Overlay position"
+        note="Choose where the recording pill appears on the screen. These controls make six positions."
+      >
+        <Row label="Vertical" hint="Top or bottom of the screen.">
+          <Segmented
+            label="Vertical overlay position"
+            value={overlayVertical}
+            options={OVERLAY_VERTICAL_OPTIONS}
+            disabled={loading || Boolean(loadError)}
+            onChange={(value) => changeOverlayPosition(value, overlayHorizontal)}
+          />
+        </Row>
+        <Row label="Horizontal" hint="Left, middle, or right of the screen.">
+          <Segmented
+            label="Horizontal overlay position"
+            value={overlayHorizontal}
+            options={OVERLAY_HORIZONTAL_OPTIONS}
+            disabled={loading || Boolean(loadError)}
+            onChange={(value) => changeOverlayPosition(overlayVertical, value)}
+          />
+        </Row>
+      </Group>
+
       {loading ? (
         <div className="loading-row" role="status">
           <LoaderCircle className="spinning" aria-hidden="true" />
           Loading input devices…
         </div>
-      ) : error ? (
+      ) : loadError ? (
         <div className="error-empty" role="alert">
           <AlertCircle aria-hidden="true" />
           <div>
-            <strong>Microphones could not be loaded.</strong>
-            <span>{error}</span>
+            <strong>Dictation settings could not be loaded.</strong>
+            <span>{loadError}</span>
           </div>
-          <Button
-            onClick={() => setLoadAttempt((attempt) => attempt + 1)}
-            disabled={loading}
-          >
+          <Button onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
             <RotateCcw aria-hidden="true" />
             Retry
           </Button>
         </div>
       ) : null}
+
+      {!loading && error ? <Note tone="danger">{error}</Note> : null}
 
       <Note>
         Audio capture and transcription stay on this device. If cloud post-processing is

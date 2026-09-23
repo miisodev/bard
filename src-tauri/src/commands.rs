@@ -693,6 +693,11 @@ pub fn dictate_cancel(app: AppHandle) {
     crate::dictation::cancel(&app);
 }
 
+#[tauri::command]
+pub fn set_dictation_overlay_position(app: AppHandle, position: String) -> Result<(), String> {
+    crate::dictation::set_overlay_position(&app, &position)
+}
+
 pub struct ImagesDir(pub PathBuf);
 
 fn unique_image_path(dir: &Path, ext: &str) -> PathBuf {

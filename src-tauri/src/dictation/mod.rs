@@ -72,6 +72,10 @@ pub fn init(app: AppHandle) {
     model::start_unload_watcher(app);
 }
 
+pub fn set_overlay_position(app: &AppHandle, position: &str) -> Result<(), String> {
+    overlay::save_position(app, position)
+}
+
 pub fn mic_ready() -> bool {
     audio::mic_ready()
 }

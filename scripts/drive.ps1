@@ -81,7 +81,7 @@ public class BardDrive {
 # window is a helper, not the app.
 #
 # The app's own windows are exactly those of class "Tauri Window": here, the
-# 380x620 panel titled "Bard" and the 320x96 dictation overlay titled
+# 380x620 panel titled "Bard" and the 260x60 dictation overlay titled
 # "Recording". Match on the class and the crowd disappears.
 function Find-Windows($procName, $requireVisible, $minArea, $titleLike) {
   $owners = @{}

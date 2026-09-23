@@ -213,6 +213,7 @@ fn main() {
             commands::dictate_start,
             commands::dictate_stop,
             commands::dictate_cancel,
+            commands::set_dictation_overlay_position,
             commands::create_section,
             commands::set_active_section,
             commands::rename_section,

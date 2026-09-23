@@ -20,7 +20,8 @@ Windows.
   **Post-processing**; it sends only the finished transcript to OpenRouter and
   otherwise uses the local result. The text pastes into the app you're using, or
   lands in the timeline when the panel is open. Esc cancels; the model unloads
-  after five idle minutes.
+  after five idle minutes. In **Settings → Dictation**, the recording pill can
+  sit at the top or bottom of the screen and at the left, middle, or right.
 
 ## Keyboard shortcuts
 

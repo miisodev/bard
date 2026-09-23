@@ -76,6 +76,12 @@ bard owns four windows and a crowd of helpers.
 | `draw` | Drawing | 760 × 560 | Native | The drawing canvas |
 | `overlay` | Recording | 260 × 60 | Frameless, transparent, never focused | The dictation indicator |
 
+The overlay position is persisted as one of six values: `top-left`,
+`top-middle`, `top-right`, `bottom-left`, `bottom-middle`, or `bottom-right`.
+The native layer selects the monitor under the cursor, applies a DPI-aware
+40-pixel edge margin, and clamps the physical window bounds on small displays.
+The default is `bottom-middle`, preserving the original placement.
+
 **The panel is frameless and transparent** so its own rounded corners show the
 desktop through them. **It has no window shadow.** A window frame makes the
 save and restore of window size non-idempotent — the size accessors and the

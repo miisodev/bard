@@ -177,6 +177,13 @@ pick one.` The pane states that audio and local transcription stay on the
 device; if Post-processing is enabled, only the already-produced transcript
 text is sent to OpenRouter after local transcription.
 
+**Overlay position** → two independent segmented controls: Vertical (`Top` or
+`Bottom`) and Horizontal (`Left`, `Middle`, or `Right`). They compose into six
+valid positions. The setting is persisted immediately and applies to the next
+visible overlay, including a live reposition when the overlay is already open.
+Bard keeps a safe margin from the screen edge and clamps the pill on unusually
+small displays.
+
 ### 3.4 Models
 
 `Models` · `Choose what Bard uses for local transcription.`
@@ -392,14 +399,15 @@ itself.
 
 | State | Shows |
 |---|---|
-| Listening | `Listening…`, bars tracking the microphone |
-| Transcribing | `Transcribing…`, bars frozen |
-| Post-processing | `Finishing…`, bars frozen after local transcription has completed |
+| Listening | `Listening`, bars tracking the microphone |
+| Transcribing | `Transcribing`, bars frozen |
+| Post-processing | `Finishing`, bars frozen after local transcription has completed |
 | Local fallback | The cloud warning is reported outside the overlay; the preserved local transcript is pasted |
 | Hidden | Nothing. The window stays alive and empty between dictations |
 
-**Copy.** `Listening…` · `Transcribing…` · `Finishing…` · the `✕` is labelled
-`Cancel`.
+**Copy.** `Listening` · `Transcribing` · `Finishing` · the `✕` is labelled
+`Cancel`. The six placement choices are Top/Bottom combined with Left/Middle/
+Right.
 
 **Fails when.**
 

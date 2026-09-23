@@ -114,7 +114,7 @@ Every row is a user-visible capability.
 | B16 | **Always-on microphone**, channel selector | **missing** | |
 | B17 | **Model unload timeout** | **partial** | Fixed 5-minute idle unload; not configurable |
 | B18 | **Hardware acceleration** — GPU backend + runtime CPU-ISA dispatch, and a selector | **blocked on the build** | The change itself is one line: on Windows x86_64, `transcribe-cpp` with `features = ["dynamic-backends", "vulkan"]` — a Vulkan GPU backend plus per-ISA CPU modules scored at runtime. But any non-default feature set makes `transcribe-cpp-sys` compile ggml from source, and that build does not come up on this machine: it shortens paths through a symlink under `%LOCALAPPDATA%	cs` pointing at a per-build `out/` directory, and CMake cannot write into it (`os error 267`, then `Unable to open check cache file for write`). CMake also is not on PATH — see `docs/BUILD.md`. Solve the from-source build first; it is the gate for the whole acceleration story. (ONNX Runtime stays CPU-only on Windows on purpose — DirectML pulled a prebuilt with an AVX2 static initialiser that crashes pre-Haswell CPUs) |
-| B19 | **Recording overlay** — position, style, on/off | **verify** | Native overlay is now a compact, centered pill with no clipped border/shadow edge; installed-binary capture verified. Position and on/off settings remain future work. |
+| B19 | **Recording overlay** — position, style, on/off | **partial** | The overlay is a compact, centered pill with no clipped border/shadow edge; six persisted placements (top/bottom × left/middle/right) are implemented with DPI-aware, clamped bounds and live repositioning. On/off remains future work. |
 | B20 | **Shortcut activation mode** (hold vs toggle) + hold threshold | **done** | Same-key Ctrl+Ctrl has a 50 ms activation grace, 300 ms push-to-talk threshold, short-tap lock, ownership tokens, and cooperative `transcribe-cpp` cancellation. |
 | B21 | **Audio feedback** — start/stop sounds, theme, volume | **partial** | Capture sound only |
 | B22 | **Start hidden / show tray icon / autostart** | **partial** | Autostart done and now in General; start-hidden and tray-icon toggles still missing |
@@ -146,7 +146,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | D10 | **Settings has its own window** | **done** | 760x620, native chrome, sidebar: General / Capture / Dictation / Models / Post-processing / Shortcuts / Data / About. `src/settings/ui.tsx` carries the primitives — Pane, Group, Row, Toggle, Segmented, Select, Button, TextField, Note, Progress — so a new setting is a line of markup rather than a design decision taken again. The old sheet is deleted |
 | D9 | **Generate `types.ts` instead of hand-mirroring it** | **missing** | Today a Rust struct change breaks the frontend with no compile error. Handy generates bindings with `specta` + `tauri-specta`. Worth adopting before the surface triples |
 | D5 | **Real-audio verification** — the mic has never been exercised | **verify** | CPAL start, bounded recording, VAD silence stop, and no-speech fast exit were exercised on Windows; a human speech transcript round trip remains to be recorded. |
-| D6 | **Visual QA of every surface** | **in progress** | Earlier visual passes verified the panel (light and dark), overflow menu, empty state, composer menu, the drawing window and its round trip, and the settings window's General, Models, and Shortcuts panes. The current native pass additionally exercised the fixed gesture surface, Post-processing cancel state, and the refined recording overlay; onboarding, the section switcher, the context menu, and the Capture / Dictation / Data / About panes remain unseen or need rechecking. |
+| D6 | **Visual QA of every surface** | **in progress** | Earlier visual passes verified the panel (light and dark), overflow menu, empty state, composer menu, the drawing window and its round trip, and the settings window's General, Models, and Shortcuts panes. The current native pass additionally exercised the fixed gesture surface, Post-processing cancel state, the refined recording overlay, and the new Dictation settings controls. Onboarding, the section switcher, the context menu, and the Capture / Data / About panes remain unseen or need rechecking. |
 | D7 | **Accessibility** — keyboard reachability, focus rings, contrast, screen reader | **missing** | |
 | D8 | **Empty / error / loading states everywhere** | **missing** | |
 
@@ -538,3 +538,16 @@ transparent stage, the cancel affordance is borderless, and the level bars now
 animate with transforms rather than layout properties. The installed binary
 was recaptured after the change; the pill reads as one clean surface with no
 hard edge or smudge.
+
+**2026-09-23 — six-position overlay control.** Dictation settings now persist a
+vertical Top/Bottom choice and a horizontal Left/Middle/Right choice, composing
+six valid placements. The native positioner follows the monitor under the
+cursor, uses a DPI-aware 40-pixel edge margin, clamps on small displays, and
+repositions an already-visible overlay immediately. Focused Rust position tests
+cover all six values and the overflow case; the frontend typecheck, CSS audit,
+and bundle pass. The rebuilt NSIS binary was installed and exercised through
+Settings → Dictation: `top-left` persisted and rendered at `(40, 40)`,
+`bottom-right` at `(1300, 800)` on the 1600×900 test display, and the default
+`bottom-middle` at `(670, 800)`. The process stayed responsive and the overlay
+was recaptured at each representative placement; the user setting was restored
+to `bottom-middle` after the test.

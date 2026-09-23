@@ -10,6 +10,7 @@ import type {
   ModelInfo,
   ModelProgress,
   ModelStatus,
+  OverlayPosition,
   CrashReport,
   PostprocessingSettings,
   PostprocessingTestResponse,
@@ -108,6 +109,8 @@ export const api = {
 
   getMicrophones: () => invoke<string[]>("get_microphones"),
   setMicrophone: (name: string) => invoke<void>("set_microphone", { name }),
+  setDictationOverlayPosition: (position: OverlayPosition) =>
+    invoke<void>("set_dictation_overlay_position", { position }),
   dictateStart: () => invoke<void>("dictate_start"),
   dictateStop: () => invoke<void>("dictate_stop"),
   dictateCancel: () => invoke<void>("dictate_cancel"),

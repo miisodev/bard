@@ -132,6 +132,10 @@ export interface ModelStatus {
   owned: boolean;
 }
 
+export type OverlayVertical = "top" | "bottom";
+export type OverlayHorizontal = "left" | "middle" | "right";
+export type OverlayPosition = `${OverlayVertical}-${OverlayHorizontal}`;
+
 export interface AppState {
   sections: Section[];
   items: Item[];
