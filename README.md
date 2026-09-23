@@ -11,14 +11,16 @@ Windows.
   and everything you copy anywhere lands in a searchable timeline. Sections,
   favorites, multi-select, inline edit, mixed notes (images attached to
   text), Markdown export.
-- **Dictate** — hold `Ctrl+Space` and speak. Bard uses a local `transcribe-cpp`
-  GGUF model: choose Bard Fast, Bard English, or Bard Multilingual in
-  **Settings → Models**. Audio capture and local transcription stay on this
-  device. Optional text-only post-processing runs only after local transcription
-  when enabled in **Post-processing**; it sends only the finished transcript to
-  OpenRouter and otherwise uses the local result. The text pastes into the app
-  you're using, or lands in the timeline when the panel is open. Esc cancels
-  mid-recording; the model unloads after five idle minutes.
+- **Dictate** — tap the same `Ctrl` twice to start dictation, or hold the second
+  press for push-to-talk. A short tap locks recording so you can speak hands-free;
+  another `Ctrl` `Ctrl` stops it. Bard uses a local `transcribe-cpp` GGUF model:
+  choose Bard Fast, Bard English, or Bard Multilingual in **Settings → Models**.
+  Audio capture and local transcription stay on this device. Optional text-only
+  post-processing runs only after local transcription when enabled in
+  **Post-processing**; it sends only the finished transcript to OpenRouter and
+  otherwise uses the local result. The text pastes into the app you're using, or
+  lands in the timeline when the panel is open. Esc cancels; the model unloads
+  after five idle minutes.
 
 ## Keyboard shortcuts
 
@@ -26,7 +28,7 @@ Windows.
 | --- | --- |
 | Capture selection | `Shift` `Shift` (or `Ctrl+Shift+C`) |
 | Toggle panel | `Shift` `Shift` (right) or `Ctrl+Shift+Space` |
-| Dictate | hold `Ctrl+Space` |
+| Dictate | same-key `Ctrl` `Ctrl` (hold the second press for push-to-talk) |
 | Copy item | `Enter` |
 | Favorite | `Space` |
 | Delete | `Del` |
@@ -35,7 +37,7 @@ Windows.
 | Edit item | double-click |
 | Hide panel | `Esc` (steps: clear search → clear selection → hide) |
 
-All shortcuts are rebindable in Settings.
+Capture and panel chords are rebindable in Settings. The same-key double-tap gestures are fixed so they remain available everywhere.
 
 ## Building
 
@@ -62,8 +64,9 @@ and SHA-256; downloads resume, hash the complete file, and load through
 
 Tauri 2 (Rust + React/TS/Vite), SQLite as the single source of truth:
 
-- `src-tauri/src/capture.rs` — rdev double-shift listener + enigo copy chord,
-  zero-width-sentinel clipboard dance (from the cooper fork)
+- `src-tauri/src/capture.rs` — one rdev raw-input coordinator for the fixed
+  same-key Shift and Ctrl gestures, transactional OS shortcut registration, and
+  the enigo copy chord / zero-width-sentinel clipboard dance
 - `src-tauri/src/monitor.rs` — clipboard sequence poller, privacy-format aware,
   dedup by content
 - `src-tauri/src/dictation/` — cpal recording (device-selectable), rubato

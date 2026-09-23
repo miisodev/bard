@@ -171,9 +171,9 @@ pub fn save_postprocessing(
     };
 
     let credential_result: Result<(), String> = if clearing_key {
-        crate::cloud::delete_api_key().map_err(|error| error.to_string())
+        crate::cloud::delete_api_key_bounded().map_err(|error| error.to_string())
     } else if let Some(key) = api_key.as_deref().filter(|key| !key.trim().is_empty()) {
-        crate::cloud::set_api_key(key).map_err(|error| error.to_string())
+        crate::cloud::set_api_key_bounded(key.to_owned()).map_err(|error| error.to_string())
     } else {
         Ok(())
     };
@@ -207,11 +207,19 @@ pub fn save_postprocessing(
 
 #[tauri::command]
 pub async fn test_postprocessing(app: AppHandle) -> Result<serde_json::Value, String> {
+    crate::crash::record_event("cloud:test-start");
     let config = postprocessing_config(&app);
-    let message = crate::cloud::test_connection(&config, Duration::from_secs(20))
+    let result = crate::cloud::test_connection(&config, Duration::from_secs(15))
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string());
+    crate::crash::record_event("cloud:test-end");
+    let message = result?;
     Ok(serde_json::json!({ "ok": true, "message": message }))
+}
+
+#[tauri::command]
+pub fn test_postprocessing_cancel() {
+    crate::cloud::cancel_test_connection();
 }
 
 #[derive(Serialize)]
@@ -584,9 +592,13 @@ pub fn set_theme(app: AppHandle, theme: String) {
 }
 
 #[tauri::command]
-pub fn set_keybinds(app: AppHandle, json: String) {
-    db::set_setting(&app, "keybinds", &json);
-    crate::capture::register_shortcuts(&app);
+pub fn set_keybinds(app: AppHandle, json: String) -> Result<(), String> {
+    crate::capture::apply_keybinds(&app, &json)
+}
+
+#[tauri::command]
+pub fn set_shortcut_recording(active: bool) {
+    crate::capture::set_shortcut_recording(active);
 }
 
 #[tauri::command]

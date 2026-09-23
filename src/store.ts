@@ -51,6 +51,8 @@ export const api = {
   getExportDir: () => invoke<string>("get_export_dir"),
   setTheme: (theme: string) => invoke<void>("set_theme", { theme }),
   setKeybinds: (json: string) => invoke<void>("set_keybinds", { json }),
+  setShortcutRecording: (active: boolean) =>
+    invoke<void>("set_shortcut_recording", { active }),
   setOnboardingCompleted: (done: boolean) =>
     invoke<void>("set_onboarding_completed", { done }),
   setAutostart: (enabled: boolean) => invoke<unknown>("set_autostart", { enabled }),
@@ -101,6 +103,7 @@ export const api = {
     invoke<PostprocessingSettings | void>("save_postprocessing", { ...input }),
   testPostprocessing: () =>
     invoke<PostprocessingTestResponse>("test_postprocessing"),
+  testPostprocessingCancel: () => invoke<void>("test_postprocessing_cancel"),
   getCrashReport: () => invoke<CrashReport | null>("get_crash_report"),
 
   getMicrophones: () => invoke<string[]>("get_microphones"),
@@ -113,7 +116,6 @@ export const api = {
 export const DEFAULT_KEYBINDS: Record<string, string> = {
   capture: "Ctrl+Shift+C",
   panel: "Ctrl+Shift+Space",
-  dictate: "Ctrl+Space",
 };
 
 let shortcutRecording = false;

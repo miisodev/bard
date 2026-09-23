@@ -58,6 +58,8 @@ export default function App() {
         }),
       );
     };
+    const clearDictation = () =>
+      setDictation((current) => ({ ...current, listening: false, transcribing: false }));
 
     refresh();
     subscribe(listen("refresh", refresh));
@@ -81,10 +83,12 @@ export default function App() {
     );
     subscribe(
       listen("dictation-error", (event) => {
+        clearDictation();
         const message = event.payload as string;
         window.dispatchEvent(new CustomEvent("bard-toast", { detail: message }));
       }),
     );
+    subscribe(listen("dictation-cancelled", clearDictation));
     subscribe(
       listen("dictation-cloud-warning", (event) => {
         const message = event.payload as string;

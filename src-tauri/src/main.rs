@@ -7,6 +7,7 @@ mod commands;
 mod crash;
 mod db;
 mod dictation;
+mod gesture;
 mod guardian;
 mod hf;
 mod monitor;
@@ -45,11 +46,16 @@ fn open_database() -> Option<rusqlite::Connection> {
 
 fn main() {
     crash::install(&diagnostics_dir());
+    crash::record_event("app:start");
+    guardian::install_console_handler();
     let args = std::env::args().collect::<Vec<_>>();
     if args.iter().any(|a| a == "--guardian") {
         guardian::run();
         return;
     }
+    // A clean-exit marker belongs to the previous process. Leaving it on disk
+    // would make a crash during this launch look clean to the new guardian.
+    guardian::clear_stale_marker();
     if !args.iter().any(|a| a == "--restarted") && std::env::var("BARD_NO_GUARDIAN").is_err() {
         if let Some(exe) = args.first() {
             if exe.contains(':') || exe.contains('\\') || exe.contains('/') {
@@ -115,7 +121,7 @@ fn main() {
                 db::set_setting(
                     &handle,
                     "keybinds",
-                    "{\"capture\":\"Ctrl+Shift+C\",\"panel\":\"Ctrl+Shift+Space\",\"dictate\":\"Ctrl+Space\"}",
+                    "{\"capture\":\"Ctrl+Shift+C\",\"panel\":\"Ctrl+Shift+Space\"}",
                 );
             }
             capture::repair_keybinds(&handle);
@@ -125,8 +131,6 @@ fn main() {
             dictation::init(handle.clone());
 
             tray::create(app)?;
-
-
             let main = app.get_webview_window("main").unwrap();
             panel::position(&main);
 
@@ -190,6 +194,7 @@ fn main() {
             commands::image_data,
             commands::set_theme,
             commands::set_keybinds,
+            commands::set_shortcut_recording,
             commands::set_onboarding_completed,
             commands::set_autostart,
             commands::set_capture_double_shift,
@@ -237,6 +242,7 @@ fn main() {
             commands::get_postprocessing,
             commands::save_postprocessing,
             commands::test_postprocessing,
+            commands::test_postprocessing_cancel,
             commands::get_crash_report,
         ])
         .run(tauri::generate_context!())

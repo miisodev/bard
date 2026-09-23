@@ -252,6 +252,22 @@ export function PostprocessingPane(_: PaneProps) {
       const response = await api.testPostprocessing();
       setStatus(testResponse(response, settings.modelName ?? savedModelId));
     } catch (reason) {
+      const message = errorText(reason);
+      if (message.toLowerCase().includes("cancel")) {
+        setStatus({ tone: "muted", message: "Connection test cancelled." });
+      } else {
+        setError(message);
+      }
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const cancelTest = async () => {
+    try {
+      await api.testPostprocessingCancel();
+      setStatus({ tone: "muted", message: "Connection test cancelled." });
+    } catch (reason) {
       setError(errorText(reason));
     } finally {
       setTesting(false);
@@ -386,14 +402,21 @@ export function PostprocessingPane(_: PaneProps) {
             {saving ? <LoaderCircle className="spinning" aria-hidden="true" /> : <Save aria-hidden="true" />}
             {saving ? "Saving…" : "Save"}
           </Button>
-          <Button
-            onClick={() => void testConnection()}
-            disabled={controlsDisabled || dirty}
-            ariaBusy={testing}
-          >
-            {testing ? <LoaderCircle className="spinning" aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
-            {testing ? "Testing…" : "Test connection"}
-          </Button>
+          {testing ? (
+            <Button onClick={() => void cancelTest()} ariaBusy={true}>
+              <LoaderCircle className="spinning" aria-hidden="true" />
+              Cancel test
+            </Button>
+          ) : (
+            <Button
+              onClick={() => void testConnection()}
+              disabled={controlsDisabled || dirty}
+              ariaBusy={false}
+            >
+              <PlugZap aria-hidden="true" />
+              Test connection
+            </Button>
+          )}
           <Button
             onClick={() => void clearKey()}
             disabled={controlsDisabled || (!keyConfigured && !apiKey)}

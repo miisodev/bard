@@ -199,8 +199,8 @@ export default function Onboarding({
         <>
           <h1>You're set</h1>
           <p>
-            Tap <kbd>Shift</kbd> <kbd>Shift</kbd> to capture a selection, hold{" "}
-            <kbd>Ctrl</kbd> <kbd>Space</kbd> to dictate, and open the panel with{" "}
+            Tap <kbd>Shift</kbd> <kbd>Shift</kbd> to capture a selection, tap the same{" "}
+            <kbd>Ctrl</kbd> twice to dictate (hold it for push-to-talk), and open the panel with{" "}
             <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd>.
           </p>
           <div className="setting-row">

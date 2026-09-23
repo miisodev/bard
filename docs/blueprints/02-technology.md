@@ -31,7 +31,10 @@ windows, input, storage and transcription, and a React webview that draws.
 
 **Rust core.** Requires the MSVC toolchain. Owns everything that must be true
 when no window is open — the global shortcut hooks, the clipboard monitor, the
-tray, the database.
+tray, the database. The raw `rdev` hook forwards events to a normal worker;
+fixed same-key Shift/Control gestures, CPAL monitoring, and model work never
+call Tauri window APIs from a callback or audio thread. Native window work is
+always queued onto the UI thread.
 
 **Webview.** React with TypeScript, built by [Vite](https://vite.dev). No
 router, no state library, no CSS framework. **The webview renders in WebView2**,

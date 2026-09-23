@@ -1,17 +1,32 @@
 use tauri::{AppHandle, Emitter, Manager};
 
+/// The recording overlay is a native Tauri window. It is reached from the raw
+/// keyboard listener, the audio callback, and the transcription worker, none of
+/// which are the Windows UI thread. Queue every window operation explicitly;
+/// calling `show()`/`hide()` directly from those threads can deadlock the
+/// WebView and make the whole process appear crashed.
 pub fn show(app: &AppHandle, state: &str) {
-    if let Some(win) = app.get_webview_window("overlay") {
-        position(app, &win);
-        let _ = win.show();
-        let _ = app.emit("dictation-overlay", state);
-    }
+    let app = app.clone();
+    let state = state.to_owned();
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = task_app.get_webview_window("overlay") {
+            position(&task_app, &win);
+            let _ = win.show();
+            let _ = task_app.emit("dictation-overlay", state);
+        }
+    });
 }
 
 pub fn hide(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("overlay") {
-        let _ = win.hide();
-    }
+    let app = app.clone();
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = task_app.get_webview_window("overlay") {
+            let _ = win.hide();
+        }
+        let _ = task_app.emit("dictation-overlay", "idle");
+    });
 }
 
 fn position(app: &AppHandle, win: &tauri::WebviewWindow) {

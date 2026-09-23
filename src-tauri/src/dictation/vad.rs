@@ -8,6 +8,7 @@ pub struct VadState {
     in_speech: bool,
     onset_ms: u64,
     hangover_ms: u64,
+    speech_detected: bool,
     pub silence_ms: u64,
 }
 
@@ -18,6 +19,7 @@ impl VadState {
             in_speech: false,
             onset_ms: 0,
             hangover_ms: 0,
+            speech_detected: false,
             silence_ms: 0,
         }
     }
@@ -25,6 +27,7 @@ impl VadState {
     pub fn feed(&mut self, frame: &[f32]) -> f32 {
         let prob = self.detector.predict_f32(frame);
         if prob >= 0.35 {
+            self.speech_detected = true;
             self.silence_ms = 0;
             self.hangover_ms = HANGOVER_MS;
             if !self.in_speech {
@@ -48,8 +51,7 @@ impl VadState {
         prob
     }
 
-    pub fn level(&self, frame: &[f32]) -> f32 {
-        let rms = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt();
-        (rms * 6.0).min(1.0)
+    pub fn speech_detected(&self) -> bool {
+        self.speech_detected
     }
 }

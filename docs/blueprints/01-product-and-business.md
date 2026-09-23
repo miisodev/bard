@@ -180,9 +180,10 @@ section.
 
 ## §4 Feature behaviour — dictation
 
-Holding the dictation shortcut records; releasing transcribes. The text is
-pasted into whatever application has focus, or lands in the timeline when the
-panel is open.
+The same-key `Ctrl Ctrl` gesture starts dictation. Holding the second Control
+press is push-to-talk; a short release leaves the take locked, and a later
+`Ctrl Ctrl` stops it. The text is pasted into whatever application has focus,
+or lands in the timeline when the panel is open.
 
 **Audio capture and local transcription run entirely on the machine.** The model
 is selected in `Models`, which presents `Bard models`, `On this computer`, and

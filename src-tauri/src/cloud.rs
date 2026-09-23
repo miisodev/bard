@@ -14,7 +14,8 @@
 
 use std::collections::HashSet;
 use std::fmt;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -22,6 +23,7 @@ use keyring::Entry;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::{Response, StatusCode};
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 /// The provider ID used by the settings/status layer.
 pub const PROVIDER_ID: &str = "openrouter";
@@ -51,6 +53,8 @@ pub const MODEL_IDS_SETTING_KEY: &str = "openrouter_postprocess_model_ids";
 /// small enough to validate and paste atomically.
 pub const MAX_OUTPUT_TOKENS: u32 = 512;
 pub const MAX_TRANSCRIPT_CHARS: usize = 100_000;
+const CREDENTIAL_READ_TIMEOUT: Duration = Duration::from_secs(2);
+static TEST_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 /// Maximum response size accepted before parsing. This is a guard against a
 /// provider returning an unexpectedly large body, not a transcript-size limit.
@@ -172,6 +176,7 @@ pub enum Error {
     },
     InvalidApiKey,
     MissingApiKey,
+    Cancelled,
     InvalidConfiguration {
         reason: &'static str,
     },
@@ -270,6 +275,7 @@ impl fmt::Display for Error {
             }
             Self::InvalidApiKey => f.write_str("the OpenRouter API key is invalid"),
             Self::MissingApiKey => f.write_str("no OpenRouter API key is configured"),
+            Self::Cancelled => f.write_str("OpenRouter connection test cancelled"),
             Self::InvalidConfiguration { reason } => {
                 write!(f, "invalid OpenRouter configuration: {reason}")
             }
@@ -333,6 +339,49 @@ fn get_api_key() -> Result<Option<Secret>, Error> {
     }
 }
 
+fn get_api_key_bounded(timeout: Duration) -> PostprocessResult<Option<Secret>> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = sender.send(get_api_key());
+    });
+    receiver.recv_timeout(timeout).map_err(|_| {
+        Error::Provider(ProviderError::Transport {
+            kind: TransportKind::Timeout,
+        })
+    })?
+}
+
+pub(crate) fn set_api_key_bounded(api_key: String) -> Result<(), Error> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = set_api_key(&api_key);
+        let mut api_key = api_key;
+        api_key.zeroize();
+        let _ = sender.send(result);
+    });
+    receiver
+        .recv_timeout(CREDENTIAL_READ_TIMEOUT)
+        .map_err(|_| {
+            Error::Provider(ProviderError::Transport {
+                kind: TransportKind::Timeout,
+            })
+        })?
+}
+
+pub(crate) fn delete_api_key_bounded() -> Result<(), Error> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = sender.send(delete_api_key());
+    });
+    receiver
+        .recv_timeout(CREDENTIAL_READ_TIMEOUT)
+        .map_err(|_| {
+            Error::Provider(ProviderError::Transport {
+                kind: TransportKind::Timeout,
+            })
+        })?
+}
+
 /// Store or replace the API key in Windows Credential Manager (or the native
 /// store selected by keyring on another supported platform).
 ///
@@ -373,7 +422,7 @@ pub fn delete_api_key() -> Result<(), Error> {
 /// Return only whether a key exists. The secret is read and dropped inside the
 /// module; it is not available to a Tauri command or status response.
 pub fn has_api_key() -> Result<bool, Error> {
-    Ok(get_api_key()?.is_some())
+    Ok(get_api_key_bounded(CREDENTIAL_READ_TIMEOUT)?.is_some())
 }
 
 /// Safe status for a settings surface. The API key is represented only by a
@@ -426,18 +475,62 @@ fn normalize_user_models_next(value: &str) -> Option<String> {
     None
 }
 
+pub fn cancel_test_connection() {
+    TEST_CANCELLED.store(true, Ordering::Release);
+}
+
+fn reset_test_cancellation() {
+    TEST_CANCELLED.store(false, Ordering::Release);
+}
+
+fn test_cancelled() -> bool {
+    TEST_CANCELLED.load(Ordering::Acquire)
+}
+
+async fn wait_for_test_cancellation() {
+    while !test_cancelled() {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Validate the stored key and model list with metadata-only provider calls.
 /// No transcript is sent by this operation.
+///
+/// `timeout` is a total budget, not a budget that gets renewed for every page
+/// of the model catalogue. A connection test must be safe to leave in a
+/// settings pane: the user should receive a bounded error, never an apparently
+/// frozen window.
 pub async fn test_connection(config: &Config, timeout: Duration) -> PostprocessResult<String> {
     if timeout.is_zero() {
         return Err(Error::InvalidConfiguration {
             reason: "timeout must be greater than zero",
         });
     }
+    reset_test_cancellation();
+    tokio::select! {
+        result = tokio::time::timeout(timeout, test_connection_inner(config, timeout)) => {
+            match result {
+                Ok(result) => result,
+                Err(_) => Err(Error::Provider(ProviderError::Transport {
+                    kind: TransportKind::Timeout,
+                })),
+            }
+        }
+        _ = wait_for_test_cancellation() => Err(Error::Cancelled),
+    }
+}
+
+async fn test_connection_inner(
+    config: &Config,
+    request_timeout: Duration,
+) -> PostprocessResult<String> {
+    if test_cancelled() {
+        return Err(Error::Cancelled);
+    }
     let model_id = active_model_id(config)?;
-    let api_key = get_api_key()?.ok_or(Error::MissingApiKey)?;
+    let api_key = get_api_key_bounded(CREDENTIAL_READ_TIMEOUT)?.ok_or(Error::MissingApiKey)?;
     let client = reqwest::Client::builder()
-        .timeout(timeout)
+        .timeout(request_timeout)
         .build()
         .map_err(|_| {
             Error::Provider(ProviderError::Transport {
@@ -458,6 +551,9 @@ pub async fn test_connection(config: &Config, timeout: Duration) -> PostprocessR
     let mut next_url = OPENROUTER_USER_MODELS_ENDPOINT.to_string();
     let mut visited = HashSet::new();
     for _ in 0..5 {
+        if test_cancelled() {
+            return Err(Error::Cancelled);
+        }
         if !visited.insert(next_url.clone()) {
             break;
         }
@@ -522,7 +618,7 @@ pub async fn postprocess(
 
     let model_id = active_model_id(config)?;
     let request = build_request(model_id, raw_transcript);
-    let api_key = get_api_key()?.ok_or(Error::MissingApiKey)?;
+    let api_key = get_api_key_bounded(CREDENTIAL_READ_TIMEOUT)?.ok_or(Error::MissingApiKey)?;
     let result = send_completion(&request, &api_key, timeout).await;
     // `api_key` is dropped here, where its Drop implementation overwrites the
     // local string bytes. It is never included in an error or a log.
@@ -632,25 +728,37 @@ pub fn redact_secrets(message: &str, secret: &str) -> String {
 }
 
 fn redact_bearer_values(message: &str) -> String {
+    // ASCII lower-casing preserves byte offsets, so every slice below remains
+    // on a UTF-8 boundary. The previous `end + 1` retry could land inside a
+    // multi-byte whitespace character after an empty bearer value.
     let lower = message.to_ascii_lowercase();
     let marker = "bearer ";
     let mut replacements = Vec::new();
     let mut search_from = 0usize;
 
-    while let Some(relative_start) = lower[search_from..].find(marker) {
+    while let Some(relative_start) = lower.get(search_from..).and_then(|tail| tail.find(marker)) {
         let start = search_from + relative_start;
         let value_start = start + marker.len();
-        let Some(relative_end) = message[value_start..].find(|character: char| {
-            character.is_whitespace() || matches!(character, '"' | '\'' | ',' | ')' | '}' | ']')
-        }) else {
-            break;
-        };
-        let end = value_start + relative_end;
+        let end = message
+            .get(value_start..)
+            .and_then(|tail| {
+                tail.find(|character: char| {
+                    character.is_whitespace()
+                        || matches!(character, '"' | '\'' | ',' | ')' | '}' | ']')
+                })
+            })
+            .map(|relative_end| value_start + relative_end)
+            .unwrap_or(message.len());
         if end > value_start {
             replacements.push((start, end));
             search_from = end;
         } else {
-            search_from = end.saturating_add(1);
+            // Skip the whole delimiter code point, not one byte of it.
+            search_from = message[value_start..]
+                .char_indices()
+                .nth(1)
+                .map(|(offset, _)| value_start + offset)
+                .unwrap_or(message.len());
         }
     }
 
@@ -1033,6 +1141,16 @@ mod tests {
         let redacted = redact_secrets(&message, secret);
         assert!(!redacted.contains(secret));
         assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn bearer_redaction_keeps_utf8_boundaries() {
+        let message = "Bearer\u{2003}secret";
+        assert_eq!(redact_bearer_values(message), message);
+        assert_eq!(
+            redact_bearer_values("Bearer\u{2003}secret and Bearer token"),
+            "Bearer\u{2003}secret and Bearer [REDACTED]"
+        );
     }
 
     #[test]

@@ -125,9 +125,9 @@ with a progress meter · ready · failed, with a retry.
 
 - Step 1 title: `Bard`
 - Step 2 title: `Offline voice`, naming the model it is about to fetch
-- Step 3 title: `You're set`, then: `Tap ⇧ ⇧ to capture a selection, hold
-  Ctrl Space to dictate, and open the panel with Ctrl Shift Space.` — each key
-  rendered as a key cap
+- Step 3 title: `You're set`, then: `Tap ⇧ ⇧ to capture a selection, tap the same
+  Ctrl twice to dictate (hold the second press for push-to-talk), and open the
+  panel with Ctrl Shift Space.` — each key rendered as a key cap
 - Step 3 option: `Start Bard at login` / `Runs quietly in the tray`
 
 **Fails when.** *The model download fails.* Onboarding completes anyway. A
@@ -252,10 +252,11 @@ discovery is list-based.
 
 `Shortcuts` · `Global keys, active whatever you are using.`
 
-Three rebindable rows — **Capture selection**, **Toggle panel**, **Dictate** —
-each recorded by pressing the combination. A **Fixed** group lists the two
-double-tap gestures, which cannot be rebound. A **Reset shortcuts** row puts
-every binding back: `Puts every binding back to its default.`
+Two rebindable rows — **Capture selection** and **Toggle panel** — are recorded
+by pressing the combination. A **Fixed gestures** group lists same-key
+`Left Shift × 2`, `Right Shift × 2`, and `Ctrl × 2`; the Control gesture starts
+or stops dictation and cannot be rebound. A **Reset shortcuts** row puts every
+normal binding back.
 
 ### 3.6 Data
 

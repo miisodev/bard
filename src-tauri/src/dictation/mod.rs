@@ -4,15 +4,15 @@ mod overlay;
 mod vad;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub use model::{
-    ModelInfo, ModelStatus, cancel_download, delete_model, download_model, model_ready,
-    model_status, models,
+    cancel_download, delete_model, download_model, model_ready, model_status, models, ModelInfo,
+    ModelStatus,
 };
 
 pub fn reset_cancel() {
@@ -34,8 +34,7 @@ pub enum DictState {
 }
 
 static STATE: Mutex<DictState> = Mutex::new(DictState::Idle);
-static PRESSED_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-static ESC_SHORTCUT: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
+static OWNER: Mutex<Option<u64>> = Mutex::new(None);
 static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static OPERATION_CANCELLED: AtomicBool = AtomicBool::new(false);
 
@@ -53,6 +52,22 @@ fn cancel_operation() {
     OPERATION_CANCELLED.store(true, Ordering::SeqCst);
 }
 
+fn state_lock() -> MutexGuard<'static, DictState> {
+    STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn owner_lock() -> MutexGuard<'static, Option<u64>> {
+    OWNER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn clear_owner() {
+    *owner_lock() = None;
+}
+
 pub fn init(app: AppHandle) {
     model::start_unload_watcher(app);
 }
@@ -65,71 +80,101 @@ pub fn list_input_devices() -> Vec<String> {
     audio::list_input_devices()
 }
 
-pub fn toggle(app: &AppHandle) {
-    match *STATE.lock().unwrap() {
-        DictState::Idle => {
-            *PRESSED_AT.lock().unwrap() = Some(std::time::Instant::now());
+/// Start a take owned by one Ctrl+Ctrl gesture. The token prevents a late raw
+/// release from stopping a take that was started by the tray, a command, or a
+/// later gesture.
+pub fn gesture_press(app: &AppHandle, token: u64) {
+    let action = {
+        let state = state_lock();
+        match *state {
+            DictState::Idle => {
+                *owner_lock() = Some(token);
+                Some(true)
+            }
+            DictState::Recording => Some(false),
+            DictState::Transcribing => None,
+        }
+    };
+    match action {
+        Some(true) => {
             start(app);
         }
-        DictState::Recording => stop(app),
-        DictState::Transcribing => {}
+        Some(false) => stop(app),
+        None => {}
     }
 }
 
-pub fn release(app: &AppHandle) {
-    let held = PRESSED_AT
-        .lock()
-        .unwrap()
-        .map(|t| t.elapsed().as_millis() > 300)
-        .unwrap_or(true);
-    if held {
+pub fn gesture_release(app: &AppHandle, token: u64, held_for: Duration) {
+    let owns_take = *owner_lock() == Some(token);
+    if !owns_take {
+        return;
+    }
+    if held_for >= crate::gesture::DICTATION_HOLD_LIMIT {
         stop(app);
-    }
-    *PRESSED_AT.lock().unwrap() = None;
-}
-
-fn register_esc_cancel(app: &AppHandle) {
-    use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-    let mgr = app.global_shortcut();
-    let shortcut = Shortcut::new(Some(Modifiers::empty()), Code::Escape);
-    let _ = mgr.on_shortcut(shortcut, |app, _s, _e| {
-        cancel(app);
-    });
-    *ESC_SHORTCUT.lock().unwrap() = Some(shortcut);
-}
-
-fn unregister_esc_cancel(app: &AppHandle) {
-    use tauri_plugin_global_shortcut::GlobalShortcutExt;
-    if let Some(s) = ESC_SHORTCUT.lock().unwrap().take() {
-        let _ = app.global_shortcut().unregister(s);
+    } else {
+        // A short tap leaves the recording locked. A later complete Ctrl+Ctrl
+        // gesture will stop it; a stale release cannot do so accidentally.
+        clear_owner();
     }
 }
 
-pub fn start(app: &AppHandle) {
-    let mut state = STATE.lock().unwrap();
-    if *state != DictState::Idle {
-        return;
+pub fn start(app: &AppHandle) -> bool {
+    {
+        let mut state = state_lock();
+        if *state != DictState::Idle {
+            return false;
+        }
+        if !model_ready(app) {
+            clear_owner();
+            let _ = app.emit(
+                "dictation-error",
+                "Voice model not downloaded yet. Open Settings to install it.",
+            );
+            return false;
+        }
+        if !audio::mic_ready() {
+            clear_owner();
+            let _ = app.emit("dictation-error", "No microphone found.");
+            return false;
+        }
+        *state = DictState::Recording;
     }
-    if !model_ready(app) {
-        let _ = app.emit(
-            "dictation-error",
-            "Voice model not downloaded yet. Open Settings to install it.",
-        );
-        return;
-    }
-    if !audio::mic_ready() {
-        let _ = app.emit("dictation-error", "No microphone found.");
-        return;
-    }
-    *state = DictState::Recording;
+    crate::crash::record_event("dictation:start-requested");
+
     overlay::show(app, "listening");
-    register_esc_cancel(app);
-    audio::start(app.clone());
+    if let Err(error) = audio::start(app.clone()) {
+        crate::crash::record_event("dictation:audio-start-failed");
+        overlay::hide(app);
+        *state_lock() = DictState::Idle;
+        clear_owner();
+        let _ = app.emit("dictation-error", error);
+        return false;
+    }
+    true
 }
 
 async fn wait_for_operation_cancel(operation: u64) {
     while !operation_cancelled(operation) {
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn bounded_postprocess(
+    local: &str,
+    config: &crate::cloud::Config,
+) -> crate::cloud::PostprocessResult<String> {
+    match tokio::time::timeout(
+        Duration::from_secs(20),
+        crate::cloud::postprocess(local, config, Duration::from_secs(15)),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(crate::cloud::Error::Provider(
+            crate::cloud::ProviderError::Transport {
+                kind: crate::cloud::TransportKind::Timeout,
+            },
+        )),
     }
 }
 
@@ -143,19 +188,20 @@ fn postprocess_transcript(app: &AppHandle, local: String, operation: u64) -> Str
     }
 
     overlay::show(app, "finishing");
-    let result: Option<crate::cloud::PostprocessResult<String>> = match tokio::runtime::Runtime::new() {
-        Ok(runtime) => runtime.block_on(async {
-            tokio::select! {
-                result = crate::cloud::postprocess(&local, &config, Duration::from_secs(20)) => Some(result),
-                _ = wait_for_operation_cancel(operation) => None,
-            }
-        }),
-        Err(_) => Some(Err(crate::cloud::Error::Provider(
-            crate::cloud::ProviderError::Transport {
-                kind: crate::cloud::TransportKind::Request,
-            },
-        ))),
-    };
+    let result: Option<crate::cloud::PostprocessResult<String>> =
+        match tokio::runtime::Runtime::new() {
+            Ok(runtime) => runtime.block_on(async {
+                tokio::select! {
+                    result = bounded_postprocess(&local, &config) => Some(result),
+                    _ = wait_for_operation_cancel(operation) => None,
+                }
+            }),
+            Err(_) => Some(Err(crate::cloud::Error::Provider(
+                crate::cloud::ProviderError::Transport {
+                    kind: crate::cloud::TransportKind::Request,
+                },
+            ))),
+        };
     let Some(result) = result else {
         return local;
     };
@@ -172,22 +218,36 @@ fn postprocess_transcript(app: &AppHandle, local: String, operation: u64) -> Str
 }
 
 pub fn stop(app: &AppHandle) {
-    let mut state = STATE.lock().unwrap();
+    let mut state = state_lock();
     if *state != DictState::Recording {
         return;
     }
     *state = DictState::Transcribing;
+    clear_owner();
+    crate::crash::record_event("dictation:stop-requested");
     let operation = begin_operation();
-    unregister_esc_cancel(app);
     let app = app.clone();
     std::thread::spawn(move || {
-        let mut samples = audio::stop();
-        if !samples.is_empty() && samples.len() < 16000 {
+        let recording = audio::stop();
+        if let Some(error) = recording.error {
+            overlay::hide(&app);
+            *state_lock() = DictState::Idle;
+            let _ = app.emit("dictation-error", error);
+            return;
+        }
+        let mut samples = recording.samples;
+        if samples.is_empty() || !recording.speech_detected {
+            overlay::hide(&app);
+            *state_lock() = DictState::Idle;
+            let _ = app.emit("dictation-error", "Nothing heard.");
+            return;
+        }
+        if samples.len() < 16000 {
             samples.resize(20000, 0.0);
         }
         if operation_cancelled(operation) {
             overlay::hide(&app);
-            *STATE.lock().unwrap() = DictState::Idle;
+            *state_lock() = DictState::Idle;
             let _ = app.emit("dictation-cancelled", ());
             return;
         }
@@ -195,7 +255,7 @@ pub fn stop(app: &AppHandle) {
         let outcome = model::transcribe(&app, &samples).map(clean_text);
         if operation_cancelled(operation) {
             overlay::hide(&app);
-            *STATE.lock().unwrap() = DictState::Idle;
+            *state_lock() = DictState::Idle;
             let _ = app.emit("dictation-cancelled", ());
             return;
         }
@@ -204,7 +264,7 @@ pub fn stop(app: &AppHandle) {
                 let text = postprocess_transcript(&app, text, operation);
                 if operation_cancelled(operation) {
                     overlay::hide(&app);
-                    *STATE.lock().unwrap() = DictState::Idle;
+                    *state_lock() = DictState::Idle;
                     let _ = app.emit("dictation-cancelled", ());
                     return;
                 }
@@ -220,7 +280,7 @@ pub fn stop(app: &AppHandle) {
                     let _ = app.emit("dictation-panel", text);
                 } else {
                     let _ = crate::paste::set_text(&app, &text);
-                    paste_chord();
+                    paste_chord(&app);
                     let _ = app.emit("dictation-pasted", ());
                 }
             }
@@ -232,20 +292,21 @@ pub fn stop(app: &AppHandle) {
             }
         }
         overlay::hide(&app);
-        *STATE.lock().unwrap() = DictState::Idle;
+        *state_lock() = DictState::Idle;
     });
 }
 
 pub fn cancel(app: &AppHandle) {
-    let state = *STATE.lock().unwrap();
+    let state = *state_lock();
     if state == DictState::Recording {
-        unregister_esc_cancel(app);
+        clear_owner();
         audio::cancel();
         cancel_operation();
         overlay::hide(app);
-        *STATE.lock().unwrap() = DictState::Idle;
+        *state_lock() = DictState::Idle;
         let _ = app.emit("dictation-cancelled", ());
     } else if state == DictState::Transcribing {
+        model::cancel_transcription();
         cancel_operation();
         overlay::show(app, "cancelling");
         let _ = app.emit("dictation-cancel-requested", ());
@@ -253,7 +314,7 @@ pub fn cancel(app: &AppHandle) {
 }
 
 pub fn is_recording() -> bool {
-    *STATE.lock().unwrap() == DictState::Recording
+    *state_lock() == DictState::Recording
 }
 
 fn clean_text(raw: String) -> String {
@@ -286,7 +347,9 @@ fn clean_text(raw: String) -> String {
 }
 
 fn strip_fillers(t: &str) -> String {
-    for f in ["um, ", "um ", "uh, ", "uh ", "uhm, ", "uhm ", "hmm, ", "hmm ", "er, ", "er ", "ahem, "] {
+    for f in [
+        "um, ", "um ", "uh, ", "uh ", "uhm, ", "uhm ", "hmm, ", "hmm ", "er, ", "er ", "ahem, ",
+    ] {
         if t.to_lowercase().starts_with(f) {
             return t[f.len()..].trim_start().to_string();
         }
@@ -294,8 +357,9 @@ fn strip_fillers(t: &str) -> String {
     t.to_string()
 }
 
-fn paste_chord() {
+fn paste_chord(app: &AppHandle) {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    let _synthetic_input = crate::capture::SyntheticInputGuard::enter();
     let snapshot = arboard::Clipboard::new()
         .ok()
         .and_then(|mut c| c.get_text().ok());
@@ -310,6 +374,7 @@ fn paste_chord() {
     let _ = enigo.key(Key::Control, Direction::Release);
     std::thread::sleep(std::time::Duration::from_millis(60));
     if let Some(old) = snapshot {
+        crate::monitor::note_own_write(app);
         if let Ok(mut cb) = arboard::Clipboard::new() {
             let _ = cb.set_text(old);
         }

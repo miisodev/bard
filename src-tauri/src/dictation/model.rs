@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
 
 use serde::Serialize;
 use tauri::AppHandle;
-use transcribe_cpp::{Model, RunOptions, Session};
+use transcribe_cpp::{CancelToken, Model, RunOptions, Session};
 
 /// A model as the downloader needs it. Sourced from the catalog rather than
 /// declared here — see `crate::catalog`, where a model's architecture also
@@ -73,7 +73,8 @@ pub struct ModelStatus {
     pub owned: bool,
 }
 
-static SESSION: Mutex<Option<(String, Session)>> = Mutex::new(None);
+static SESSION: Mutex<Option<(String, Session, CancelToken)>> = Mutex::new(None);
+static ACTIVE_CANCEL: Mutex<Option<CancelToken>> = Mutex::new(None);
 static INIT_BACKENDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static CANCEL_DOWNLOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LAST_USE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -254,6 +255,16 @@ pub fn model_status(app: &AppHandle) -> ModelStatus {
     }
 }
 
+pub fn cancel_transcription() {
+    if let Some(token) = ACTIVE_CANCEL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+    {
+        token.cancel();
+    }
+}
+
 pub fn cancel_download() {
     CANCEL_DOWNLOAD.store(true, std::sync::atomic::Ordering::SeqCst);
 }
@@ -316,6 +327,7 @@ pub fn delete_model(app: &AppHandle, id: &str) -> Result<(), String> {
     // A non-active deletion cannot be the in-memory session, but clearing an
     // idle/stale session here preserves the old unload behavior for callers.
     *SESSION.lock().unwrap() = None;
+    *ACTIVE_CANCEL.lock().unwrap() = None;
     Ok(())
 }
 
@@ -328,12 +340,20 @@ pub fn start_unload_watcher(_app: AppHandle) {
         let last = LAST_USE.load(std::sync::atomic::Ordering::SeqCst);
         if last > 0 && crate::db::now_ms() - last as i64 > UNLOAD_IDLE_MS as i64 {
             *SESSION.lock().unwrap() = None;
+            *ACTIVE_CANCEL.lock().unwrap() = None;
             LAST_USE.store(0, std::sync::atomic::Ordering::SeqCst);
         }
     });
 }
 
 pub fn transcribe(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
+    crate::crash::record_event("model:transcribe-start");
+    let result = transcribe_inner(app, samples);
+    crate::crash::record_event("model:transcribe-end");
+    result
+}
+
+fn transcribe_inner(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
     let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
     let Some(path) = resolve_path(app, &id) else {
         return Err("No voice model downloaded.".into());
@@ -347,20 +367,34 @@ pub fn transcribe(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
         let _ = transcribe_cpp::init_backends_default();
     }
 
-    let mut guard = SESSION.lock().unwrap();
+    let mut guard = SESSION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if guard
         .as_ref()
-        .map(|(saved, _)| saved != &path.to_string_lossy().to_string())
+        .map(|(saved, _, _)| saved != &path.to_string_lossy().to_string())
         .unwrap_or(true)
     {
         let model = Model::load(&path).map_err(|e| e.to_string())?;
-        let session = model.session().map_err(|e| e.to_string())?;
-        *guard = Some((path.to_string_lossy().to_string(), session));
+        let mut session = model.session().map_err(|e| e.to_string())?;
+        let token = CancelToken::new();
+        session.set_cancel_token(&token);
+        *guard = Some((path.to_string_lossy().to_string(), session, token));
     }
-    let (_, session) = guard.as_mut().unwrap();
+    let Some((_, session, token)) = guard.as_mut() else {
+        return Err("Voice model session could not be created.".into());
+    };
+    token.reset();
+    *ACTIVE_CANCEL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(token.clone());
     let result = session
         .run(samples, &RunOptions::default())
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string());
+    *ACTIVE_CANCEL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    let result = result?;
     LAST_USE.store(
         crate::db::now_ms() as u64,
         std::sync::atomic::Ordering::SeqCst,

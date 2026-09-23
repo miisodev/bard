@@ -12,7 +12,8 @@ specified in `Surfaces`.
 document name, as in `Surfaces §5`. A bare §3 is a section of this document.
 
 **Notation.** Keys are written as they read on a Windows keyboard.
-`⇧ ⇧` means two taps of the same Shift key within the tap window.
+`⇧ ⇧` means two taps of the same Shift key within the tap window; `Ctrl Ctrl`
+means two taps of the same Control key.
 
 **The governing rule.** bard is reached without the mouse and used without the
 mouse. Every action in the product has a key; the tray and the menus are
@@ -22,49 +23,53 @@ alternatives, never the only route.
 
 ## §1 Global shortcuts
 
-Three bindings, active whatever application has focus.
+Two ordinary OS bindings are active whatever application has focus.
 
 | Action | Default | Rebindable |
 |---|---|---|
 | Capture selection | `Ctrl+Shift+C` | Yes |
 | Toggle panel | `Ctrl+Shift+Space` | Yes |
-| Dictate | `Ctrl+Space` | Yes |
 
-**Two gestures are fixed and cannot be rebound:**
+**Three gestures are fixed and cannot be rebound:**
 
 | Gesture | Action |
 |---|---|
 | Double-tap **Left Shift** | Capture the current selection |
 | Double-tap **Right Shift** | Show or hide the panel |
+| Double-tap the same **Control** key | Start or stop dictation |
 
 **Why they are fixed.** They are reached with a finger already resting on the
 key, from inside any application, without a chord. Making them configurable
 would invite a binding that cannot be typed, and there is no second gesture of
 the same quality to fall back to.
 
-### The gesture's own rules
+### The gestures' own rules
 
-A tap counts only when the Shift key goes down and comes back up **within 500
+A tap counts only when the key goes down and comes back up **within 500
 milliseconds with no other key pressed in between**, and the second press must
-begin **within 400 milliseconds** of the first. Any other key pressed while
-Shift is held marks the sequence dirty and discards it.
+begin **within 400 milliseconds** of the first. The Control pair waits a
+further 50 milliseconds after the second press so a following normal shortcut
+such as `Ctrl+Space` invalidates it before dictation starts. Auto-repeat,
+already-held foreign keys, mouse buttons, and Bard's own synthetic copy/paste
+chords never arm a gesture.
 
-**Without the dirty rule the gesture fires constantly.** Shift is held down
+**Without the dirty rule the gestures fire constantly.** Shift is held down
 during ordinary capitalisation, and a person typing two capitals in a sentence
 would otherwise be capturing their own selection mid-word.
 
-Left and right are tracked separately: the two gestures never collide, and a
-tap on one side does not arm the other.
+Left and right are tracked separately: the two Shift gestures never collide,
+and Ctrl-left followed by Ctrl-right is not Ctrl+Ctrl. The second Control
+release carries its hold duration to the dictation lifecycle: a short release
+leaves recording locked; a release at or beyond 300 milliseconds stops it.
 
 ### Binding and registration
 
-A binding is stored as a string and parsed into a modifier set and a key code.
-**A binding is only in force once registration with the operating system
-succeeds.** On startup every stored binding is validated; one that no longer
-parses is replaced by its default rather than left dead. *The cost of the wrong
-choice:* a settings row showing a shortcut that was never registered is worse
-than a reset, because the product then disagrees with the machine about what is
-bound and the person has no way to see it.
+A normal binding is stored as a string and parsed into a modifier set and a
+key code. **A binding is only in force once registration with the operating
+system succeeds.** On startup every stored binding is validated; a malformed
+value is replaced by its default rather than left dead. Registration is
+transactional: a failed or conflicting candidate restores the previous pair
+instead of persisting a shortcut the machine never accepted.
 
 **Registration can fail because another application holds the combination.** The
 failure is reported where the binding was made — see `Surfaces §3.5`.
@@ -124,25 +129,31 @@ which defaults to 500.
 
 ## §4 Dictation
 
-**Hold to dictate; tap to toggle.** The same key does both, resolved by how
-long it was held:
+**Hold to dictate; tap to toggle.** The same-key `Ctrl Ctrl` gesture does
+both, resolved by how long the second press was held:
 
-- Held for **more than 300 milliseconds** — release stops the recording and
-  transcribes. This is the ordinary case: hold, speak, let go.
-- Tapped and released **under 300 milliseconds** — recording continues.
-  Pressing again stops it. This is what makes a long dictation possible without
-  holding a key for two minutes.
+- The first tap arms the gesture. The second press starts dictation after a
+  50 ms activation grace, unless another key invalidates the chord.
+- Held for **300 milliseconds or more** — release stops the recording and
+  transcribes. This is the ordinary push-to-talk case.
+- Released **under 300 milliseconds** — recording continues in a locked state.
+  A later complete `Ctrl Ctrl` gesture stops it. This is what makes a long
+  dictation possible without holding a key for two minutes.
 
-**One threshold serves both**, so nothing has to be configured and nothing has
-to be learned. A person who holds it gets push-to-talk; a person who taps gets
-a toggle; neither is told which one they used.
+The gesture is same-side: left Ctrl twice or right Ctrl twice. It is fixed and
+is not stored as a normal OS shortcut. A tray or settings action can still
+start a take, and a release token prevents a late gesture release from stopping
+a take owned by another source.
 
-**Escape cancels while recording**, and it is registered only for that window,
-so it does not shadow Escape anywhere else for the rest of the session.
+**Escape cancels while recording**, and it is observed by the shared raw-input
+coordinator rather than shadowing Escape anywhere else for the rest of the
+session.
 
 **Silence stops it.** Roughly 1.6 seconds of detected silence ends a recording
 on its own. Voice activity uses a 60-millisecond onset and a 600-millisecond
-hangover, so a pause mid-sentence does not end the take.
+hangover, so a pause mid-sentence does not end the take. Input buffers and
+recording length are bounded; a resampler or device failure ends the take with
+an error instead of accumulating audio indefinitely.
 
 ### Where a transcript goes
 

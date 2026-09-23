@@ -45,7 +45,9 @@ pub fn create(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
             "show" => crate::panel::show_now(app),
             "capture" => crate::capture::capture_selection(app),
             "capture-clipboard" => crate::capture::capture_clipboard(app),
-            "dictate" => crate::dictation::start(app),
+            "dictate" => {
+                let _ = crate::dictation::start(app);
+            }
             "autostart" => {
                 let next = !db_autostart_handle(app);
                 let _ = if next {
@@ -56,6 +58,7 @@ pub fn create(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
                 crate::db::set_setting(app, "autostart_enabled", if next { "1" } else { "0" });
             }
             "quit" => {
+                crate::crash::record_event("app:quit");
                 crate::guardian::mark_clean_exit();
                 app.exit(0);
             }

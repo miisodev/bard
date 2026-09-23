@@ -8,12 +8,13 @@ import "../styles.css";
 
 function Overlay() {
   useTheme();
-  const [state, setState] = useState<"listening" | "transcribing" | "finishing" | "cancelling" | null>(null);
+  const [state, setState] = useState<"listening" | "transcribing" | "finishing" | "cancelling" | "idle" | null>(null);
   const [levels, setLevels] = useState<number[]>(new Array(12).fill(0.08));
 
   useEffect(() => {
     void listen("dictation-overlay", (e) => {
-      setState(e.payload as "listening" | "transcribing" | "finishing" | "cancelling");
+      const next = e.payload as "listening" | "transcribing" | "finishing" | "cancelling" | "idle";
+      setState(next === "idle" ? null : next);
     });
     void listen("dictation-result", () => setState(null));
     void listen("dictation-error", () => setState(null));

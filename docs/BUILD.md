@@ -115,7 +115,17 @@ The release profile keeps line tables/symbols (`debug = 1`, `strip = "debuginfo"
 so the panic hook's backtrace can be symbolized when the matching
 `src-tauri/target/release/bard.pdb` is retained with the release artifact. The hook itself writes bounded crash
 reports under `%LOCALAPPDATA%\\com.miisodev.bard\\logs` before `panic = "abort"`
-terminates the process; the Data pane exposes the latest report.
+terminates the process; the Data pane exposes the latest report. A bounded,
+secret-free `lifecycle.log` sits beside those reports and records console
+interrupts, gesture outcomes, audio failure boundaries, model phases, and
+OpenRouter test boundaries. It never records transcript text, credentials, or
+provider response bodies.
+
+The raw-input coordinator is the only keyboard hook. Native window operations
+are queued onto the UI thread, the CPAL callback is data-only, and recording
+has bounded buffers plus a 10-minute cap. The same-key `Ctrl Ctrl` gesture has
+a 50 ms activation grace and a 300 ms hold threshold; its deterministic tests
+are part of the normal Rust suite.
 
 ## Optional post-processing credentials
 

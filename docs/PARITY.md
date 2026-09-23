@@ -74,9 +74,9 @@ Verified against the Copper demo videos and cooper's source.
 | A8 | **Composer plus-menu** — "Attach Files…" / "Create Drawing…" | **done** | The plus sits *inside* the field, as in Copper — beside it, it stole enough width to clip the placeholder. Shared `Menu` component with the header overflow |
 | A9 | **Click thumbnail to copy image to clipboard** | **done** | The row was wrong: `copy_item` already handled images, only the click affordance was missing. Card images and attachment thumbnails now copy on click |
 | A10 | **Copy as List** — multi-select to Markdown list (`Ctrl+Shift+C`) | **verify** | Multi-select exists; list-copy path unconfirmed |
-| A11 | **Shortcuts sheet** (`Ctrl+/`) and shortcuts editor | **missing** | `set_keybinds` exists; no UI. cooper has both |
+| A11 | **Shortcuts sheet** (`Ctrl+/`) and shortcuts editor | **done** | Settings → Shortcuts is live; normal chords are recorded transactionally, while fixed gestures are shown separately and cannot be rebound |
 | A12 | **Focus hand-back** — Esc returns focus to the previous app | **verify** | `panel.rs` remembers and restores the previous foreground window; still untested by hand |
-| A13 | **Right-Shift x2 toggles panel** (Left-Shift x2 captures) | **verify** | bard binds double-shift; side-specific behaviour unconfirmed |
+| A13 | **Right-Shift x2 toggles panel** (Left-Shift x2 captures) | **done** | One shared raw-input coordinator, same-side timing/dirty rules, synthetic-input guard, and deterministic gesture tests; packaged Windows runtime remained responsive through both gestures |
 | A14 | **Obsidian export** — vault detection, one file per section | **missing** | cooper has all three commands |
 | A15 | **Merge notes** | **missing** | Named on Copper's own feature list |
 | A16 | **Update checker** + in-app update banner | **missing** | cooper: `update.ts`; Handy: full `update-checker/` |
@@ -102,7 +102,7 @@ Every row is a user-visible capability.
 | B4 | **Discover models already on the machine** | **verify** | The shared HF cache scan follows snapshot links, checks the exact file with the engine, and supports explicit Use; Forget unregisters an external file without deleting it. No live cache discovery and Use round trip has been recorded. |
 | B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, qwen3, voxtral, granite…) | **partial** | `transcribe-cpp` is the sole engine, and the final catalogue now includes `parakeet` and `qwen3_asr` alongside `whisper`, all as single GGUF files. The three selected defaults passed exact-blob Windows load/transcription; the broader Handy architecture catalogue is not present. |
 | B6 | **Transcription history** + retention period + limit | **missing** | Handy: `managers/history.rs`, history settings pane |
-| B7 | **Post-processing via LLM** — provider, base URL, API key, model, prompt library | **partial** | The fixed OpenRouter text-only service, keyring v1 Windows Credential Manager storage, separate Post-processing pane, first explicit model ID, non-streaming request, no-fallback provider routing, response identity checks, and local fallback are implemented. A disposable Windows Credential Manager round-trip passed; a live credential/request and UI round-trip remain pending. There is no user-editable endpoint or prompt library. |
+| B7 | **Post-processing via LLM** — provider, base URL, API key, model, prompt library | **partial** | The fixed OpenRouter text-only service, bounded/cancellable metadata test, keyring v1 Windows Credential Manager storage, separate Post-processing pane, first explicit model ID, non-streaming request, no-fallback provider routing, response identity checks, and local fallback are implemented. A disposable Windows Credential Manager round-trip and a live metadata-only request passed; the full transcript post-processing round trip remains pending. There is no user-editable endpoint or prompt library. |
 | B8 | **VAD** — enable, backend selector (earshot/silero), smoothing | **partial** | `dictation/vad.rs` exists; no settings |
 | B9 | **Paste method / clipboard handling / paste delay / reliable paste** | **partial** | `paste.rs` is 47 LOC; Handy has per-OS `paste_tx/` + 5 settings |
 | B10 | **Auto-submit** (+ key) | **missing** | |
@@ -115,7 +115,7 @@ Every row is a user-visible capability.
 | B17 | **Model unload timeout** | **partial** | Fixed 5-minute idle unload; not configurable |
 | B18 | **Hardware acceleration** — GPU backend + runtime CPU-ISA dispatch, and a selector | **blocked on the build** | The change itself is one line: on Windows x86_64, `transcribe-cpp` with `features = ["dynamic-backends", "vulkan"]` — a Vulkan GPU backend plus per-ISA CPU modules scored at runtime. But any non-default feature set makes `transcribe-cpp-sys` compile ggml from source, and that build does not come up on this machine: it shortens paths through a symlink under `%LOCALAPPDATA%	cs` pointing at a per-build `out/` directory, and CMake cannot write into it (`os error 267`, then `Unable to open check cache file for write`). CMake also is not on PATH — see `docs/BUILD.md`. Solve the from-source build first; it is the gate for the whole acceleration story. (ONNX Runtime stays CPU-only on Windows on purpose — DirectML pulled a prebuilt with an AVX2 static initialiser that crashes pre-Haswell CPUs) |
 | B19 | **Recording overlay** — position, style, on/off | **partial** | Overlay exists; unverified by eye, no settings |
-| B20 | **Shortcut activation mode** (hold vs toggle) + hold threshold | **missing** | |
+| B20 | **Shortcut activation mode** (hold vs toggle) + hold threshold | **done** | Same-key Ctrl+Ctrl has a 50 ms activation grace, 300 ms push-to-talk threshold, short-tap lock, ownership tokens, and cooperative `transcribe-cpp` cancellation. |
 | B21 | **Audio feedback** — start/stop sounds, theme, volume | **partial** | Capture sound only |
 | B22 | **Start hidden / show tray icon / autostart** | **partial** | Autostart done and now in General; start-hidden and tray-icon toggles still missing |
 | B23 | **Debug pane** — log level, live log viewer, paths, keyboard diagnostic | **missing** | |
@@ -131,7 +131,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | C1 | Dictation lands in the panel when open, pastes into the focused app when closed | **verify** |
 | C2 | Dictate directly into the composer (voice to note) | **missing** |
 | C3 | Dictate into an existing card (voice to edit / append) | **missing** |
-| C4 | One coherent shortcut map across both halves, no collisions | **missing** |
+| C4 | One coherent shortcut map across both halves, no collisions | **done** | Fixed Shift/Control gestures share one raw-input coordinator; normal chords are conflict-checked and registration is transactional. |
 | C5 | One settings surface where dictation and clipboard read as one product | **missing** |
 | C6 | One onboarding covering both halves | **partial** |
 
@@ -145,8 +145,8 @@ Neither reference does this; it is the reason bard is one app and not two.
 | D4 | **Dictation engine** | **resolved** | One engine: `transcribe-cpp`, which loads the shipped `whisper`, `parakeet`, and `qwen3_asr` catalogue entries as single GGUF files. No ONNX runtime is linked; see B5 and E0 for why the second engine was removed. Acceleration (`dynamic-backends`, `vulkan` on Windows x86_64) is a feature flag away and gated on B18's from-source build |
 | D10 | **Settings has its own window** | **done** | 760x620, native chrome, sidebar: General / Capture / Dictation / Models / Post-processing / Shortcuts / Data / About. `src/settings/ui.tsx` carries the primitives — Pane, Group, Row, Toggle, Segmented, Select, Button, TextField, Note, Progress — so a new setting is a line of markup rather than a design decision taken again. The old sheet is deleted |
 | D9 | **Generate `types.ts` instead of hand-mirroring it** | **missing** | Today a Rust struct change breaks the frontend with no compile error. Handy generates bindings with `specta` + `tauri-specta`. Worth adopting before the surface triples |
-| D5 | **Real-audio verification** — the mic has never been exercised | **missing** | |
-| D6 | **Visual QA of every surface** | **in progress** | Earlier visual passes verified the panel (light and dark), overflow menu, empty state, composer menu, the drawing window and its round trip, and the settings window's General, Models, and Shortcuts panes. The final packaged-binary pass rechecked General, Models, and Post-processing in dark mode at native size; the panel also rendered correctly. Onboarding, the dictation overlay, the section switcher, the context menu, and the Capture / Dictation / Data / About panes remain unseen or need rechecking. |
+| D5 | **Real-audio verification** — the mic has never been exercised | **verify** | CPAL start, bounded recording, VAD silence stop, and no-speech fast exit were exercised on Windows; a human speech transcript round trip remains to be recorded. |
+| D6 | **Visual QA of every surface** | **in progress** | Earlier visual passes verified the panel (light and dark), overflow menu, empty state, composer menu, the drawing window and its round trip, and the settings window's General, Models, and Shortcuts panes. The current native pass additionally exercised the fixed gesture surface and Post-processing cancel state; onboarding, the dictation overlay, the section switcher, the context menu, and the Capture / Dictation / Data / About panes remain unseen or need rechecking. |
 | D7 | **Accessibility** — keyboard reachability, focus rings, contrast, screen reader | **missing** | |
 | D8 | **Empty / error / loading states everywhere** | **missing** | |
 
@@ -156,7 +156,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | --- | --- | --- |
 | E0 | **ONNX Runtime must not be pyke's prebuilt** | **resolved by removal** | `transcribe-rs` is gone, and `ort` with it, so nothing downloads pyke's prebuilt ONNX Runtime any more. The hazard was real — that build runs AVX in a static initialiser and crashes at startup on pre-Haswell CPUs — but it only ever existed because the dependency was added on a wrong premise (B5). **If an ONNX engine is ever genuinely needed, this row comes back**, and the fix is a baseline runtime via `ORT_LIB_LOCATION` |
 | E8 | **Host our own models** | **done** | The catalogue points all three final defaults at the immutable `miisodev/bard-models` release `models-v2`, with exact asset URLs, conversion provenance, model-specific notices, byte sizes, and SHA-256 values. The public release assets match the staged hashes, support `Range` requests, and each exact file passed a Windows `transcribe-cpp` load/transcription smoke test. |
-| E9 | **A release panic is a silent death** | **partial** | A local panic hook is installed before Tauri startup, writes bounded timestamped crash logs, preserves the previous hook, and exposes a latest-log reader; the Data pane can load the newest report. A release-profile probe confirmed the hook writes before abort and captures a backtrace. Native/WebView2 process failures and the operator artifact-retention/field workflow remain unverified. |
+| E9 | **A release panic is a silent death** | **partial** | A local panic hook is installed before Tauri startup, writes bounded timestamped crash logs, preserves the previous hook, and exposes a latest-log reader; the Data pane can load the newest report. A secret-free lifecycle log now records console interrupts, gesture outcomes, audio failures, model phases, and cloud test boundaries. A release-profile probe confirmed the hook writes before abort and captures a backtrace. Native/WebView2 process failures and the operator artifact-retention/field workflow remain unverified. |
 | E1 | Licensing — $30 one-time key issue + offline validation | **missing** |
 | E2 | Code signing (SmartScreen) | **missing** |
 | E3 | Auto-update channel + signed releases | **missing** |
@@ -182,6 +182,8 @@ someone used the app.
 | Windows launched the wrong build at login | Autostart registers whichever executable is running, so a `tauri dev` session repointed the login entry at `target\debug\bard.exe` — a build that only works while Vite is up. Release builds re-assert their own path; debug builds no longer touch it |
 | The panel grew on every launch | 380 to 396 to 424 to 440 to 476, untouched. `save_geometry` and `set_size` disagree by the window frame, so each launch restored what it saved *plus* the frame and wrote the larger number back. Latent for as long as the panel existed — invisible while the window had no frame, because then the two were the same number, and exposed by turning the shadow on. Saving a different accessor did not help: both sides of the round-trip are lossy once a frame exists. The window has no frame again |
 | A smudge into a hard bottom-right corner | `.app` fills the window exactly and carried `box-shadow: 0 16px 56px`. A shadow with no transparent margin to fall into paints inside the window and is clipped square at the edge — worst at the bottom-right, where both offsets meet. The shadow is the compositor's job; the window now asks for one and the CSS does not draw its own |
+| Dictation shortcut made the installed process non-responsive | The old global-key path called Tauri overlay/window operations from the rdev and CPAL threads; Windows WebView2 deadlocked before recording began. All native window operations now queue through `run_on_main_thread`, the CPAL callback is data-only, and a bounded monitor owns silence/error transitions. |
+| Ctrl+C produced no useful result | Console control was previously allowed to terminate the process and its guardian through the OS default handler. Bard now records a clean console-interrupt lifecycle event, marks the exit, and detaches the guardian process; the OpenRouter test also has a bounded, cancellable UI action. |
 
 ## Status vocabulary
 
@@ -513,3 +515,18 @@ also pass. The final package pass emits both MSI and NSIS installers and keeps
 OpenRouter request and native/WebView2 crash collection remain explicit
 follow-up evidence because they require a user credential or a customer failure
 environment.
+
+**2026-09-23 — input/incident hardening pass.** The reported installed-build
+freeze was reproduced by sending its old dictation shortcut: the process became
+non-responsive before transcription because raw-input/audio threads were
+calling Tauri windows directly. The fix moves every window operation onto the
+UI thread, keeps CPAL side-effect-free with bounded buffers and a normal VAD
+monitor, adds terminal idle/error events, cooperative `transcribe-cpp`
+cancellation, and a secret-free lifecycle breadcrumb. The shortcut surface is
+now two transactional OS chords plus fixed same-key `Left Shift × 2`,
+`Right Shift × 2`, and `Ctrl × 2`; Ctrl has a 50 ms activation grace,
+300 ms hold threshold, tap-lock behavior, dirty/synthetic-input protection,
+and ten deterministic gesture tests. OpenRouter metadata testing is bounded,
+cancellable, and reports a safe error instead of spinning indefinitely. The
+current native probe stayed responsive through tap and hold paths; human speech
+transcription and native/WebView2 crash collection remain open evidence.

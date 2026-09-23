@@ -37,6 +37,7 @@ static NEXT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const MAX_LOG_BYTES: usize = 512 * 1024;
 const MAX_LOG_FILES: usize = 5;
 const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
+const MAX_LIFECYCLE_BYTES: u64 = 256 * 1024;
 const REPORT_TRUNCATION_MARKER: &str = "\n[truncated]\n";
 const READ_TRUNCATION_MARKER: &str = "\n[truncated while reading]\n";
 const PAYLOAD_TRUNCATION_MARKER: &str = "...[truncated]";
@@ -102,6 +103,37 @@ fn configured_directory() -> Option<PathBuf> {
     match CRASH_DIRECTORY.lock() {
         Ok(configured) => configured.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+/// Record a small, secret-free lifecycle breadcrumb. This is deliberately
+/// separate from panic reports: it lets support distinguish a clean quit, a
+/// console interrupt, a stuck audio start, and a native inference failure
+/// without retaining transcripts, paths, or provider responses.
+pub fn record_event(event: &str) {
+    let Some(directory) = configured_directory() else {
+        return;
+    };
+    if create_crash_directory(&directory).is_err() {
+        return;
+    }
+    let path = directory.join("lifecycle.log");
+    let line = format!(
+        "{}\tpid={}\t{}\n",
+        unix_timestamp_millis(),
+        process::id(),
+        event.replace(['\r', '\n', '\t'], " ")
+    );
+    if fs::metadata(&path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
+        >= MAX_LIFECYCLE_BYTES
+    {
+        let _ = fs::write(&path, "[lifecycle log truncated]\n");
+        return;
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
     }
 }
 

@@ -106,9 +106,18 @@ fn just_shown() -> bool {
     at > 0 && (crate::db::now_ms() as u64).saturating_sub(at) < SETTLE_MS
 }
 
+/// Window operations are a Windows-main-thread responsibility. The global
+/// input listener and tray callbacks are not on that thread, so every public
+/// entry point queues the actual work instead of calling Tauri directly.
 pub fn show_now(app: &tauri::AppHandle) {
     remember_foreground();
     mark_shown();
+    let app = app.clone();
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || show_now_inner(&task_app));
+}
+
+fn show_now_inner(app: &tauri::AppHandle) {
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
@@ -122,6 +131,12 @@ pub fn show_now(app: &tauri::AppHandle) {
 }
 
 pub fn hide_now(app: &tauri::AppHandle) {
+    let app = app.clone();
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || hide_now_inner(&task_app));
+}
+
+fn hide_now_inner(app: &tauri::AppHandle) {
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
@@ -215,24 +230,32 @@ pub fn on_focus_change(app: &AppHandle, focused: bool) {
         // Called straight from this timer thread, hide() returns Ok and does
         // nothing at all.
         let handle = app.clone();
-        let _ = app.run_on_main_thread(move || hide_now(&handle));
+        let _ = app.run_on_main_thread(move || hide_now_inner(&handle));
     });
 }
 
 pub fn toggle_now(app: &AppHandle) {
+    let app = app.clone();
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || toggle_now_inner(&task_app));
+}
+
+fn toggle_now_inner(app: &AppHandle) {
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
     if win.is_visible().unwrap_or(false) {
         if win.is_focused().unwrap_or(false) {
-            hide_now(app);
+            hide_now_inner(app);
         } else {
             remember_foreground();
             let _ = win.set_focus();
             let _ = app.emit("panel-shown", ());
         }
     } else {
-        show_now(app);
+        remember_foreground();
+        mark_shown();
+        show_now_inner(app);
     }
 }
 
