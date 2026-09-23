@@ -13,6 +13,15 @@ if ([string]::IsNullOrWhiteSpace($CertificatePath)) {
 if (-not (Test-Path -LiteralPath $CertificatePath)) {
   throw "Certificate not found: $CertificatePath"
 }
+if ([string]::IsNullOrEmpty($CertificatePassword)) {
+  $secure = Read-Host "PFX password" -AsSecureString
+  $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try {
+    $CertificatePassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+  } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+  }
+}
 $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
   Where-Object { $_.FullName -match "\\x64\\" } |
   Sort-Object FullName -Descending |
