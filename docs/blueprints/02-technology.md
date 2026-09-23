@@ -74,7 +74,7 @@ bard owns four windows and a crowd of helpers.
 | `main` | Bard | 380 × 620 | Frameless, transparent, always-on-top, off the taskbar | The panel |
 | `settings` | Bard Settings | 760 × 620 | Native | Settings |
 | `draw` | Drawing | 760 × 560 | Native | The drawing canvas |
-| `overlay` | Recording | 320 × 96 | Frameless, transparent, never focused | The dictation indicator |
+| `overlay` | Recording | 260 × 60 | Frameless, transparent, never focused | The dictation indicator |
 
 **The panel is frameless and transparent** so its own rounded corners show the
 desktop through them. **It has no window shadow.** A window frame makes the

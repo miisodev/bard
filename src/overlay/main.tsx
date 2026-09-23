@@ -20,37 +20,38 @@ function Overlay() {
     void listen("dictation-error", () => setState(null));
     void listen("mic-level", (e) => {
       const [level] = e.payload as [number, number];
-      const next = [...levels.slice(1), Math.max(0.06, Math.min(1, level))];
-      setLevels(next);
+      setLevels((levels) => [...levels.slice(1), Math.max(0.06, Math.min(1, level))]);
     });
   }, []);
 
   if (!state) return null;
   return (
-    <div className="overlay-pill">
-      <span className="dot" />
-      <span>
-        {state === "listening"
-          ? "Listening…"
-          : state === "finishing"
-            ? "Finishing…"
-            : state === "cancelling"
-               ? "Cancelling…"
-               : "Transcribing…"}
-      </span>
-      <span className="bars">
-        {levels.map((l, i) => (
-          <i key={i} style={{ height: `${Math.max(3, l * 12)}px` }} />
-        ))}
-      </span>
-      <button
-        className="overlay-x"
-        title="Cancel"
-        aria-label="Cancel dictation"
-        onClick={() => void invoke("dictate_cancel")}
-      >
-        <X aria-hidden="true" />
-      </button>
+    <div className="overlay-stage">
+      <div className="overlay-pill">
+        <span className="dot" />
+        <span>
+          {state === "listening"
+            ? "Listening"
+            : state === "finishing"
+              ? "Finishing"
+              : state === "cancelling"
+                ? "Cancelling"
+                : "Transcribing"}
+        </span>
+        <span className="bars">
+          {levels.map((l, i) => (
+            <i key={i} style={{ transform: `scaleY(${Math.max(0.3, Math.min(1, l))})` }} />
+          ))}
+        </span>
+        <button
+          className="overlay-x"
+          title="Cancel"
+          aria-label="Cancel dictation"
+          onClick={() => void invoke("dictate_cancel")}
+        >
+          <X aria-hidden="true" />
+        </button>
+      </div>
     </div>
   );
 }

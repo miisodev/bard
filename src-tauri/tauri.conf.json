@@ -32,8 +32,8 @@
       {
         "label": "overlay",
         "title": "Recording",
-        "width": 320,
-        "height": 96,
+        "width": 260,
+        "height": 60,
         "url": "overlay.html",
         "transparent": true,
         "decorations": false,
