@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-window-geometry"
+description = "Enables the save_window_geometry command without any pre-configured scope."
+commands.allow = ["save_window_geometry"]
+
+[[permission]]
+identifier = "deny-save-window-geometry"
+description = "Denies the save_window_geometry command without any pre-configured scope."
+commands.deny = ["save_window_geometry"]

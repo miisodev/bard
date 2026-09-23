@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hf-cached-models"
+description = "Enables the hf_cached_models command without any pre-configured scope."
+commands.allow = ["hf_cached_models"]
+
+[[permission]]
+identifier = "deny-hf-cached-models"
+description = "Denies the hf_cached_models command without any pre-configured scope."
+commands.deny = ["hf_cached_models"]

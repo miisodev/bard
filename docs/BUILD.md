@@ -3,7 +3,7 @@
 ```sh
 bun install
 bun run tauri dev      # dev server + app
-bun run tauri build    # MSI + NSIS installers
+bun run tauri build    # signed NSIS installer
 bun run build          # tsc + css-audit + vite — the frontend gate
 ```
 
@@ -50,12 +50,9 @@ the OS instead:
 Start-Process bun -ArgumentList 'run','tauri','dev' -WorkingDirectory <repo> -WindowStyle Hidden
 ```
 
-**Set `BARD_NO_GUARDIAN=1` while developing.** bard spawns a guardian that
-relaunches the app if it dies within 20 seconds without leaving a clean-exit
-marker (see `src-tauri/src/guardian.rs`). During development that means a killed
-app comes back, takes the single-instance lock, and the `tauri dev` you start
-next bounces off it and exits 255. `scripts/stop.ps1` stops bard the way the
-guardian considers clean; the env var avoids the problem entirely.
+**The crash guardian is opt-in.** Normal builds never relaunch a process after a
+kill or an intentional quit. Set `BARD_ENABLE_GUARDIAN=1` only when diagnosing a
+real startup crash; `BARD_NO_GUARDIAN=1` remains an emergency escape hatch.
 
 **`sed -i` breaks Vite's file watcher.** It replaces a file by rename rather
 than writing in place, so Vite keeps serving the previous module while still
@@ -93,7 +90,7 @@ stale DLL.
 
 ## First-party model release gate
 
-The three catalogue assets live in the immutable
+The three catalogue assets live in the pinned, hash-verified
 [`miisodev/bard-models`](https://github.com/miisodev/bard-models) `models-v2`
 release. Before changing a catalogue URL, size, or checksum, stage the exact
 bytes and run the engine smoke test:
@@ -131,7 +128,26 @@ local transcription path. The same-key `Ctrl Ctrl` gesture has
 a 50 ms activation grace and a 300 ms hold threshold; its deterministic tests
 are part of the normal Rust suite.
 
-## Optional post-processing credentials
+## Release gate
+
+The public consumer target is the current-user **NSIS** installer only. Before a
+release is published:
+
+1. Freeze and tag one clean commit.
+2. Set the Tauri updater private key/password in the release environment.
+3. Sign `bard.exe` and the NSIS installer with the same Authenticode publisher
+   identity and a trusted timestamp.
+4. Generate the Tauri `.sig`, `SHA256SUMS`, and a release manifest.
+5. Upload only the signed installer, update signature, hashes, and notices to
+   the release-only repository.
+6. Run `scripts/verify-release.ps1 -RequireSignature` and the clean-VM install
+   matrix. An unsigned artifact is a private test build, never a paid release.
+
+`BARD_LICENSE_SERVER` may point at a local mock during development; use
+`node scripts/mock-license-server.mjs` with
+`BARD_LICENSE_PRIVATE_KEY_PATH` set to an operator-held key. Production uses
+the HTTPS miiso.dev broker. Do not put licence keys, updater private keys, or
+code-signing certificates in this repository.
 
 OpenRouter keys are stored through `keyring`'s Windows Credential Manager
 backend. They are never written to SQLite, `AppState`, events, logs, or crash

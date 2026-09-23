@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-keybinds"
+description = "Enables the set_keybinds command without any pre-configured scope."
+commands.allow = ["set_keybinds"]
+
+[[permission]]
+identifier = "deny-set-keybinds"
+description = "Denies the set_keybinds command without any pre-configured scope."
+commands.deny = ["set_keybinds"]

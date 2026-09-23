@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-completed"
+description = "Enables the clear_completed command without any pre-configured scope."
+commands.allow = ["clear_completed"]
+
+[[permission]]
+identifier = "deny-clear-completed"
+description = "Denies the clear_completed command without any pre-configured scope."
+commands.deny = ["clear_completed"]

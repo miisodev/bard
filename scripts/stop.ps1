@@ -16,7 +16,8 @@
 #>
 param([int]$TimeoutMs = 5000)
 
-$marker = Join-Path $env:APPDATA "com.miisodev.bard\clean-exit"
+$base = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:APPDATA }
+$marker = Join-Path $base "com.miisodev.bard\clean-exit"
 $dir = Split-Path -Parent $marker
 if (Test-Path $dir) { Set-Content -Path $marker -Value "1" -NoNewline }
 

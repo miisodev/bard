@@ -84,6 +84,9 @@ export default function SettingsWindow() {
     };
 
     refresh();
+    void api.refreshLicense().then((license) => {
+      if (alive) setState((current) => (current ? { ...current, license } : current));
+    }).catch(() => undefined);
     // `refresh` keeps shell state current. Dedicated model events drive the
     // inventory pane so a compatibility probe's state refresh cannot restart
     // the same probe. `model-ready` remains the terminal success signal.

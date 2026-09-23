@@ -19,7 +19,7 @@ Windows.
   post-processing runs only after local transcription when enabled in
   **Post-processing**; it sends only the finished transcript to OpenRouter and
   otherwise uses the local result. The text pastes into the app you're using, or
-  lands in the timeline when the panel is open. Esc cancels; the model unloads
+  is retained in the local timeline according to the Dictation lifespan setting. Esc cancels; the model unloads
   after five idle minutes. A single take can run for up to 20 minutes. In
   **Settings → Dictation**, the recording pill can sit at the top or bottom of
   the screen and at the left, middle, or right.
@@ -32,7 +32,7 @@ Windows.
 | Toggle panel | `Shift` `Shift` (right) or `Ctrl+Shift+Space` |
 | Dictate | same-key `Ctrl` `Ctrl` (hold the second press for push-to-talk) |
 | Copy item | `Enter` |
-| Favorite | `Space` |
+| Mark done | `Space` |
 | Delete | `Del` |
 | Switch section | `Ctrl+K` |
 | Multi-select | `Ctrl`+click, `Shift`+click / `Shift`+arrows |
@@ -41,18 +41,29 @@ Windows.
 
 Capture and panel chords are rebindable in Settings. The same-key double-tap gestures are fixed so they remain available everywhere.
 
+## Licence
+
+Bard includes a 14-day local trial. A paid licence is $20 per 365-day term,
+supports three activated Windows machines, and is renewed through the signed
+miiso.dev account flow. The raw key is stored in Windows Credential Manager;
+Bard keeps a short signed offline lease so a network outage does not discard a
+valid entitlement. When the lease and paid term expire, existing captures remain
+readable/exportable while new capture, dictation, drawing, and editing are
+paused until renewal.
+
 ## Building
 
 Prerequisites: Rust (stable MSVC), Node/Bun, CMake, MSVC Build Tools (C++
-workload), WebView2 (preinstalled on Windows 10/11).
+workload), and WebView2 (present on current Windows 10/11 installations; the
+installer can bootstrap it when a clean machine needs it).
 
 ```sh
 bun install
 bun run tauri dev      # develop
-bun run tauri build    # release + MSI & NSIS installers
+bun run tauri build    # release + signed NSIS installer
 ```
 
-The three model roles are pinned to the immutable
+The three model roles are pinned to the hash-verified
 `https://github.com/miisodev/bard-models` release `models-v2`:
 `whisper-small-Q6_K.gguf` for Fast multilingual,
 `parakeet-tdt-0.6b-v2-Q6_K.gguf` for Best English, and
@@ -90,9 +101,6 @@ The exact model release gate is documented in `docs/BUILD.md`. Set
 against the staged model files; the smoke tests are no-ops otherwise. The
 OpenRouter pane is optional and should be exercised with a disposable key
 entered in the UI, never pasted into chat or committed to the repository.
-
-Idle cost is near zero: a 300 ms sequence poll, an event-driven input hook,
-and no model in memory until the first dictation.
 
 Idle cost is near zero: a 300 ms sequence poll, an event-driven input hook,
 and no model in memory until the first dictation.

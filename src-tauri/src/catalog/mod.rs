@@ -214,7 +214,11 @@ mod tests {
 
     #[test]
     fn catalog_contract_is_complete() {
-        assert_eq!(models().len(), 3, "Bard ships exactly three curated defaults");
+        assert_eq!(
+            models().len(),
+            3,
+            "Bard ships exactly three curated defaults"
+        );
         let mut ids = HashSet::new();
         let mut roles = HashSet::new();
         let mut filenames = HashSet::new();
@@ -229,11 +233,23 @@ mod tests {
             assert!(model.accuracy <= 100 && model.speed <= 100);
             assert!(model.value <= 100);
             assert!(model.architecture.is_single_file());
-            assert!(filenames.insert(model.file.filename.as_str()), "duplicate filename {}", model.file.filename);
+            assert!(
+                filenames.insert(model.file.filename.as_str()),
+                "duplicate filename {}",
+                model.file.filename
+            );
             assert!(model.file.size_bytes > 0, "{} has no byte size", model.id);
             assert_eq!(model.file.sha256.len(), 64, "{} has no SHA-256", model.id);
-            assert!(model.file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()));
-            assert!(model.file.url.starts_with("https://"), "{} is not HTTPS", model.id);
+            assert!(model
+                .file
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit()));
+            assert!(
+                model.file.url.starts_with("https://"),
+                "{} is not HTTPS",
+                model.id
+            );
             assert!(model.file.quant.is_some(), "{} has no quant", model.id);
             let source = model
                 .source

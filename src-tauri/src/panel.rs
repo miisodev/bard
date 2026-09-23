@@ -13,6 +13,110 @@ pub fn position(win: &tauri::WebviewWindow) {
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
+const COMPANION_GAP: i32 = 8;
+
+/// Place Settings or Draw as a companion to the panel. The companion follows
+/// the panel's top edge and physical height, choosing the side with the most
+/// usable work area instead of blindly centring a second document window.
+/// The fallback still keeps the window on-screen on small displays.
+pub fn place_companion(app: &tauri::AppHandle, label: &str) {
+    let Some(main) = app.get_webview_window("main") else {
+        return;
+    };
+    let Some(companion) = app.get_webview_window(label) else {
+        return;
+    };
+    let Ok(main_pos) = main.outer_position() else {
+        return;
+    };
+    let Ok(main_size) = main.outer_size() else {
+        return;
+    };
+    let Ok(companion_size) = companion.outer_size() else {
+        return;
+    };
+    let Some(monitor) = main
+        .current_monitor()
+        .unwrap_or(None)
+        .or_else(|| app.primary_monitor().unwrap_or(None))
+    else {
+        return;
+    };
+    let work = monitor.work_area();
+    let work_x = work.position.x;
+    let work_y = work.position.y;
+    let work_right = work_x + work.size.width as i32;
+    let work_bottom = work_y + work.size.height as i32;
+
+    let target_width = companion_size.width.min(work.size.width);
+    let target_height = main_size.height.min(work.size.height);
+    let (frame_width, frame_height) = companion
+        .inner_size()
+        .ok()
+        .map(|inner| {
+            (
+                companion_size.width.saturating_sub(inner.width),
+                companion_size.height.saturating_sub(inner.height),
+            )
+        })
+        .unwrap_or((0, 0));
+    let right_x = main_pos
+        .x
+        .saturating_add(main_size.width as i32)
+        .saturating_add(COMPANION_GAP);
+    let left_x = main_pos
+        .x
+        .saturating_sub(target_width as i32)
+        .saturating_sub(COMPANION_GAP);
+    let right_fits = right_x.saturating_add(target_width as i32) <= work_right;
+    let left_fits = left_x >= work_x;
+    let right_space = (work_right - right_x).max(0);
+    let left_space = (left_x - work_x).max(0);
+    let x = if right_fits || (!left_fits && right_space >= left_space) {
+        right_x
+    } else if left_fits {
+        left_x
+    } else if right_space >= left_space {
+        right_x
+    } else {
+        left_x
+    };
+    let y = main_pos
+        .y
+        .max(work_y)
+        .min(work_bottom.saturating_sub(target_height as i32));
+    let clamped_x = x
+        .max(work_x)
+        .min(work_right.saturating_sub(target_width as i32));
+    let clamped_y = y
+        .max(work_y)
+        .min(work_bottom.saturating_sub(target_height as i32));
+    let client_width = target_width.saturating_sub(frame_width).max(480);
+    let client_height = target_height.saturating_sub(frame_height).max(280);
+    let _ = companion.set_size(tauri::PhysicalSize::new(client_width, client_height));
+    let _ = companion.set_position(tauri::PhysicalPosition::new(clamped_x, clamped_y));
+}
+
+pub fn reposition_companions(app: &tauri::AppHandle) {
+    for label in ["settings", "draw"] {
+        if app
+            .get_webview_window(label)
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false)
+        {
+            place_companion(app, label);
+        }
+    }
+}
+
+pub fn focus_panel(app: &tauri::AppHandle) {
+    if let Some(panel) = app.get_webview_window("main") {
+        if panel.is_visible().unwrap_or(false) {
+            let _ = panel.set_focus();
+        }
+    }
+}
+
 fn apply_saved_geometry(app: &tauri::AppHandle, win: &tauri::WebviewWindow) -> bool {
     let Some(raw) = crate::db::get_setting(app, "window_geometry") else {
         return false;
@@ -126,6 +230,7 @@ fn show_now_inner(app: &tauri::AppHandle) {
     }
     let _ = win.show();
     let _ = win.unminimize();
+    reposition_companions(app);
     let _ = win.set_focus();
     let _ = app.emit("panel-shown", ());
 }
@@ -141,6 +246,11 @@ fn hide_now_inner(app: &tauri::AppHandle) {
         return;
     };
     save_geometry(app, &win);
+    for label in ["settings", "draw"] {
+        if let Some(companion) = app.get_webview_window(label) {
+            let _ = companion.hide();
+        }
+    }
     let _ = win.hide();
     restore_foreground();
 }

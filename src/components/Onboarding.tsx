@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, Download, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "../store";
+import LicenseCard from "./LicenseCard";
 import type { AppState, ModelInfo, ModelProgress } from "../types";
 
 const WAVE = (
@@ -48,6 +49,7 @@ export default function Onboarding({
   const [autostart, setAutostart] = useState(state.autostartEnabled);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
+  const [license, setLicense] = useState(state.license);
 
   useEffect(() => {
     let alive = true;
@@ -116,6 +118,9 @@ export default function Onboarding({
     setFinishing(true);
     setFinishError(null);
     try {
+      if (!license.canUse) {
+        throw new Error("Start the 14-day trial or activate a licence before opening Bard.");
+      }
       await api.setAutostart(autostart);
       await onDone();
     } catch (reason) {
@@ -195,14 +200,22 @@ export default function Onboarding({
             ) : null}
           </div>
         </>
+      ) : step === 2 ? (
+        <>
+          <h1>Make it yours</h1>
+          <p>Everyday actions stay close to the keyboard. You can change these later in Settings.</p>
+          <div className="shortcut-list" aria-label="Bard keyboard shortcuts">
+            <div><kbd>Shift</kbd><kbd>Shift</kbd><span>Capture a selection</span></div>
+            <div><kbd>Ctrl</kbd><kbd>Ctrl</kbd><span>Push-to-talk dictation</span></div>
+            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd><span>Open the panel</span></div>
+            <div><kbd>Ctrl</kbd><kbd>,</kbd><span>Open Settings</span></div>
+          </div>
+        </>
       ) : (
         <>
           <h1>You're set</h1>
-          <p>
-            Tap <kbd>Shift</kbd> <kbd>Shift</kbd> to capture a selection, tap the same{" "}
-            <kbd>Ctrl</kbd> twice to dictate (hold it for push-to-talk), and open the panel with{" "}
-            <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd>.
-          </p>
+          <p>Start with a 14-day local trial, or enter the annual licence key from your purchase email.</p>
+          <LicenseCard status={license} onStatus={setLicense} compact />
           <div className="setting-row">
             <span>
               <div className="label">Start Bard at login</div>
@@ -226,12 +239,12 @@ export default function Onboarding({
       <div
         className="steps"
         role="progressbar"
-        aria-label={`Onboarding step ${step + 1} of 3`}
+        aria-label={`Onboarding step ${step + 1} of 4`}
         aria-valuemin={1}
-        aria-valuemax={3}
+        aria-valuemax={4}
         aria-valuenow={step + 1}
       >
-        {[0, 1, 2].map((index) => (
+        {[0, 1, 2, 3].map((index) => (
           <div
             key={index}
             className={`step${index <= step ? " on" : ""}`}
@@ -265,6 +278,11 @@ export default function Onboarding({
               </button>
             </>
           )
+        ) : step === 2 ? (
+          <button className="btn primary" onClick={() => setStep(3)}>
+            Continue
+            <ArrowRight aria-hidden="true" />
+          </button>
         ) : (
           <button className="btn primary" onClick={() => void finish()} disabled={finishing}>
             {finishing ? <LoaderCircle aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}

@@ -27,7 +27,9 @@ pub struct Item {
     pub section_id: Option<i64>,
     pub content: String,
     pub kind: String,
+    #[serde(skip_serializing)]
     pub image_path: Option<String>,
+    pub origin: String,
     pub favorite: i64,
     pub done: i64,
     pub created_at: i64,
@@ -39,6 +41,7 @@ pub struct Item {
 pub struct Attachment {
     pub id: i64,
     pub item_id: i64,
+    #[serde(skip_serializing)]
     pub path: String,
     pub position: i64,
 }
@@ -88,6 +91,16 @@ pub struct AppState {
     pub model_id: String,
     pub model_ready: bool,
     pub mic_ready: bool,
+    pub active_item_id: Option<i64>,
+    pub license: crate::license::LicenseStatus,
+}
+
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(columns.iter().any(|name| name == column))
 }
 
 pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
@@ -97,10 +110,14 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS items(
            id INTEGER PRIMARY KEY AUTOINCREMENT,
+           section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
            content TEXT NOT NULL,
            kind TEXT NOT NULL DEFAULT 'text',
            image_path TEXT,
+           origin TEXT NOT NULL DEFAULT 'manual'
+             CHECK(origin IN ('manual', 'clipboard', 'dictation')),
            favorite INTEGER NOT NULL DEFAULT 0,
+           done INTEGER NOT NULL DEFAULT 0,
            created_at INTEGER NOT NULL,
            updated_at INTEGER NOT NULL
          );
@@ -135,48 +152,62 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
            created_at INTEGER NOT NULL
          );",
     )?;
-    let custom_compatibility_existed = conn
-        .prepare("PRAGMA table_info(custom_models)")?
-        .query_map([], |row| row.get::<_, String>(1))?
-        .any(|name| name.is_ok_and(|name| name == "compatibility"));
-    // Additive migrations whose errors are ignored: a duplicate-column error is
-    // the expected result on every launch after the first.
-    let _ = conn.execute(
-        "ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE items ADD COLUMN done INTEGER NOT NULL DEFAULT 0",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE custom_models ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE custom_models ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''",
-        [],
-    );
-    // Existing rows predate ownership tracking. Default them to external: that
-    // may leave an old app-owned download behind after removal, but it can never
-    // turn an unknown path into a delete permission.
-    let _ = conn.execute(
-        "ALTER TABLE custom_models ADD COLUMN ownership TEXT NOT NULL DEFAULT 'external'",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE custom_models ADD COLUMN compatibility TEXT NOT NULL DEFAULT 'unverified'",
-        [],
-    );
-    if !custom_compatibility_existed {
-        // Before this column existed, the only way a custom model reached the
-        // table was after the engine-load check. Preserve that historical fact
-        // once, without overwriting later probe results on every app launch.
-        let _ = conn.execute(
+
+    // All schema changes are one transaction. The old implementation ignored
+    // every ALTER error, which could leave a half-migrated database that only
+    // failed later through an unrelated unwrap.
+    let compatibility_existed = table_has_column(&conn, "custom_models", "compatibility")?;
+    let transaction = conn.unchecked_transaction()?;
+    let migrations: &[(&str, &str, &str)] = &[
+        (
+            "items",
+            "section_id",
+            "ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL",
+        ),
+        ("items", "done", "ALTER TABLE items ADD COLUMN done INTEGER NOT NULL DEFAULT 0"),
+        (
+            "items",
+            "origin",
+            "ALTER TABLE items ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'",
+        ),
+        (
+            "custom_models",
+            "size_bytes",
+            "ALTER TABLE custom_models ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "custom_models",
+            "sha256",
+            "ALTER TABLE custom_models ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "custom_models",
+            "ownership",
+            "ALTER TABLE custom_models ADD COLUMN ownership TEXT NOT NULL DEFAULT 'external'",
+        ),
+        (
+            "custom_models",
+            "compatibility",
+            "ALTER TABLE custom_models ADD COLUMN compatibility TEXT NOT NULL DEFAULT 'unverified'",
+        ),
+    ];
+    for (table, column, statement) in migrations {
+        if !table_has_column(&transaction, table, column)? {
+            transaction.execute(statement, [])?;
+        }
+    }
+    if !compatibility_existed {
+        transaction.execute(
             "UPDATE custom_models SET compatibility = 'verified' WHERE compatibility = 'unverified'",
             [],
-        );
+        )?;
     }
+    transaction.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_items_origin_created
+           ON items(origin, created_at);
+         PRAGMA user_version = 2;",
+    )?;
+    transaction.commit()?;
     Ok(conn)
 }
 
@@ -270,13 +301,31 @@ pub fn set_settings_checked(app: &AppHandle, settings: &[(&str, &str)]) -> Resul
 }
 
 pub fn insert_item(app: &AppHandle, content: &str, kind: &str, image_path: Option<&str>) -> i64 {
+    insert_item_with_origin(app, content, kind, image_path, "manual")
+}
+
+/// Insert an item with an explicit lifecycle origin. `manual` is the default
+/// so composer notes, drawings, and attached files remain user-owned; the
+/// clipboard and dictation paths pass their own origin for retention cleanup.
+pub fn insert_item_with_origin(
+    app: &AppHandle,
+    content: &str,
+    kind: &str,
+    image_path: Option<&str>,
+    origin: &str,
+) -> i64 {
     let now = now_ms();
     let section = get_active_section(app);
+    let origin = if matches!(origin, "clipboard" | "dictation") {
+        origin
+    } else {
+        "manual"
+    };
     with_conn_mut(app, |c| {
         c.execute(
-            "INSERT INTO items(section_id, content, kind, image_path, favorite, created_at, updated_at)
-             VALUES(?1, ?2, ?3, ?4, 0, ?5, ?5)",
-            params![section, content, kind, image_path, now],
+            "INSERT INTO items(section_id, content, kind, image_path, origin, favorite, created_at, updated_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, 0, ?6, ?6)",
+            params![section, content, kind, image_path, origin, now],
         )
         .unwrap();
         c.last_insert_rowid()
@@ -299,6 +348,58 @@ pub fn set_active_section(app: &AppHandle, id: Option<i64>) {
         ),
         None => set_setting(app, "active_section", ""),
     }
+}
+
+pub fn set_active_item(app: &AppHandle, id: Option<i64>) {
+    match id.filter(|id| item_exists(app, *id)) {
+        Some(id) => set_setting(app, "active_item_id", &id.to_string()),
+        None => set_setting(app, "active_item_id", ""),
+    }
+}
+
+pub fn active_item(app: &AppHandle) -> Option<i64> {
+    get_setting(app, "active_item_id")
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|id| item_exists(app, *id))
+        .or_else(|| list_items(app).first().map(|item| item.id))
+}
+
+pub fn item_by_id(app: &AppHandle, id: i64) -> Option<Item> {
+    if !is_ready(app) {
+        return None;
+    }
+    with_conn(app, |connection| {
+        connection
+            .query_row(
+                "SELECT id, section_id, content, kind, image_path, origin, favorite, done,
+                        created_at, updated_at
+                 FROM items WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(Item {
+                        id: row.get(0)?,
+                        section_id: row.get(1)?,
+                        content: row.get(2)?,
+                        kind: row.get(3)?,
+                        image_path: row.get(4)?,
+                        origin: row.get(5)?,
+                        favorite: row.get(6)?,
+                        done: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    })
+                },
+            )
+            .ok()
+    })
+}
+
+fn item_exists(app: &AppHandle, id: i64) -> bool {
+    with_conn(app, |connection| {
+        connection
+            .query_row("SELECT 1 FROM items WHERE id = ?1", params![id], |_| Ok(()))
+            .is_ok()
+    })
 }
 
 fn section_exists(app: &AppHandle, id: i64) -> bool {
@@ -430,7 +531,18 @@ pub fn list_all_attachments(app: &AppHandle) -> Vec<Attachment> {
     })
 }
 
-pub fn delete_attachment(app: &AppHandle, id: i64) -> Option<String> {
+pub fn attachment_path(app: &AppHandle, id: i64) -> Option<String> {
+    with_conn(app, |c| {
+        c.query_row(
+            "SELECT path FROM attachments WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .ok()
+    })
+}
+
+pub fn delete_attachment(app: &AppHandle, id: i64) -> Result<Option<String>, String> {
     let path = with_conn(app, |c| {
         c.query_row(
             "SELECT path FROM attachments WHERE id = ?1",
@@ -439,16 +551,12 @@ pub fn delete_attachment(app: &AppHandle, id: i64) -> Option<String> {
         )
         .ok()
     });
-    with_conn_mut(app, |c| {
-        let _ = c.execute("DELETE FROM attachments WHERE id = ?1", params![id]);
-    });
-    path
-}
-
-pub fn delete_item(app: &AppHandle, id: i64) {
-    with_conn_mut(app, |c| {
-        let _ = c.execute("DELETE FROM items WHERE id = ?1", params![id]);
-    });
+    with_conn_mut(app, |connection| {
+        connection
+            .execute("DELETE FROM attachments WHERE id = ?1", params![id])
+            .map_err(|error| format!("Could not delete attachment: {error}"))
+    })?;
+    Ok(path)
 }
 
 pub fn update_item(app: &AppHandle, id: i64, content: &str) {
@@ -487,10 +595,54 @@ pub fn completed_items(app: &AppHandle) -> Vec<Item> {
         .collect()
 }
 
-pub fn clear_completed(app: &AppHandle) {
-    with_conn_mut(app, |c| {
-        let _ = c.execute("DELETE FROM items WHERE done != 0", []);
+pub fn delete_all_data(app: &AppHandle) -> Result<(), String> {
+    if !is_ready(app) {
+        return Err("Database is not ready.".into());
+    }
+    let mut files = Vec::new();
+    for item in list_items(app) {
+        files.extend(item_files(app, item.id));
+    }
+    with_conn_mut(app, |connection| {
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("Could not begin data deletion: {error}"))?;
+        for table in [
+            "items",
+            "attachments",
+            "sections",
+            "settings",
+            "custom_models",
+        ] {
+            transaction
+                .execute(&format!("DELETE FROM {table}"), [])
+                .map_err(|error| format!("Could not clear {table}: {error}"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("Could not commit data deletion: {error}"))
+    })?;
+    with_conn_mut(app, |connection| {
+        let _ = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+        let _ = connection.execute_batch("VACUUM");
     });
+    for file in files {
+        remove_owned_image_file(app, &file);
+    }
+    if let Some(root) = local_data_root() {
+        let _ = std::fs::remove_dir_all(root.join("images"));
+    }
+    let _ = std::fs::remove_dir_all(crate::hf::local_models_dir(app));
+    let _ = std::fs::remove_dir_all(
+        std::env::var("LOCALAPPDATA")
+            .map(|base| {
+                std::path::PathBuf::from(base)
+                    .join("com.miisodev.bard")
+                    .join("logs")
+            })
+            .unwrap_or_default(),
+    );
+    Ok(())
 }
 
 pub fn add_note_to_image(app: &AppHandle, id: i64) -> Option<String> {
@@ -515,6 +667,23 @@ pub fn add_note_to_image(app: &AppHandle, id: i64) -> Option<String> {
     path
 }
 
+fn local_data_root() -> Option<std::path::PathBuf> {
+    std::env::var("LOCALAPPDATA")
+        .ok()
+        .map(|base| std::path::PathBuf::from(base).join("com.miisodev.bard"))
+}
+
+pub fn remove_owned_image_file(app: &AppHandle, path: &str) {
+    let _ = app;
+    let Some(root) = local_data_root() else {
+        return;
+    };
+    let images = root.join("images");
+    if crate::hf::path_is_within(&images, std::path::Path::new(path)) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 pub fn item_files(app: &AppHandle, id: i64) -> Vec<String> {
     let mut files: Vec<String> = with_conn(app, |c| {
         c.query_row(
@@ -535,7 +704,7 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
     with_conn(app, |c| {
         let mut stmt = c
             .prepare(
-                "SELECT id, section_id, content, kind, image_path, favorite, done,
+                "SELECT id, section_id, content, kind, image_path, origin, favorite, done,
                         created_at, updated_at
                  FROM items ORDER BY id DESC",
             )
@@ -547,10 +716,11 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
                 content: r.get(2)?,
                 kind: r.get(3)?,
                 image_path: r.get(4)?,
-                favorite: r.get(5)?,
-                done: r.get(6)?,
-                created_at: r.get(7)?,
-                updated_at: r.get(8)?,
+                origin: r.get(5)?,
+                favorite: r.get(6)?,
+                done: r.get(7)?,
+                created_at: r.get(8)?,
+                updated_at: r.get(9)?,
             })
         })
         .unwrap()
@@ -559,21 +729,141 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
     })
 }
 
-pub fn prune_history(app: &AppHandle, limit: usize) {
-    with_conn_mut(app, |c| {
-        let _ = c.execute(
-            "DELETE FROM items WHERE id NOT IN (
-               SELECT id FROM items ORDER BY id DESC LIMIT ?1
-             )",
-            params![limit as i64],
-        );
+/// Remove expired automatic items and every owned file attached to them.
+/// `None` means the user selected Forever. Favorites and manual work are never
+/// removed by age-based cleanup.
+pub fn cleanup_origin(app: &AppHandle, origin: &str) {
+    if !matches!(origin, "clipboard" | "dictation") {
+        return;
+    }
+    let Some(days) = retention_days(app, origin) else {
+        return;
+    };
+    let cutoff = now_ms().saturating_sub(days.saturating_mul(24 * 60 * 60 * 1000));
+    let ids: Vec<i64> = with_conn(app, |c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id FROM items
+                 WHERE origin = ?1 AND favorite = 0 AND created_at < ?2",
+            )
+            .unwrap();
+        stmt.query_map(params![origin, cutoff], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
     });
+    let _ = delete_items_with_files(app, &ids);
 }
 
-pub fn clear_history(app: &AppHandle) {
-    with_conn_mut(app, |c| {
-        let _ = c.execute("DELETE FROM items", []);
+/// The configured age for one automatic origin. `None` is the explicit
+/// Forever choice; absent settings use the product defaults.
+pub fn retention_days(app: &AppHandle, origin: &str) -> Option<i64> {
+    let key = match origin {
+        "clipboard" => "clipboard_retention_days",
+        "dictation" => "dictation_retention_days",
+        _ => return None,
+    };
+    let value = get_setting(app, key)
+        .and_then(|raw| raw.parse::<i64>().ok())
+        .unwrap_or(match origin {
+            "clipboard" => 30,
+            "dictation" => 7,
+            _ => 30,
+        });
+    if value < 0 {
+        None
+    } else {
+        Some(value.clamp(1, 3650))
+    }
+}
+
+pub fn set_retention_days(app: &AppHandle, origin: &str, days: Option<i64>) -> Result<(), String> {
+    let key = match origin {
+        "clipboard" => "clipboard_retention_days",
+        "dictation" => "dictation_retention_days",
+        _ => return Err("Unknown history type.".into()),
+    };
+    let value = days.unwrap_or(-1);
+    if value != -1 && !(1..=3650).contains(&value) {
+        return Err("Retention must be between 1 and 3650 days, or Forever.".into());
+    }
+    set_setting_checked(app, key, &value.to_string())
+}
+
+pub fn delete_items_with_files(app: &AppHandle, ids: &[i64]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut files = Vec::new();
+    for id in ids {
+        files.extend(item_files(app, *id));
+    }
+    with_conn_mut(app, |connection| {
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("Could not begin deletion: {error}"))?;
+        for id in ids {
+            transaction
+                .execute("DELETE FROM items WHERE id = ?1", params![id])
+                .map_err(|error| format!("Could not delete item {id}: {error}"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("Could not commit deletion: {error}"))
+    })?;
+    for path in files {
+        remove_owned_image_file(app, &path);
+    }
+    if get_setting(app, "active_item_id")
+        .and_then(|value| value.parse::<i64>().ok())
+        .is_some_and(|active| ids.contains(&active))
+    {
+        set_active_item(app, None);
+    }
+    Ok(())
+}
+
+/// Keep a bounded safety cap for automatic history even when age-based
+/// retention is set to Forever. Manual items and favorites are exempt.
+pub fn prune_history(app: &AppHandle, limit: usize) {
+    let ids: Vec<i64> = with_conn(app, |c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id FROM items
+                 WHERE origin IN ('clipboard', 'dictation') AND favorite = 0
+                   AND id NOT IN (
+                     SELECT id FROM items
+                     WHERE origin IN ('clipboard', 'dictation') AND favorite = 0
+                     ORDER BY id DESC LIMIT ?1
+                   )",
+            )
+            .unwrap();
+        stmt.query_map(params![limit as i64], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
     });
+    let _ = delete_items_with_files(app, &ids);
+}
+
+pub fn clear_history(app: &AppHandle) -> Result<(), String> {
+    let ids: Vec<i64> = list_items(app).into_iter().map(|item| item.id).collect();
+    delete_items_with_files(app, &ids)
+}
+
+pub fn clear_captures(app: &AppHandle) -> Result<(), String> {
+    let ids: Vec<i64> = with_conn(app, |c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id FROM items WHERE origin IN ('clipboard', 'dictation') AND favorite = 0",
+            )
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
+    });
+    delete_items_with_files(app, &ids)
 }
 
 const CUSTOM_MODEL_COLUMNS: &str =
@@ -753,6 +1043,17 @@ pub fn get_state(app: &AppHandle) -> AppState {
             model_id: String::new(),
             model_ready: false,
             mic_ready: false,
+            active_item_id: None,
+            license: crate::license::LicenseStatus {
+                state: "unavailable".into(),
+                can_use: false,
+                key_configured: false,
+                trial_started_at: None,
+                trial_expires_at: None,
+                expires_at: None,
+                last_checked_at: None,
+                message: Some("Bard is still starting.".into()),
+            },
         };
     }
     AppState {
@@ -769,6 +1070,8 @@ pub fn get_state(app: &AppHandle) -> AppState {
         model_id: get_setting(app, "model_id").unwrap_or_default(),
         model_ready: crate::dictation::model_ready(app),
         mic_ready: crate::dictation::mic_ready(),
+        active_item_id: active_item(app),
+        license: crate::license::status(app),
     }
 }
 
@@ -809,6 +1112,44 @@ mod tests {
     }
 
     #[test]
+    fn old_items_schema_is_migrated_atomically() {
+        let dir = std::env::temp_dir().join(format!("bard-items-migration-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.db");
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(
+            "CREATE TABLE items(
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 content TEXT NOT NULL,
+                 kind TEXT NOT NULL DEFAULT 'text',
+                 image_path TEXT,
+                 favorite INTEGER NOT NULL DEFAULT 0,
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );
+             INSERT INTO items(content, kind, favorite, created_at, updated_at)
+               VALUES('kept', 'text', 0, 1, 1);",
+        )
+        .unwrap();
+        drop(old);
+
+        let migrated = init(&path).unwrap();
+        let origin: String = migrated
+            .query_row(
+                "SELECT origin FROM items WHERE content = 'kept'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(origin, "manual");
+        let version: i64 = migrated
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn schema_init_ok() {
         let dir = std::env::temp_dir().join(format!("bard-test-{}", now_ms()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -828,6 +1169,10 @@ mod tests {
         for required in ["size_bytes", "sha256", "ownership", "compatibility"] {
             assert!(columns.iter().any(|column| column == required));
         }
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

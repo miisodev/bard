@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dictate-start"
+description = "Enables the dictate_start command without any pre-configured scope."
+commands.allow = ["dictate_start"]
+
+[[permission]]
+identifier = "deny-dictate-start"
+description = "Denies the dictate_start command without any pre-configured scope."
+commands.deny = ["dictate_start"]

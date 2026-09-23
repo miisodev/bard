@@ -61,6 +61,13 @@ ecosystem, and would they present it at WWDC. This is the test that rejects
 work which passes the other two and is still not good enough: an unread
 placeholder, an unexamined empty state, a window that has never been looked at.
 
+**The production gate is all-or-nothing.** A release is eligible only when the
+installed product passes all three tests across licensing, security, privacy,
+keyboard operation, accessibility, visual QA, performance, failure recovery,
+distribution and support. A feature does not inherit a waiver from the rest of
+the product being finished. The evidence and current gate state live only in
+`docs/PARITY.md`.
+
 ### What bard is not
 
 - **Not a note-taking application.** Dictation targets Wispr Flow's capability
@@ -141,6 +148,15 @@ An item is a piece of text, an image, or a drawing. Every item carries a
 through. Done is the primary interaction on an item, as in Copper — not a
 favourite, not a tag.
 
+Every item also exposes **Copy** as one compact icon in its own anatomy. The
+button, `Enter`, `Ctrl+C`, and the context-menu command are the same operation;
+none depends on a hidden hover target. Exactly one item is **active** at a
+time. Pointer activation, keyboard movement, and opening an item's context
+menu establish the active item, and it remains active after a copy so repeated
+copy actions do not require finding the row again. The active and selected
+treatments are owned by `Design System §4`; their exact keys are owned by
+`Input & Commands §5`.
+
 Text items render inline markdown: `**bold**`, `*italic*`, `~~strikethrough~~`
 and `` `code` ``. **Underscore emphasis is deliberately unsupported**, because
 captured text is mostly code and prose about code, where `snake_case` and
@@ -159,16 +175,31 @@ composer creates a section and makes it active. Typing `## Name` creates one and
 clears the board — the new section becomes the working area and the rest
 compress upward.
 
+### Desktop integration
+
+bard's own right-click menu follows the conventions of a native Windows
+context menu: it opens at the pointer, uses line icons, short labels,
+separators and shortcut hints, stays inside the work area, and is fully
+operable from the keyboard. Its exact component is `Design System §4` and its
+commands are `Surfaces §1`.
+
+Windows Explorer contributes **one** verb, **Send to Bard**. It accepts the
+selected regular files, hands their canonical paths to Bard's existing
+attachment pipeline, and shows the panel so the result is inspectable. It does
+not recurse into folders, add per-file-type verbs, run an elevated instance, or
+expose Bard's other commands. The registration and handoff mechanism are
+`Technology §7`; `Input & Commands §2` owns the command path.
+
 ### Images and drawings
 
-Images arrive by paste, by drag from another application, or from the composer's
-attach menu. They are stored in bard's own folder and shown as thumbnails.
-**Clicking a thumbnail copies the image back to the clipboard.**
+Images arrive by paste, by drag from another application, the composer's attach
+menu, or **Send to Bard**. They are stored in bard's own folder and shown as
+thumbnails. **Clicking a thumbnail or pressing the item's Copy button copies
+the image back to the clipboard.**
 
-A drawing is made in its own window, from the composer's attach menu, and
-arrives in the timeline as an image item. The canvas is always white whatever
-the theme, because a drawing is made to be pasted elsewhere and one drawn on a
-dark surface arrives unreadable.
+A drawing is made in a companion window opened by the panel's persistent Draw
+icon. The canvas is always white whatever the theme, because a drawing is made
+to be pasted elsewhere and one drawn on a dark surface arrives unreadable.
 
 ### Export
 
@@ -211,6 +242,11 @@ dictation takes the most important action in the product down with it.
 
 The model unloads after five minutes idle and reloads on demand.
 
+A transcript is stored in the timeline only when the focused panel is its
+destination. Such an item has the `dictation` origin and follows the dictation
+retention policy; a transcript pasted into another application is not silently
+copied into bard's history. The destination matrix is `Input & Commands §4`.
+
 **Cloud post-processing is a separate, off-by-default capability.** A person
 starts dictation explicitly, the local transcript is completed, and only then
 may the enabled stage send that transcript text to the fixed OpenRouter
@@ -238,8 +274,9 @@ Models panes.
 
 bard-owned application data lives in one SQLite file in the application's own
 data directory, beside folders for images and Bard-managed model files. External
-model caches remain where their owner placed them. The optional OpenRouter API
-key is the one secret outside SQLite and lives in Windows Credential Manager;
+model caches remain where their owner placed them. Windows Credential Manager
+holds the optional OpenRouter key, paid licence key, signed lease, local trial
+record and installation identity; none of those values lives in SQLite.
 `Technology §8` owns that boundary.
 
 **The database is opened before any window exists.** Windows declared in the
@@ -255,6 +292,7 @@ CREATE TABLE items (
   section_id  INTEGER REFERENCES sections(id) ON DELETE SET NULL,
   content     TEXT    NOT NULL,   -- for kind='image', an absolute file path
   kind        TEXT    NOT NULL DEFAULT 'text',   -- 'text' | 'image'
+  origin      TEXT    NOT NULL DEFAULT 'clipboard', -- 'clipboard' | 'dictation' | 'manual'
   image_path  TEXT,
   favorite    INTEGER NOT NULL DEFAULT 0,
   done        INTEGER NOT NULL DEFAULT 0,
@@ -301,12 +339,38 @@ CREATE TABLE settings (
 );
 ```
 
-`settings` holds `model_id` and the non-secret post-processing values
+`settings` holds `model_id`, the non-secret post-processing values
 `openrouter_postprocess_enabled` (false by default) and
-`openrouter_postprocess_model_ids`. The model-ID setting is a comma-separated
+`openrouter_postprocess_model_ids`, the independent retention values
+`clipboard_retention_days` and `dictation_retention_days` (both `30` by default),
+and the non-secret audio preferences. The model-ID setting is a comma-separated
 list of opaque IDs; the first ID is the only one sent to OpenRouter. The
 endpoint is a fixed application constant, not a user setting. `settings` never
-holds an API key, access token, authorization header, or secret-bearing URL.
+holds a licence key, signed lease, API key, access token, authorization header,
+or secret-bearing URL.
+
+### Retention
+
+`origin` is the policy class, not presentation metadata. `clipboard` covers
+clipboard monitoring, explicit clipboard capture and selection capture;
+`dictation` covers a transcript stored because the focused panel was its
+destination; `manual` covers composer notes, drawings and files deliberately
+kept through an attachment or Explorer handoff.
+
+Clipboard and dictation lifespans are independent. Each accepts **1 day, 7
+days, 30 days, 90 days, 180 days, or Forever**, and each defaults to **30
+days**. A favourite is exempt from automatic pruning until the person deletes
+it. `manual` items are also retained until explicit deletion. Changing a
+lifespan takes effect on the next successful retention pass; that pass deletes
+the database rows and every Bard-owned image or attachment file that no
+surviving row references. *The cost of the wrong choice:* pruning only the row
+leaks storage forever, while deleting a shared or externally owned file turns a
+retention preference into data loss.
+
+The retention service runs at startup and once per day thereafter, and whenever
+a lifespan changes. A failed pass leaves both rows and files untouched and
+retries on the next trigger. `Input & Commands §3` owns the capture-side origin
+assignment; `Surfaces §3.6` owns the settings copy.
 
 **Migrations are additive `ALTER TABLE` statements whose errors are ignored.** A
 duplicate-column error is the expected result on every launch after the first.
@@ -322,43 +386,123 @@ saying so is correct where panicking is not.
 
 ## §6 Pricing and licensing
 
-**bard costs $30, once.** One purchase, no subscription, no seat count, no
-expiry. Updates within the major version are included.
+**bard costs US$20 per year as a recurring annual licence.** It renews annually
+until cancellation. Cancellation stops future renewals; time already paid for
+remains represented by the licence service's paid-through state. A confirmed
+refund is an explicit service-side entitlement change; Bard never infers or
+applies refund policy locally. Bard does not sell a perpetual key or describe the
+annual term as a perpetual local entitlement.
 
-**Activation is offline.** The purchase issues a licence key; the application
-validates it locally and never contacts a server again. *The cost of the wrong
-choice:* a product that promises nothing leaves the machine cannot then phone
-home to check a licence — the contradiction is visible to exactly the user this
-product is for.
+**The local trial lasts 14 consecutive days from the moment the person selects
+`Start trial` during first-run onboarding.** It requires no account, licence
+key or network connection and exposes every feature. A protected local trial
+record fixes the start and end timestamps; it is not one of the three paid
+activation slots. Removing bard's application data and protected trial
+credential resets that local record, so the trial is a product experience rather
+than an anti-abuse security boundary. *The cost of the wrong choice:* a
+feature-limited trial of
+a product whose value is cohesion demonstrates the opposite of its argument.
 
-**A key activates up to three machines.** A person with a desktop and a laptop
-is the normal case and should not have to think about it; three is generous
-enough that the limit is never met honestly, and low enough to be worth having.
-Deactivation is by reinstalling elsewhere — there is no server to revoke
-against, which is the price of offline validation and is accepted.
+**One licence key activates three machines.** A desktop and two laptops are the
+normal case. Bard creates a random installation identity, stores it in
+Windows Credential Manager and never derives it from hardware fingerprints,
+account names or other invasive machine identity. Paid activation requires an
+online service round trip. The person can inspect and release activations from
+the service's customer portal, or release the current installation from bard.
 
-**The trial is the product, time-limited.** Every capability is available for
-14 days. *The cost of the wrong choice:* a feature-limited trial of a product
-whose value is cohesion demonstrates the opposite of its argument.
+### The signed offline lease
+
+A successful activation or revalidation returns an Ed25519-signed licence
+lease. The application embeds the matching public verification key; the signing
+private key exists only in the licence service's signing environment. The key
+and lease are stored through Windows Credential Manager, never SQLite, frontend
+state, events or logs.
+
+| Lease field | Contract |
+|---|---|
+| `v`, `lease_version` | Integer `1`; the version pair is retained for wire compatibility |
+| `product` | Constant `bard` |
+| `key_id` | Non-secret identifier selecting an embedded Ed25519 public key |
+| `key_fingerprint` | Lowercase SHA-256 of the licence key; it never reveals the key |
+| `activation_id` | Opaque service activation identifier |
+| `machine_id` | The opaque installation identifier created by this app |
+| `issued_at`, `license_expires_at`, `valid_until`, `next_check_at` | Integer UTC seconds; the service sets all four |
+| `entitlement` | `active`, `suspended`, or `ended` |
+| `lease_sequence` | Positive integer that increases for this activation |
+
+The wire form is
+`<base64url(canonical-json)>.<base64url(ed25519-signature)>`. Canonical JSON is
+UTF-8, has lexicographically sorted object keys, contains no insignificant
+whitespace, and encodes timestamps as integer UTC seconds. The signature
+covers the decoded canonical-JSON bytes. Bard never re-serializes a decoded
+lease for verification; it verifies the original signed payload. Each build
+embeds an active and next public key, selects one by `key_id`, and never fetches
+a verification key at runtime. A retired key remains embedded for at least the
+maximum lease lifetime so an offline lease cannot become invalid solely because
+the app updated.
+
+**A lease is valid for 30 days.** bard verifies the signature, payload version,
+installation identifier, entitlement state and lease sequence. Windows UTC must
+be no earlier than `issued_at` minus five minutes and no later than
+`valid_until`. While the lease is valid, capture, dictation and other local creation
+remain available without a network connection; update entitlement also persists,
+while the download itself waits for a connection. This is a bounded offline
+lease, not a promise of perpetual offline validation.
+
+**Online revalidation is opportunistic and bounded.** bard checks after a
+successful activation, at application startup when a network connection is
+available, and once every 24 hours while running. It runs at most one request
+at a time, gives each request 15 seconds, and makes no more than three attempts
+in a rolling 24-hour period while a lease is valid. Revalidation never blocks
+application startup and a timeout, transport error or service error never
+invalidates an otherwise valid signed lease. A successful response
+replaces the stored lease atomically; a signed response that ends or suspends
+the entitlement takes effect when received. At `valid_until`, an installation
+without a replacement lease becomes restricted, while existing items remain
+visible, copyable and exportable and the licence surface remains reachable.
+Restricted mode disables the composer, selection and clipboard capture,
+dictation, drawing, file attachment and updates; it never hides, encrypts or
+deletes existing local data.
+
+The external service is Polar's [License Keys](https://polar.sh/docs/features/benefits/license-keys)
+and subscription-benefit lifecycle. Bard requires a recurring annual product,
+three activation instances, customer-controlled deactivation, and
+subscription-state enforcement. The exact API shape is anchored to the linked
+documentation; the Rust integration and every offline/failure behaviour are
+owned here and specified in `Technology §8`.
 
 ---
 
 ## §7 Distribution
 
-**miiso.dev is the channel.** The product page sells the licence and serves the
-installer directly.
+**miiso.dev is the channel.** The product page sells the recurring annual
+licence and serves the installer directly. The consumer download is a single
+signed **NSIS** installer. No MSI package is published to consumers.
 
-**The installer is signed.** An unsigned Windows binary triggers SmartScreen,
-and a paid product that opens with a security warning has lost the argument
-before it starts. Code signing is a Phase 1 requirement, not a polish item.
+**The NSIS installer is the first-run product surface.** Its custom pages use
+the same name, typography, spacing and restrained language as bard: welcome,
+install location, progress, and a finish page that launches the application.
+The installer does not carry a separate visual system or a dense feature
+solicit. First-run onboarding owns the feature, shortcut and licence-key
+walkthrough in `Surfaces §2`.
 
-**Updates are checked in-app and applied by the user.** The application checks a
-release feed, surfaces an available version, and downloads a signed installer on
-request. It never updates silently.
+**The installer and every downloaded update are signed.** An unsigned Windows
+binary triggers SmartScreen, and a paid product that opens with a security
+warning has lost the argument before it starts. Authenticode signing and the
+updater's separate artifact signature are both Phase 1 requirements, not polish
+items. The signing requirements are anchored to
+[Tauri Windows signing](https://v2.tauri.app/distribute/sign/windows/) and the
+[updater](https://v2.tauri.app/plugin/updater/).
 
-**The Microsoft Store is Phase 3.** It reaches people who will not download an
-installer, and its packaging and review requirements are a body of work that
-does not block shipping. Requirements are at
+**Updates are checked in-app and applied by the user.** A local trial or an
+unexpired signed lease is required to download an update. The application checks
+a release feed, verifies its signature, surfaces an available version, and
+installs only after explicit confirmation. It never updates silently.
+
+**The Microsoft Store is Phase 3 and is a separate distribution path.** It
+reaches people who will not download an installer; its Store package does not
+replace or add a second consumer installer format to the Phase 1 release.
+Requirements are at
 [Microsoft Store policies](https://learn.microsoft.com/en-us/windows/apps/publish/store-policies).
 
 ### Crash reporting
@@ -378,13 +522,13 @@ must still leave usable evidence.
 ## §8 Legal position
 
 **bard ships no code from either reference product.** `cooper/` is Apache-2.0
-and `Handy/` is MIT; both are read as references. Where an approach was
-learned from one of them, bard's implementation is its own. Attribution
-obligations attach to code, so none is owed — and both licences' obligations
-return the moment anything is vendored, a data file included.
+and `Handy/` is MIT; both function as behavioural references. Bard's
+implementations are independent. Attribution obligations attach to code, so
+none is owed — and both licences' obligations return the moment anything is
+vendored, a data file included.
 
-**No credit list appears in the product.** A paid application does not carry a
-list of what it learned from in its settings.
+**No credit list appears in the product.** A paid application does not open its
+settings with a list of reference products.
 
 **Trademark position.** bard is an independent product, not affiliated with or
 endorsed by shadcn, and does not use the Copper name, mark or branding. The
@@ -399,11 +543,11 @@ their provenance and notices with the assets. A model imported through
 terms; Bard claims no ownership of it. The complete role-to-asset mapping is
 owned by `Technology §4`.
 
-**The three Bard defaults have one immutable first-party host.** Their release
+**The three Bard defaults have one pinned first-party host.** Their release
 assets come from [miisodev/bard-models](https://github.com/miisodev/bard-models),
 release `models-v2`. The files are exact-byte rehosts, not substitutions, and
-carry model-specific notices alongside the upstream licence. A release is not
-accepted until those assets are published and each exact file has passed the
+carry model-specific notices alongside the upstream licence. A product release
+is not accepted until those assets are published and each exact file passes the
 Windows `transcribe-cpp` load-and-transcription smoke test. *The cost of the
 wrong choice:* serving a paid product's defaults from another project's
 bandwidth leaves Bard without control of availability, provenance, or the bytes
@@ -414,12 +558,19 @@ its checksum policy promises.
 ## §9 The product page
 
 One page on miiso.dev. It carries what the product does, what it costs, the
-system requirement, a purchase action and a download.
+system requirement, a purchase action and the signed NSIS download.
 
 **It answers four questions in this order**, because that is the order a visitor
 asks them: what is this, what does it look like, what does it cost, how do I get
 it. Everything else — the local-processing promise, the model story, the
 shortcut map — is supporting material below that fold.
+
+**The commercial terms are explicit.** The price block reads: `US$20 per year.
+Renews annually until cancelled.` The trial block reads: `Try every feature
+free for 14 days. No account required.` The device block reads: `One licence
+works on up to 3 machines.` The offline block reads: `After activation, Bard
+works offline for up to 30 days between licence checks.` The page links to the
+Terms and Privacy documents and makes no perpetual-licence claim.
 
 **The local-first promise is the headline, not a footnote, and it is
 conditional.** The page says: `Audio capture and transcription run on your PC.
@@ -436,10 +587,11 @@ rather than the application.
 
 | Metric | Source | What it answers |
 |---|---|---|
-| Licences sold | Payment processor | Whether the product sells |
+| Annual licences sold | Payment processor | Whether the product sells |
+| Renewal rate | Payment processor | Whether the first year earns a second |
 | Refund rate | Payment processor | Whether it is what buyers expected |
 | Page-to-purchase conversion | Site analytics on miiso.dev | Whether the page argues well |
-| Download-to-purchase | Site analytics and licence issuance | Whether the trial converts |
+| Trial-to-activation conversion | Licence service | Whether the local trial leads to a paid year |
 
 **There is no in-product funnel and there will not be one.** Knowing which
 features a user touches would require watching them, and the product's central
@@ -447,4 +599,4 @@ promise forbids it.
 
 ---
 
-*Product & Business · version 1.1*
+*Product & Business · version 1.2*

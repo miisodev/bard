@@ -8,7 +8,7 @@ export interface Item {
   sectionId: number | null;
   content: string;
   kind: "text" | "image";
-  imagePath: string | null;
+  origin: "manual" | "clipboard" | "dictation";
   favorite: number;
   done: number;
   createdAt: number;
@@ -18,7 +18,6 @@ export interface Item {
 export interface Attachment {
   id: number;
   itemId: number;
-  path: string;
   position: number;
 }
 
@@ -150,6 +149,25 @@ export interface AppState {
   modelId: string;
   modelReady: boolean;
   micReady: boolean;
+  activeItemId: number | null;
+  license: LicenseStatus;
+}
+
+export interface LicenseStatus {
+  state: "trial" | "active" | "restricted" | "unavailable" | string;
+  canUse: boolean;
+  keyConfigured: boolean;
+  trialStartedAt: number | null;
+  trialExpiresAt: number | null;
+  expiresAt: number | null;
+  lastCheckedAt: number | null;
+  message: string | null;
+}
+
+export interface UpdateInfo {
+  version: string;
+  notes: string | null;
+  publishedAt: string | null;
 }
 
 export interface ModelProgress {

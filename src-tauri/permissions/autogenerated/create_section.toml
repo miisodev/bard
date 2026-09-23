@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-section"
+description = "Enables the create_section command without any pre-configured scope."
+commands.allow = ["create_section"]
+
+[[permission]]
+identifier = "deny-create-section"
+description = "Denies the create_section command without any pre-configured scope."
+commands.deny = ["create_section"]

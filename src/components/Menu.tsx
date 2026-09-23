@@ -34,11 +34,22 @@ export default function Menu({
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const first = ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    first?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        e.preventDefault();
         e.stopPropagation();
         onClose();
+        return;
       }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      const rows = [...(ref.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+      if (!rows.length) return;
+      e.preventDefault();
+      const current = rows.indexOf(document.activeElement as HTMLButtonElement);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : e.key === "ArrowDown" ? (current + 1) % rows.length : (current - 1 + rows.length) % rows.length;
+      rows[next]?.focus();
     };
     // Capture phase: the panel's own Escape handling would otherwise hide the
     // whole window before the menu ever saw the key.
@@ -58,6 +69,7 @@ export default function Menu({
         ref={ref}
         className={`popover-menu${anchor === "point" ? " at-point" : ""}`}
         role="menu"
+        aria-label="Bard actions"
         style={style}
       >
         {entries.map((e, i) => (

@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { AlertCircle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "./store";
+import { playCue } from "./audio";
 import type { AppState, ModelProgress } from "./types";
 import Panel from "./components/Panel";
 import Onboarding from "./components/Onboarding";
@@ -19,7 +20,12 @@ function errorText(error: unknown): string {
   return text.replace(/^Error:\s*/i, "").trim() || "Bard could not load its local state.";
 }
 
-export default function App() {
+export interface AppProps {
+  /** Optional host-provided current clipboard item; captured events also update it. */
+  activeItemId?: number | null;
+}
+
+export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {}) {
   useTheme();
 
   const [state, setState] = useState<AppState | null>(null);
@@ -30,6 +36,11 @@ export default function App() {
     transcribing: false,
     level: 0,
   });
+  const [activeItemId, setActiveItemId] = useState<number | null>(suppliedActiveItemId ?? null);
+
+  useEffect(() => {
+    setActiveItemId(suppliedActiveItemId ?? null);
+  }, [suppliedActiveItemId]);
 
   useEffect(() => {
     const pendingUnlisteners: Promise<() => void>[] = [];
@@ -43,6 +54,7 @@ export default function App() {
         .then((next) => {
           if (!alive) return;
           setState(next);
+          if (next.activeItemId !== undefined) setActiveItemId(next.activeItemId);
           setLoadError(null);
         })
         .catch((error: unknown) => {
@@ -62,10 +74,16 @@ export default function App() {
       setDictation((current) => ({ ...current, listening: false, transcribing: false }));
 
     refresh();
+    void api.refreshLicense().then((license) => {
+      if (!alive) return;
+      setState((current) => (current ? { ...current, license } : current));
+    }).catch(() => undefined);
     subscribe(listen("refresh", refresh));
     subscribe(
-      listen("captured", () => {
-        window.dispatchEvent(new CustomEvent("bard-captured"));
+      listen("captured", (event) => {
+        const id = Number(event.payload);
+        if (Number.isFinite(id)) setActiveItemId(id);
+        window.dispatchEvent(new CustomEvent("bard-captured", { detail: id }));
       }),
     );
     subscribe(
@@ -84,11 +102,19 @@ export default function App() {
     subscribe(
       listen("dictation-error", (event) => {
         clearDictation();
+        playCue("error");
         const message = event.payload as string;
         window.dispatchEvent(new CustomEvent("bard-toast", { detail: message }));
       }),
     );
     subscribe(listen("dictation-cancelled", clearDictation));
+    subscribe(
+      listen("license-restricted", (event) => {
+        const message = typeof event.payload === "string" ? event.payload : "Bard needs an active licence.";
+        window.dispatchEvent(new CustomEvent("bard-toast", { detail: message }));
+        refresh();
+      }),
+    );
     subscribe(
       listen("dictation-cloud-warning", (event) => {
         const message = event.payload as string;
@@ -100,11 +126,16 @@ export default function App() {
     subscribe(
       listen("dictation-overlay", (event) => {
         const status = event.payload as string;
-        setDictation((current) => ({
-          ...current,
-          listening: status === "listening",
-          transcribing: status === "transcribing" || status === "finishing",
-        }));
+        setDictation((current) => {
+          const listening = status === "listening";
+          if (listening && !current.listening) playCue("dictate-start");
+          if (!listening && current.listening && status !== "transcribing") playCue("dictate-stop");
+          return {
+            ...current,
+            listening,
+            transcribing: status === "transcribing" || status === "finishing",
+          };
+        });
       }),
     );
     subscribe(
@@ -193,7 +224,13 @@ export default function App() {
 
   return (
     <div className="app">
-      <Panel state={state} dictation={dictation} onState={setState} />
+      <Panel
+        state={state}
+        dictation={dictation}
+        onState={setState}
+        activeItemId={activeItemId}
+        onActiveItemChange={setActiveItemId}
+      />
     </div>
   );
 }

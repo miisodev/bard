@@ -103,6 +103,21 @@ other's clipboard.
 **Capture clipboard** is the separate, simpler action: take what is on the
 clipboard now, with no synthesis and no sentinel. It is on the tray menu.
 
+### Send to Bard
+
+**Explorer contributes one command and no application modes.** **Send to Bard**
+hands the selected regular files to the attachment path, shows the panel and
+makes the imported result inspectable. A warm instance receives the handoff;
+a cold instance starts once, initializes storage and consumes the same
+handoff. The command never recurses into folders, launches a separate elevated
+process, or accepts a shell command from the selected path.
+
+Files enter the same bounded importer as **Attach Files…**. Duplicate paths in
+one handoff collapse, ordinary attachments become `manual` retained items, and
+supported images can stand alone. Every rejected path has its own safe failure;
+one unreadable file does not discard valid files. The registration mechanism is
+`Technology §7`; the exact result states are `Surfaces §1`.
+
 ---
 
 ## §3 The clipboard monitor
@@ -122,8 +137,17 @@ Three things are skipped, and each is skipped for its own reason:
 | Clipboard content marked as excluded from history by its source | Password managers set it. It is the whole reason the marker exists, and honouring it is not optional in a product that keeps what it sees |
 | Content identical to the last captured item | A copy of the same thing twice is one item |
 
-**History is bounded.** Older items are pruned past the configured limit,
-which defaults to 500.
+**Clipboard origin and lifespan are explicit.** Selection capture, explicit
+clipboard capture and monitor-created rows receive the `clipboard` origin.
+Dictation rows receive `dictation`; composer notes, drawings and deliberate file
+attachments receive `manual`. Clipboard and dictation lifespans are independent
+and default to 30 days, with the allowed values, favourite exemption, schedule
+and owned-file deletion rules owned by `Product & Business §5`.
+
+**A failed retention pass is a failed pass, not a partial cleanup.** Database
+rows and Bard-owned image or attachment files commit or roll back as one unit;
+external cache files are never candidates. The next startup, daily tick or
+manual **Prune now** retries the complete pass.
 
 ---
 
@@ -159,13 +183,15 @@ an error instead of accumulating audio indefinitely.
 
 | When | Destination |
 |---|---|
-| The panel is visible **and** focused | The clipboard, and the timeline as a captured item |
-| Anything else has focus | The clipboard, then the paste chord into that application |
+| The panel is visible **and** focused | The clipboard, and the timeline as a `dictation`-origin item governed by the dictation lifespan |
+| Anything else has focus | The clipboard, then the paste chord into that application; no timeline copy is created |
 
 **bard pastes into whatever the person was typing into**, which is the entire
 point of dictation in another application. The clipboard is written first in
 both cases, so a paste that does not land leaves the transcript recoverable
-rather than lost.
+rather than lost. A failed clipboard write cancels the paste, leaves no partial
+timeline item, and reports `Couldn't copy.` through the panel or native
+notification when the panel is hidden.
 
 **The paste chord is a synthesised keystroke and is treated as one.** It waits
 for the clipboard write to settle before pressing, and releases every modifier
@@ -183,16 +209,28 @@ Active whenever the panel has focus.
 
 | Key | Action |
 |---|---|
-| `↑` `↓` | Move the selection. With nothing selected, `↓` takes the first item and `↑` the last |
-| `Shift+↑` `Shift+↓` | Extend the selection from the anchor |
-| `Enter` | Copy the selection |
-| `Space` | Toggle done |
+| `↑` `↓` | Move the active item. With nothing active, `↓` takes the first item and `↑` the last |
+| `Shift+↑` `Shift+↓` | Extend the selected range from the active anchor |
+| `Enter` or `Ctrl+C` | Copy the active item, or the whole selection when it contains more than one |
+| `Ctrl+Shift+M` | Copy the selected items as a Markdown list |
+| `Shift+F10` or Menu | Open the desktop-style context menu for the active item |
+| `Space` | Toggle done for the whole selection, using the active item's state |
 | `Delete` / `Backspace` | Delete the selection |
 | `Ctrl+K` | Open the section switcher |
-| `Escape` | Clear the search, then the selection, then hide the panel |
+| `Ctrl+/` | Open the shortcut sheet |
+| `Ctrl+,` | Toggle the Settings companion |
+| `Ctrl+Shift+D` | Toggle the Drawing companion |
+| `Escape` | Close a menu, then clear the search, then the selection, then hide the panel |
 | Typing | Goes to the composer, which holds focus by default |
 
-**Space toggles the whole selection off the lead item's state**, not each
+**Active and selected are different states.** Exactly one item is active. It is
+set by the first arrow movement, a pointer activation, or opening that item's
+context menu. Extending with Shift selects a range but does not silently move
+the active anchor; a plain arrow collapses the range to the newly active item.
+Copying, deleting and opening a menu do not change the active item. Search
+clears the active item, then activates the first match when one exists.
+
+**Space toggles the whole selection off the active item's state**, not each
 item's own. Toggling each independently splits a mixed selection into two
 halves and the second press does not put it back.
 
@@ -214,6 +252,8 @@ hidden.
 | Item | Action |
 |---|---|
 | **Show Bard** | Shows and focuses the panel |
+| **Draw** | Toggles the Drawing companion |
+| **Settings** | Toggles the Settings companion |
 | **Capture selection** | §2 |
 | **Capture clipboard** | §2 |
 | **Dictate** | Starts dictation |
@@ -250,9 +290,13 @@ Three rules keep that from firing when it should not:
    belongs to bard, the panel stays. A window-level check is unreliable
    *during* a focus transition, which is exactly when it is consulted.
 
-**Opening settings or the canvas does not hide the panel**, because both belong
-to bard.
+**Opening Settings or Drawing does not hide the panel**, because both belong to
+bard. A companion takes focus while it is open, but its window and webview
+belong to the same process, so foreground movement between the panel and either
+companion never triggers auto-hide. Closing or hiding the companion returns
+focus to the panel. Activating the other companion header icon closes the first
+one before opening the second.
 
 ---
 
-*Input & Commands · version 1.0*
+*Input & Commands · version 1.2*

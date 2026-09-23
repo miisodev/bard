@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { renderInline } from "../markdown";
 import { api } from "../store";
 import type { Attachment, Item } from "../types";
@@ -15,10 +15,13 @@ export default function ItemCard({
   item,
   attachments,
   selected,
+  active = false,
   editing,
   search,
   onClick,
+  onActivate,
   onContextMenu,
+  onOpenContextMenu,
   onToggleDone,
   onCopyImage,
   onDelete,
@@ -28,10 +31,13 @@ export default function ItemCard({
   item: Item;
   attachments: Attachment[];
   selected: boolean;
+  active?: boolean;
   editing: boolean;
   search: string;
   onClick: (e: ReactMouseEvent) => void;
+  onActivate: () => void;
   onContextMenu: (e: ReactMouseEvent) => void;
+  onOpenContextMenu: (e: ReactKeyboardEvent<HTMLDivElement>) => void;
   onToggleDone: () => void;
   onCopyImage: () => void;
   onDelete: () => void;
@@ -45,13 +51,13 @@ export default function ItemCard({
   const done = item.done !== 0;
 
   useEffect(() => {
-    if (item.kind !== "image" || !item.imagePath) return;
-    void api.imageData(item.imagePath).then(setImageUrl);
-  }, [item.id, item.imagePath]);
+    if (item.kind !== "image") return;
+    void api.itemImageData(item.id).then(setImageUrl);
+  }, [item.id, item.kind]);
 
   useEffect(() => {
     for (const a of attachments) {
-      void api.imageData(a.path).then((url) => {
+      void api.attachmentImageData(a.id).then((url) => {
         if (url) setThumbUrls((m) => new Map(m).set(a.id, url));
       });
     }
@@ -72,12 +78,44 @@ export default function ItemCard({
 
   return (
     <div
-      className={`item-card${selected ? " selected" : ""}${done ? " done" : ""}`}
+      className={`item-card${selected ? " selected" : ""}${active ? " active" : ""}${done ? " done" : ""}`}
+      role="option"
+      tabIndex={0}
+      aria-selected={selected}
+      aria-label={item.kind === "image" ? "Captured image" : item.content.slice(0, 160)}
       data-item-id={item.id}
       data-item-kind={item.kind}
+      aria-current={active ? "true" : undefined}
       onClick={onClick}
       onContextMenu={onContextMenu}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onActivate();
+          return;
+        }
+        if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+          event.preventDefault();
+          onOpenContextMenu(event);
+        }
+      }}
     >
+      <button
+        type="button"
+        className="item-copy"
+        aria-label={`Copy ${item.kind === "image" ? "image" : "text"}`}
+        title="Copy"
+        onClick={(e) => {
+          e.stopPropagation();
+          onCopyImage();
+        }}
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="5.25" y="5.25" width="7.25" height="7.25" rx="1.25" />
+          <path d="M3.25 10.75H3.5A1.5 1.5 0 0 1 3.5 8.25v-4.5A1.5 1.5 0 0 1 5 2.25h4.5A1.5 1.5 0 0 1 11 3.75v.25" />
+        </svg>
+      </button>
+
       <button
         type="button"
         className="check"
@@ -136,9 +174,9 @@ export default function ItemCard({
               const url = thumbUrls.get(a.id);
               return (
                 <span key={a.id} className="thumb">
-                  {url ? <img src={url} alt="" onClick={(e) => {
+                  {url ? <img src={url} alt="Attachment" onClick={(e) => {
                     e.stopPropagation();
-                    onCopyImage();
+                    void api.copyAttachment(a.id);
                   }} /> : null}
                   <button
                     type="button"

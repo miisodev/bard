@@ -126,6 +126,10 @@ pub fn gesture_release(app: &AppHandle, token: u64, held_for: Duration) {
 }
 
 pub fn start(app: &AppHandle) -> bool {
+    if let Err(error) = crate::license::require(app) {
+        let _ = app.emit("license-restricted", error);
+        return false;
+    }
     {
         let mut state = state_lock();
         if *state != DictState::Idle {
@@ -281,14 +285,24 @@ pub fn stop(app: &AppHandle) {
                     }
                     None => false,
                 };
-                if panel_focused {
-                    let _ = crate::paste::set_text(&app, &text);
-                    crate::monitor::capture_text(&app, &text);
-                    let _ = app.emit("dictation-panel", text);
+                let write_result = if panel_focused {
+                    crate::paste::set_text(&app, &text).map(|()| false)
                 } else {
-                    let _ = crate::paste::set_text(&app, &text);
-                    paste_chord(&app);
-                    let _ = app.emit("dictation-pasted", ());
+                    crate::paste::set_text(&app, &text).map(|()| true)
+                };
+                if let Err(error) = write_result {
+                    let _ = app.emit("dictation-error", error);
+                } else {
+                    let item_id =
+                        crate::db::insert_item_with_origin(&app, &text, "text", None, "dictation");
+                    crate::db::set_active_item(&app, Some(item_id));
+                    crate::db::cleanup_origin(&app, "dictation");
+                    if panel_focused {
+                        let _ = app.emit("dictation-panel", text);
+                    } else {
+                        paste_chord(&app);
+                        let _ = app.emit("dictation-pasted", ());
+                    }
                 }
             }
             Ok(_) => {

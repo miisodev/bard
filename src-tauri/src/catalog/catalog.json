@@ -12,7 +12,7 @@
     "are relative to the other rows in this file, not to any benchmark.",
     "",
     "Every row records the exact conversion repository and revision that produced",
-    "the bytes, the upstream model and licence, and the immutable Bard release",
+    "the bytes, the upstream model and licence, and the pinned Bard release",
     "that serves the file. The file's own SHA-256 and byte size are verified",
     "before the engine is allowed to activate it."
   ],

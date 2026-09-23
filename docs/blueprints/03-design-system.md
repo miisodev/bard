@@ -32,14 +32,26 @@ thing this product cannot afford to look like.
 its cards `#f8f8f8`, its fields `#f3f4f7`. bard's values sit within one unit of
 those.
 
-**Content over chrome.** The panel carries no branding, no title bar, no window
-controls and no per-card action row. Every one of those was present once and
-each was removed. *The cost of the wrong choice:* a panel that advertises itself
-competes with what it holds, and what it holds is the product.
+**Content over chrome.** The panel carries no branding, title bar or window
+controls, and cards carry no timestamps or multi-button action rows. Its header
+does carry two persistent line-icon actions—Draw and Settings—beside the search
+field and overflow, and every item carries one Copy affordance. *The cost of the
+wrong choice:* a panel that advertises itself competes with what it holds, while
+controls that exist only in a context menu make the common action slower than
+the product's keyboard-first claim.
 
-**The empty space is the design.** A card is a checkbox and its text. Resist
-adding affordances to it; everything a card can do is reachable from the
-keyboard or the context menu.
+**The empty space is the design.** A card is a checkbox, its content and one
+copy control. The copy control is always present in the accessibility tree and
+at low visual prominence; card hover, keyboard focus, selection or active state
+raises its contrast. Actions beyond Copy and Done remain in the context menu,
+where a desktop user expects to find them without putting a toolbar on every
+row.
+
+**Small does not mean cryptic.** Persistent state may use a compact badge or
+status dot, but colour is never the only carrier. Buttons use familiar Lucide
+line icons, unfamiliar actions carry one-word tooltips, and menu labels use a
+single verb or noun. Decorative badges, nested cards and controls added only to
+fill visual balance are absent.
 
 ---
 
@@ -120,6 +132,7 @@ produces a horizontal scrollbar nobody can find the cause of.
 --panel-w: 380px;      --panel-pad: var(--sp-6);
 --card-pad-y: var(--sp-5);  --card-pad-x: var(--sp-6);
 --card-gap: var(--sp-3);    --checkbox-size: 18px;
+--icon-control: 32px;      --icon-glyph: 17px;
 ```
 
 ---
@@ -143,7 +156,7 @@ within one click.
 --surface-hover: #ffffff;
 --surface-2: #f3f4f7;     /* fields */
 --surface-3: #ffffff;     /* popovers, sheets */
---text: #1d1d1f;  --text-2: #6e6e73;  --text-3: #a1a1a6;
+--text: #1d1d1f;  --text-2: #5f6065;  --text-3: #66676d;
 --text-on-accent: #ffffff;
 --border: rgba(0,0,0,.07);  --border-strong: rgba(0,0,0,.14);
 --rule: rgba(0,0,0,.08);
@@ -162,18 +175,20 @@ within one click.
 ```css
 --canvas: #1c1c1f;  --surface: #26262a;  --surface-hover: #2e2e33;
 --surface-2: #2e2e33;  --surface-3: #303036;
---text: #f5f5f7;  --text-2: #98989d;  --text-3: #6e6e73;
+--text: #f5f5f7;  --text-2: #a1a1a2;  --text-3: #8c8d94;
 --border: rgba(255,255,255,.08);  --border-strong: rgba(255,255,255,.16);
 --rule: rgba(255,255,255,.1);
---accent: #5b8def;  --accent-hover: #74a0f5;
---accent-soft: rgba(91,141,239,.18);  --accent-text: #9ab8f7;
+--accent: #3f73d8;  --accent-hover: #315fb8;
+--accent-soft: rgba(63,115,216,.24);  --accent-text: #9ab8f7;
 --danger: #ff6369;  --success: #43c07c;
 ```
 
-**`--el-panel` is declared and unused by the panel.** The panel draws no shadow
-of its own: it fills its window exactly, so a shadow has no transparent margin
-to fall into and is clipped square at the window edge, reading as a smudge worst
-at the corner where the offsets meet. See `Technology §2`.
+**`--el-panel` belongs to the companion surface, not the panel.** The panel
+draws no shadow of its own: it fills its window exactly, so a shadow has no
+transparent margin to fall into and is clipped square at the window edge,
+reading as a smudge worst at the corner where the offsets meet. Settings and
+Drawing reserve the transparent margin their shadow needs. See
+`Technology §2`.
 
 ---
 
@@ -184,47 +199,82 @@ variants, states, and accessibility.
 
 ### Item card
 
-**Purpose.** One captured item. **Not** for anything needing its own actions —
-those live in the context menu.
+**Purpose.** One captured item. **Not** for a toolbar of unrelated actions; Copy
+is the one direct command and the context menu owns the rest.
 
 **Anatomy.** Card → checkbox (18px, flex-none, `margin-top: 2px`) · main column
-→ body text, then thumbnail row.
+→ body text, then thumbnail row · Copy button aligned to the first line's
+optical centre. The button has a 32 × 32 CSS-pixel hit area and a 17px Lucide
+`Copy` glyph; the hit area may extend into the card padding without changing
+the text wrap.
 
 **The checkbox sits on the first text line's optical centre, not the card's.**
 On a three-line card, centring it on the box looks like a mistake.
 
-**States.** Default · hover (`--surface-hover`) · selected (a **ring**, never a
-fill — a filled card competes with the done state, and the two are read
-together constantly) · done (accent-filled circle, white check, struck-through
-and dimmed body, thumbnails at 50%).
+**States.** Default · hover (`--surface-hover`, Copy at full contrast) · selected
+but not active (a 1px accent ring, no fill) · active (a 2px accent ring plus
+`--accent-soft` wash and `aria-current="true"`) · done (accent-filled circle,
+white check, struck-through and dimmed body, thumbnails at 50%). A selected and
+active card combines the active wash and ring; a filled card is never used for
+selection because it competes with the done state.
 
-**Accessibility.** The checkbox is a `role="checkbox"` button with `aria-checked`
-and a label that states the action it performs.
+The Copy button is never removed from layout or the accessibility tree. At rest
+it uses `--text-3`; hover, focus-visible, selected and active states raise it to
+`--text`. Pointer, keyboard and context-menu activation all emit the same copy
+command and leave the active card active.
+
+**Accessibility.** The timeline is a named list; each card is a list item and
+the active card carries `aria-current="true"`. Selected state is included in
+each item's accessible description, and selection changes are announced in the
+panel's polite live region. The checkbox is a `role="checkbox"` button with
+`aria-checked` and a label that states the action it performs. Copy has the
+accessible name `Copy <item preview>` and a visible focus ring.
 
 ### Section header
 
 A letterspaced uppercase label and a hairline reaching the right edge. No icon,
 no count. **Clicking it makes that section active.**
 
-### Popover menu
+### Header actions
 
-**Purpose.** The header's overflow and the composer's attach menu — the same
-component, positioned differently.
+Three 32px controls share the panel header's trailing group: a persistent
+Lucide `Paintbrush` labelled **Draw**, a persistent Lucide `Settings` labelled
+**Settings**, and an overflow button labelled **More**. Draw and Settings never
+appear only on hover. Their pressed state is a low-contrast `--accent-soft`
+background plus `aria-expanded`; More has no persistent state.
 
-**Anatomy.** Scrim (catches the outside click, so nothing underneath knows the
-menu exists) → menu → items, optional separators, optional trailing hint.
+### Menu
+
+**Purpose.** The header overflow, composer attach menu, item context menu and
+section picker use one keyboard-complete menu component. The context variant
+follows the familiar Windows/7-Zip desktop pattern: pointer-anchored, grouped,
+icon-plus-label rows, separators only between action groups, and a right-aligned
+keyboard hint. The popover variants anchor to their invoking control.
+
+**Anatomy.** Scrim for popover variants → menu surface → optional group label
+→ menu items → optional separator → optional trailing hint. Context menus omit
+the scrim and clamp their rectangle to the work area. An item is disabled rather
+than removed when its precondition is temporarily false; unavailable discovery
+results use explanatory copy rather than a dead command.
+
+`ArrowUp` and `ArrowDown` move, `Home` and `End` jump, printable letters jump to
+a matching item, `Enter` and `Space` activate, and `Escape` closes. Focus returns
+to the exact invoker. The menu uses `role="menu"` and `role="menuitem"`; check
+state uses `menuitemcheckbox`. Opening the item context menu makes that item
+active before the menu takes focus.
 
 **Escape closes it, on a capture-phase listener.** Without capture, the panel's
 own Escape handling hides the whole window first.
 
-### Toggle · Segmented · Select · Button · TextField
+### Toggle · Segmented · Select · Button · TextField · Slider
 
 The settings primitives, in `src/settings/ui.tsx`. **Each takes its spacing,
 colour and type from the tokens and exposes no `style` prop.** A pane needing an
 escape hatch means the primitive is wrong.
 
 `Button` variants: default, primary, danger. `Segmented` is a `radiogroup`;
-`Toggle` is a `switch` with `aria-checked`.
+`Toggle` is a `switch` with `aria-checked`; `Slider` exposes the native range
+keyboard model and an accessible value text.
 
 ### Meter
 
@@ -237,6 +287,23 @@ A group is one card with hairlines between rows, not a card per row. *The cost
 of the wrong choice:* a card each turns a settings page into a list of floating
 slabs. A group's explanatory note sits **above** the card; inside it, a note
 reads as a setting.
+
+### Audio cues
+
+The palette contains five semantic cues and no per-control sound:
+
+| Event | Character | Visual counterpart |
+|---|---|---|
+| `Capture` | One soft rounded pop | Toast or new active item |
+| `Copy` | One short neutral click | `Copied` toast or button confirmation |
+| `DictationStart` | Quiet rising two-note tone | Overlay enters Listening |
+| `DictationStop` | Quiet falling two-note tone | Overlay leaves Listening |
+| `Error` | Low double pulse, never a harsh alarm | Error text or restricted treatment |
+
+Each asset is under 350ms, uses the default Windows output, and has an
+independent enable toggle plus one master volume from 0–100. Hover, menu
+opening and every button press make no sound. Cue files are bundled and
+versioned with the design system; user content never enters playback or naming.
 
 ---
 
@@ -266,33 +333,44 @@ distinguish *there is nothing* from *I could not find out* renders the error.
 **Target: WCAG 2.2 AA**, at [w3.org/TR/WCAG22](https://www.w3.org/TR/WCAG22/).
 
 - **Contrast** 4.5:1 for body text, 3:1 for large text and UI boundaries, in
-  both themes. Verified by rasterising rendered output, not by comparing
-  computed colour strings — a translucent surface over an unknown backdrop has
-  no computable contrast, which is one reason no such surface exists.
-- **Every action has a key.** The mouse is optional throughout.
+  both themes and every state. Verification rasterises rendered output rather
+  than comparing computed colour strings; disabled and placeholder colours are
+  held to the same target or carry a non-text alternative.
+- **Every action has a key.** The mouse is optional throughout, including item
+  Copy, the desktop-style context menu, section selection, companion windows and
+  licence activation.
 - **Focus is always visible** via `--focus-ring`. `outline: none` without a
-  replacement ring is an error the CSS audit is extended to catch in Phase 2.
-- **Roles and labels.** Every control that is a `<button>` standing in for a
-  checkbox, switch or radio carries the matching role and state.
-- **Reduced motion** zeroes every duration.
+  replacement ring is an error, and the CSS audit rejects it.
+- **Roles, names and state.** Every control has an accessible name; custom
+  checkbox, switch, radio, menu and slider semantics match their native
+  equivalents. Focus order follows visual order and never lands on a hidden or
+  disabled control.
+- **Announcements.** The panel has one polite live region for copy, capture,
+  selection, retention and licence outcomes. The never-focused dictation
+  overlay mirrors Listening, Transcribing, Finishing, cancellation and errors
+  into the panel region or a native notification when the panel is hidden.
+  Errors are announced once and remain visible until dismissed or resolved.
+- **Reduced motion** zeroes every duration, and no information is carried by
+  motion alone.
 
-**Screen-reader support is Phase 2**, and is named rather than assumed: the
-panel's live regions, the dictation overlay's announcements and the timeline's
-list semantics are unspecified until then.
+**Keyboard and screen-reader verification is release evidence, not a later
+polish pass.** Every interactive surface is exercised without a pointer and
+with a screen reader before the production gate in `docs/PARITY.md` can pass.
 
 ---
 
 ## §7 Anti-patterns
 
-Each of these was present in the product and removed. They are recorded because
-each is a natural thing to reach for.
+These are natural reaches that the system refuses on principle.
 
 | Refused | Why |
 |---|---|
-| A title bar with minimise and close | The panel is dismissed from the keyboard. Window controls make it a window to manage |
-| A wordmark in the panel | The panel is content. Branding belongs on the product page |
+| A title bar with minimise and close on the panel | The panel is dismissed from the keyboard. Window controls make it a window to manage |
+| A wordmark in the panel | The panel is content. Branding belongs on the product page and installer |
 | Timestamps on cards | Noise on a list that is visible in full |
-| A per-card action row | Actions are keyboard and context menu |
+| A multi-button action row on every card | Copy is the only direct item command; the rest stay in a keyboard-complete context menu |
+| Copy available only from a context menu | The common recovery action becomes slower than keyboard-first use claims |
+| Hover-only header controls | Settings and Draw disappear from both pointer discovery and touch-style exploration |
 | A translucent theme | A translucent panel cannot hold contrast over arbitrary desktop content |
 | A placeholder that teaches syntax | The composer describes intent. Mechanics are learned once, from the shortcut sheet |
 | Empty score bars for an unrated model | Claims it was measured and found wanting |
@@ -311,10 +389,10 @@ replaced it — with no error and no visual difference large enough to notice. I
 is the reason the audit exists.
 
 Unused classes are reported and do not fail the build: classes composed at
-runtime look unused to a static scan. The list is read rather than obeyed, and
-it has already surfaced the opposite defect — a class with no rule at all,
-rendering unstyled.
+runtime look unused to a static scan. The list is reviewed beside a rendered
+pass because the opposite defect—a class with no rule at all—renders unstyled
+without producing a duplicate or undefined-token error.
 
 ---
 
-*Design System · version 1.0*
+*Design System · version 1.2*

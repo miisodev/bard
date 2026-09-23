@@ -1,16 +1,30 @@
 use std::path::{Path, PathBuf};
+
+use image::GenericImageView;
 use std::time::Duration;
 
 use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use zeroize::Zeroize;
 use tauri_plugin_autostart::ManagerExt;
+use zeroize::Zeroize;
 
 use crate::db;
 
 pub fn refresh(app: &AppHandle) {
     let _ = app.emit("refresh", ());
+}
+
+fn license_blocked(app: &AppHandle, error: String) -> bool {
+    let _ = app.emit("license-restricted", error);
+    true
+}
+
+fn require_licensed_or_onboarding(app: &AppHandle) -> Result<(), String> {
+    if crate::db::get_setting(app, "onboarding_completed") != Some("1".into()) {
+        return Ok(());
+    }
+    crate::license::require(app)
 }
 
 #[tauri::command]
@@ -33,6 +47,7 @@ pub fn check_model(
 
 #[tauri::command]
 pub fn activate_detected_model(app: AppHandle, id: String) -> Result<(), String> {
+    require_licensed_or_onboarding(&app)?;
     crate::hf::activate_detected_model(&app, &id)
 }
 
@@ -62,6 +77,7 @@ pub async fn hf_install(
     size: u64,
     sha256: String,
 ) -> Result<String, String> {
+    require_licensed_or_onboarding(&app)?;
     crate::hf::install_custom_model(&app, &repo, &file, size, &sha256).await
 }
 
@@ -73,6 +89,7 @@ pub fn hf_use_cached(
     local_path: String,
     size: u64,
 ) -> Result<(), String> {
+    require_licensed_or_onboarding(&app)?;
     let id = crate::hf::register_cached(&app, &repo, &file, &local_path, size)?;
     crate::hf::activate_model(&app, &id)
 }
@@ -155,6 +172,9 @@ pub fn save_postprocessing(
     mut api_key: Option<String>,
     clear_key: Option<bool>,
 ) -> Result<PostprocessingSettings, String> {
+    if enabled {
+        crate::license::require(&app)?;
+    }
     let clearing_key = clear_key.unwrap_or(false) || api_key.as_deref().is_some_and(str::is_empty);
     let current = postprocessing_config(&app);
     let ids = if clearing_key {
@@ -250,7 +270,73 @@ pub fn get_crash_report() -> Result<Option<CrashReport>, String> {
 }
 
 #[tauri::command]
+pub async fn check_for_update(
+    app: AppHandle,
+) -> Result<Option<crate::updater::UpdateInfo>, String> {
+    crate::license::require(&app)?;
+    crate::updater::check(&app).await
+}
+
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    crate::license::require(&app)?;
+    crate::updater::install(&app).await
+}
+
+#[tauri::command]
+pub fn start_trial(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::start_trial(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_license(app: AppHandle) -> crate::license::LicenseStatus {
+    crate::license::status(&app)
+}
+
+#[tauri::command]
+pub async fn activate_license(
+    app: AppHandle,
+    key: String,
+) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::activate(&app, key)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn refresh_license(app: AppHandle) -> crate::license::LicenseStatus {
+    crate::license::refresh(&app).await
+}
+
+#[tauri::command]
+pub async fn deactivate_license(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::deactivate(&app)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn clear_license(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::clear(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn get_setting_str(app: AppHandle, key: String) -> String {
+    const PUBLIC_SETTING_KEYS: &[&str] = &[
+        "selected_microphone",
+        "dictation_overlay_position",
+        "openrouter_postprocess_enabled",
+        "openrouter_postprocess_model_ids",
+        "openrouter_postprocess_model_id",
+        "theme",
+        "capture_double_shift",
+        "sound_on_capture",
+        "clipboard_retention_days",
+        "dictation_retention_days",
+    ];
+    if !PUBLIC_SETTING_KEYS.contains(&key.as_str()) {
+        return String::new();
+    }
     db::get_setting(&app, &key).unwrap_or_default()
 }
 
@@ -262,6 +348,10 @@ pub fn dirs_documents() -> String {
 
 #[tauri::command]
 pub fn create_section(app: AppHandle, name: String) -> i64 {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return 0;
+    }
     let id = db::find_or_create_section(&app, &name);
     db::set_active_section(&app, Some(id));
     refresh(&app);
@@ -276,49 +366,142 @@ pub fn set_active_section(app: AppHandle, id: Option<i64>) {
 
 #[tauri::command]
 pub fn rename_section(app: AppHandle, id: i64, name: String) {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return;
+    }
     db::rename_section(&app, id, &name);
     refresh(&app);
 }
 
 #[tauri::command]
 pub fn delete_section(app: AppHandle, id: i64) {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return;
+    }
     db::delete_section(&app, id);
     refresh(&app);
 }
 
 #[tauri::command]
 pub fn update_item(app: AppHandle, id: i64, content: String) {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return;
+    }
     db::update_item(&app, id, &content);
     refresh(&app);
 }
 
-#[tauri::command]
-pub fn add_files(app: AppHandle, paths: Vec<String>) -> usize {
+/// Native-only file intake used by the Windows Explorer verb and first launch.
+/// It is deliberately not a Tauri command: a renderer can read a File object
+/// it owns, but it cannot ask Rust to copy an arbitrary path by name.
+pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
+    if let Err(error) = crate::license::require(app) {
+        license_blocked(app, error);
+        return 0;
+    }
     let images = app.state::<ImagesDir>().0.clone();
     let mut added = 0;
+    let mut seen = std::collections::HashSet::new();
     for p in paths {
-        let ext = std::path::Path::new(&p)
+        if !seen.insert(Path::new(&p).to_string_lossy().to_ascii_lowercase()) {
+            continue;
+        }
+        let path = Path::new(&p);
+        let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
+        let Ok(metadata) = std::fs::metadata(path) else {
+            continue;
+        };
+        if !metadata.is_file() || metadata.len() > 25 * 1024 * 1024 {
+            continue;
+        }
         if [
             "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "avif",
         ]
         .contains(&ext.as_str())
         {
             let dest = unique_image_path(&images, &ext);
-            if std::fs::copy(&p, &dest).is_ok() {
-                db::insert_item(&app, "", "image", Some(&dest.to_string_lossy()));
+            if std::fs::copy(path, &dest).is_ok() {
+                let id = db::insert_item_with_origin(
+                    app,
+                    "",
+                    "image",
+                    Some(&dest.to_string_lossy()),
+                    "clipboard",
+                );
+                db::set_active_item(app, Some(id));
                 added += 1;
             }
-        } else {
-            db::insert_item(&app, &p, "text", None);
+        } else if matches!(
+            ext.as_str(),
+            "txt"
+                | "md"
+                | "markdown"
+                | "json"
+                | "csv"
+                | "log"
+                | "rs"
+                | "ts"
+                | "tsx"
+                | "js"
+                | "jsx"
+                | "html"
+                | "css"
+        ) {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                let text = text.trim();
+                if db::list_items(app)
+                    .iter()
+                    .any(|item| item.origin == "clipboard" && item.content == text)
+                {
+                    continue;
+                }
+                let id = db::insert_item_with_origin(app, text, "text", None, "clipboard");
+                db::set_active_item(app, Some(id));
+                added += 1;
+            }
+        } else if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            let id = db::insert_item_with_origin(app, name, "text", None, "clipboard");
+            db::set_active_item(app, Some(id));
             added += 1;
         }
     }
-    refresh(&app);
+    refresh(app);
     added
+}
+
+fn decode_image_payload(data_base64: &str, ext: &str) -> Result<(Vec<u8>, String), String> {
+    if data_base64.len() > 35 * 1024 * 1024 {
+        return Err("The image is too large.".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64)
+        .map_err(|_| "The image data could not be decoded.".to_string())?;
+    if bytes.is_empty() || bytes.len() > 25 * 1024 * 1024 {
+        return Err("The image is empty or too large.".into());
+    }
+    let format = image::guess_format(&bytes)
+        .map_err(|_| "That image format is not supported.".to_string())?;
+    let decoded = image::load_from_memory_with_format(&bytes, format)
+        .map_err(|_| "The image could not be decoded.".to_string())?;
+    let (width, height) = decoded.dimensions();
+    if width == 0 || height == 0 || width as u64 * height as u64 > 100_000_000 {
+        return Err("The image dimensions are too large.".into());
+    }
+    let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+    if !matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif"
+    ) {
+        return Err("That image format is not supported.".into());
+    }
+    Ok((bytes, ext))
 }
 
 #[tauri::command]
@@ -328,12 +511,8 @@ pub fn attach_image(
     data_base64: String,
     ext: String,
 ) -> Result<i64, String> {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data_base64)
-        .map_err(|e| e.to_string())?;
-    if bytes.is_empty() {
-        return Err("empty image".into());
-    }
+    crate::license::require(&app)?;
+    let (bytes, ext) = decode_image_payload(&data_base64, &ext)?;
     let images = app.state::<ImagesDir>().0.clone();
     let path = unique_image_path(&images, &ext);
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
@@ -343,15 +522,24 @@ pub fn attach_image(
 }
 
 #[tauri::command]
-pub fn detach_attachment(app: AppHandle, id: i64) {
-    if let Some(path) = db::delete_attachment(&app, id) {
-        let _ = std::fs::remove_file(path);
+pub fn detach_attachment(app: AppHandle, id: i64) -> Result<(), String> {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error.clone());
+        return Err(error);
+    }
+    if let Some(path) = db::delete_attachment(&app, id)? {
+        db::remove_owned_image_file(&app, &path);
     }
     refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn add_note_to_image(app: AppHandle, id: i64) {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return;
+    }
     db::add_note_to_image(&app, id);
     refresh(&app);
 }
@@ -463,26 +651,28 @@ pub fn get_state(app: AppHandle) -> db::AppState {
 
 #[tauri::command]
 pub fn add_item(app: AppHandle, content: String) {
-    db::insert_item(&app, &content, "text", None);
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return;
+    }
+    let id = db::insert_item(&app, &content, "text", None);
+    db::set_active_item(&app, Some(id));
     refresh(&app);
 }
 
 #[tauri::command]
-pub fn add_image(app: AppHandle, data_base64: String, ext: String) -> i64 {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data_base64)
-        .unwrap_or_default();
-    if bytes.is_empty() {
-        return 0;
-    }
+pub fn add_image(app: AppHandle, data_base64: String, ext: String) -> Result<i64, String> {
+    crate::license::require(&app)?;
+    let (bytes, ext) = decode_image_payload(&data_base64, &ext)?;
     let images = app.state::<ImagesDir>().0.clone();
     let path = unique_image_path(&images, &ext);
-    let _ = std::fs::write(&path, bytes);
+    std::fs::write(&path, bytes).map_err(|error| format!("Could not save the image: {error}"))?;
     // Returned so a caller that needs the item afterwards — the drawing
     // window's "Copy and Save" — does not have to guess which row it made.
     let id = db::insert_item(&app, "", "image", Some(&path.to_string_lossy()));
+    db::set_active_item(&app, Some(id));
     refresh(&app);
-    id
+    Ok(id)
 }
 
 #[tauri::command]
@@ -490,70 +680,105 @@ pub fn open_settings(app: AppHandle) {
     show_secondary(&app, "settings", false);
 }
 
-pub fn show_secondary(app: &AppHandle, label: &str, center: bool) {
+pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
     use tauri::Manager;
     let Some(win) = app.get_webview_window(label) else {
         return;
     };
-    if center {
-        let _ = win.center();
+    // The panel owns the composition. Only one companion is visible at a
+    // time, so opening Settings never leaves a stale Draw window behind.
+    let other = if label == "settings" {
+        "draw"
+    } else {
+        "settings"
+    };
+    if let Some(other_window) = app.get_webview_window(other) {
+        let _ = other_window.hide();
     }
     let _ = win.unminimize();
     let _ = win.show();
+    crate::panel::place_companion(app, label);
     let _ = win.set_focus();
 }
 
 #[tauri::command]
-pub fn open_draw(app: AppHandle) {
+pub fn toggle_settings(app: AppHandle) {
+    if let Some(win) = app.get_webview_window("settings") {
+        if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
+            let _ = win.hide();
+            return;
+        }
+    }
+    show_secondary(&app, "settings", false);
+}
+
+#[tauri::command]
+pub fn toggle_draw(app: AppHandle) {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return;
+    }
+    if let Some(win) = app.get_webview_window("draw") {
+        if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
+            let _ = win.hide();
+            return;
+        }
+    }
     show_secondary(&app, "draw", true);
 }
 
 #[tauri::command]
-pub fn delete_item(app: AppHandle, id: i64) {
-    let files = db::item_files(&app, id);
-    db::delete_item(&app, id);
-    for f in files {
-        let _ = std::fs::remove_file(f);
+pub fn open_draw(app: AppHandle) {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return;
     }
+    show_secondary(&app, "draw", true);
+}
+
+#[tauri::command]
+pub fn delete_item(app: AppHandle, id: i64) -> Result<(), String> {
+    db::delete_items_with_files(&app, &[id])?;
     refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn set_favorite(app: AppHandle, id: i64, favorite: bool) {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return;
+    }
     db::set_favorite(&app, id, favorite);
     refresh(&app);
 }
 
 #[tauri::command]
 pub fn set_done(app: AppHandle, id: i64, done: bool) {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error);
+        return;
+    }
     db::set_done(&app, id, done);
     refresh(&app);
 }
 
 #[tauri::command]
-pub fn clear_completed(app: AppHandle) {
-    for item in db::completed_items(&app) {
-        if item.kind == "image" {
-            if let Some(p) = item.image_path {
-                let _ = std::fs::remove_file(p);
-            }
-        }
-    }
-    db::clear_completed(&app);
+pub fn clear_completed(app: AppHandle) -> Result<(), String> {
+    let ids: Vec<i64> = db::completed_items(&app)
+        .into_iter()
+        .map(|item| item.id)
+        .collect();
+    db::delete_items_with_files(&app, &ids)?;
     refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn clear_history(app: AppHandle) {
-    for item in db::list_items(&app) {
-        if item.kind == "image" {
-            if let Some(p) = item.image_path {
-                let _ = std::fs::remove_file(p);
-            }
-        }
-    }
-    db::clear_history(&app);
+pub fn clear_history(app: AppHandle) -> Result<(), String> {
+    db::clear_history(&app)?;
     refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -574,11 +799,73 @@ pub fn copy_item(app: AppHandle, id: i64) -> Result<(), String> {
     } else {
         crate::paste::set_text(&app, &item.content)?;
     }
+    db::set_active_item(&app, Some(id));
+    refresh(&app);
     Ok(())
 }
 
 #[tauri::command]
-pub fn image_data(app: AppHandle, path: String) -> Option<String> {
+pub fn copy_attachment(app: AppHandle, id: i64) -> Result<(), String> {
+    let path = db::attachment_path(&app, id).ok_or("Attachment not found")?;
+    crate::paste::set_image(&app, &path)
+}
+
+#[tauri::command]
+pub fn set_active_item(app: AppHandle, id: Option<i64>) {
+    db::set_active_item(&app, id);
+    refresh(&app);
+}
+
+#[tauri::command]
+pub fn set_retention_days(app: AppHandle, origin: String, days: Option<i64>) -> Result<(), String> {
+    db::set_retention_days(&app, &origin, days)?;
+    db::cleanup_origin(&app, &origin);
+    refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn prune_history_now(app: AppHandle) {
+    db::cleanup_origin(&app, "clipboard");
+    db::cleanup_origin(&app, "dictation");
+    db::prune_history(&app, 5_000);
+    refresh(&app);
+}
+
+#[tauri::command]
+pub fn get_retention_days(app: AppHandle, origin: String) -> Option<i64> {
+    db::retention_days(&app, &origin)
+}
+
+#[tauri::command]
+pub fn delete_all_data(app: AppHandle) -> Result<(), String> {
+    db::delete_all_data(&app)?;
+    crate::license::erase_local(&app).map_err(|error| error.to_string())?;
+    crate::cloud::delete_api_key().map_err(|error| error.to_string())?;
+    let _ = std::fs::remove_file(crate::guardian::marker_path());
+    refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_captures(app: AppHandle) -> Result<(), String> {
+    db::clear_captures(&app)?;
+    refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn item_image_data(app: AppHandle, id: i64) -> Option<String> {
+    let item = db::item_by_id(&app, id)?;
+    if item.kind != "image" {
+        return None;
+    }
+    crate::paste::image_data(&app, &item.image_path?)
+}
+
+#[tauri::command]
+pub fn attachment_image_data(app: AppHandle, id: i64) -> Option<String> {
+    let path = db::attachment_path(&app, id)?;
     crate::paste::image_data(&app, &path)
 }
 
@@ -658,11 +945,13 @@ pub fn get_model(app: AppHandle) -> crate::dictation::ModelStatus {
 
 #[tauri::command]
 pub fn set_model(app: AppHandle, id: String) -> Result<(), String> {
+    require_licensed_or_onboarding(&app)?;
     crate::hf::activate_model(&app, &id)
 }
 
 #[tauri::command]
 pub async fn download_model(app: AppHandle, id: String) -> Result<(), String> {
+    require_licensed_or_onboarding(&app)?;
     crate::dictation::download_model(&app, &id).await
 }
 

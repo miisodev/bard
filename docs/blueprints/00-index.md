@@ -66,26 +66,28 @@ one document; every other mention is a reference.
 | Competitive position, reference products | Product & Business | Own |
 | Feature behaviour — what happens when | Product & Business | Own |
 | SQLite schema and migrations | Product & Business | Own |
-| Price, licence terms, activation model | Product & Business | Own |
+| Price, licence terms, activation model, retention policy | Product & Business | Own |
+| Licence-service API, signed-lease transport, Explorer registration | Technology | Own integration; anchor external API |
 | Distribution channels and update policy | Product & Business | Own |
 | Third-party licence obligations | Product & Business | Own |
 | Model licences and their terms | Product & Business | Anchor |
 | Framework, runtime and crate versions | Technology | Anchor |
-| Window architecture and lifecycle | Technology | Own |
+| Window architecture, companion docking and lifecycle | Technology | Own |
 | Transcription engine and the architectures it reads | Technology | Own |
 | Model catalogue schema and semantics | Technology | Own |
 | Model files — URL, revision, checksum | Technology | Anchor (linked and pinned) |
 | Hugging Face API shapes | Technology | Anchor |
 | Build prerequisites and their traps | Technology | Own |
-| Design tokens, type scale, motion values | Design System | Own |
+| Design tokens, type scale, motion values, audio-cue palette | Design System | Own |
 | Component anatomy, variants, states | Design System | Own |
 | Accessibility conformance targets | Design System | Own |
 | Per-surface layout and zones | Surfaces | Own |
 | Exact user-facing copy | Surfaces | Own |
 | Per-surface failure modes | Surfaces | Own |
 | Global shortcuts and their defaults | Input & Commands | Own |
-| Capture mechanics and clipboard handling | Input & Commands | Own |
+| Capture mechanics, clipboard handling and Explorer handoff | Input & Commands | Own |
 | Tray menu and its actions | Input & Commands | Own |
+| Implementation status and production-gate evidence | `docs/PARITY.md`, outside this library | Own |
 
 **Where two documents could claim a fact**, three questions resolve it: which
 document would a reader open first looking for it; which document breaks if it
@@ -117,4 +119,4 @@ nothing to announce it.
 
 ---
 
-*Library version 1.1 · five documents*
+*Library version 1.2 · five documents*

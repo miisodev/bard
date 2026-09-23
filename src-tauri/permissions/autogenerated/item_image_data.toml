@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-item-image-data"
+description = "Enables the item_image_data command without any pre-configured scope."
+commands.allow = ["item_image_data"]
+
+[[permission]]
+identifier = "deny-item-image-data"
+description = "Denies the item_image_data command without any pre-configured scope."
+commands.deny = ["item_image_data"]

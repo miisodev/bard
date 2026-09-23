@@ -1,4 +1,5 @@
-import { MoreHorizontal, Search } from "lucide-react";
+import { MoreHorizontal, Paintbrush, Search, Settings2 } from "lucide-react";
+import { playCue } from "../audio";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DictationState } from "../App";
@@ -36,10 +37,14 @@ export default function Panel({
   state,
   dictation,
   onState,
+  activeItemId = null,
+  onActiveItemChange,
 }: {
   state: AppState;
   dictation: DictationState;
   onState: (s: AppState) => void;
+  activeItemId?: number | null;
+  onActiveItemChange?: (id: number | null) => void;
 }) {
   const [query, setQuery] = useState("");
   const [onlyFavorites, setOnlyFavorites] = useState(false);
@@ -48,6 +53,7 @@ export default function Panel({
   const [composer, setComposer] = useState("");
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [composerMenu, setComposerMenu] = useState<{ x: number; y: number } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
@@ -77,7 +83,7 @@ export default function Panel({
       toastTimer.current = window.setTimeout(() => setToast(null), 2600);
     };
     const onCaptured = () => {
-      if (soundOnCapture) playPop();
+      if (soundOnCapture) playCue("capture");
     };
     window.addEventListener("bard-toast", onToast);
     window.addEventListener("bard-captured", onCaptured);
@@ -116,6 +122,10 @@ export default function Panel({
         if (e.key === "Escape") setMenu(null);
         return;
       }
+      if (showShortcuts) {
+        if (e.key === "Escape") setShowShortcuts(false);
+        return;
+      }
       if (isShortcutRecording()) return;
       if (showOverflow) {
         if (e.key === "Escape") setShowOverflow(false);
@@ -132,14 +142,44 @@ export default function Panel({
         }
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setShowSwitcher(true);
-        return;
-      }
       const flat = flatFiltered(state, query, onlyFavorites);
       const idx = (id: number) => flat.indexOf(id);
       const sel = [...selectedIds].sort((a, b) => idx(a) - idx(b));
+      const activeInFlat = activeItemId !== null && idx(activeItemId) >= 0 ? activeItemId : null;
+      const actionSel = sel.length > 0 ? sel : activeInFlat ? [activeInFlat] : [];
+      if (e.ctrlKey || e.metaKey) {
+        const key = e.key.toLowerCase();
+        if (key === "k") {
+          e.preventDefault();
+          setShowSwitcher(true);
+          return;
+        }
+        if (key === ",") {
+          e.preventDefault();
+          void api.toggleSettings();
+          return;
+        }
+        if (key === "/") {
+          e.preventDefault();
+          setShowShortcuts(true);
+          return;
+        }
+        if (key === "d" && e.shiftKey) {
+          e.preventDefault();
+          void api.toggleDraw();
+          return;
+        }
+        if (key === "c" && actionSel.length > 0) {
+          e.preventDefault();
+          copySelection(state, actionSel, setToast);
+          return;
+        }
+        if (key === "m" && e.shiftKey && actionSel.length > 0) {
+          e.preventDefault();
+          copyAsList(state, actionSel, setToast);
+          return;
+        }
+      }
       switch (e.key) {
         case "ArrowDown":
         case "ArrowUp": {
@@ -147,10 +187,10 @@ export default function Panel({
           if (flat.length === 0) break;
           const delta = e.key === "ArrowDown" ? 1 : -1;
           let next: number;
-          if (sel.length === 0) {
+          if (sel.length === 0 && activeInFlat === null) {
             next = delta > 0 ? flat[0] : flat[flat.length - 1];
           } else {
-            const lead = e.shiftKey ? sel[sel.length - 1] : sel[0];
+            const lead = e.shiftKey && anchorId !== null ? anchorId : sel[0] ?? activeInFlat!;
             const cur = idx(lead);
             const target = Math.min(flat.length - 1, Math.max(0, cur + delta));
             next = flat[target];
@@ -162,21 +202,22 @@ export default function Panel({
           } else {
             setSelectedIds(new Set([next]));
             setAnchorId(next);
+            markActive(next);
           }
           break;
         }
         case "Enter": {
-          if (sel.length > 0) {
+          if (actionSel.length > 0) {
             e.preventDefault();
-            copySelection(state, sel, setToast);
+            copySelection(state, actionSel, setToast);
           }
           break;
         }
         case "Delete":
         case "Backspace": {
-          if (sel.length > 0) {
+          if (actionSel.length > 0) {
             e.preventDefault();
-            for (const id of sel) void api.deleteItem(id);
+            for (const id of actionSel) void api.deleteItem(id);
             setSelectedIds(new Set());
             refresh();
           }
@@ -185,11 +226,11 @@ export default function Panel({
         case " ": {
           // Space marks done, as in Copper. Toggling the whole selection off
           // the lead item's state keeps a mixed selection from splitting.
-          if (sel.length > 0) {
+          if (actionSel.length > 0) {
             e.preventDefault();
-            const lead = state.items.find((i) => i.id === sel[0]);
+            const lead = state.items.find((i) => i.id === actionSel[0]);
             const next = lead ? lead.done === 0 : true;
-            for (const id of sel) void api.setDone(id, next);
+            for (const id of actionSel) void api.setDone(id, next);
             refresh();
           }
           break;
@@ -208,11 +249,13 @@ export default function Panel({
     state,
     query,
     onlyFavorites,
+    activeItemId,
     selectedIds,
     anchorId,
     menu,
     showSwitcher,
     showOverflow,
+    showShortcuts,
   ]);
 
   useEffect(() => {
@@ -298,6 +341,11 @@ export default function Panel({
 
   const refresh = () => void api.getState().then(onState);
 
+  const markActive = (id: number | null) => {
+    onActiveItemChange?.(id);
+    void api.setActiveItem(id);
+  };
+
   const onDrag = (e: ReactMouseEvent) => {
     const t = e.target as HTMLElement;
     if (t.closest("button, input, textarea")) return;
@@ -311,6 +359,10 @@ export default function Panel({
   };
 
   const submitComposer = () => {
+    if (!state.license.canUse) {
+      setToast(state.license.message || "Activate Bard to add captures.");
+      return;
+    }
     const v = composer.trim();
     if (!v) return;
     if (v.startsWith("#")) {
@@ -345,31 +397,37 @@ export default function Panel({
     setAnchorId(item.id);
   };
 
-  const onContextMenu = (item: Item, e: ReactMouseEvent) => {
-    e.preventDefault();
+  const openContextMenu = (item: Item, x: number, y: number) => {
     let ids = [item.id];
     if (selectedIds.has(item.id) && selectedIds.size > 1) {
       ids = [...selectedIds];
+    } else {
+      markActive(item.id);
     }
-    setMenu({ x: e.clientX, y: e.clientY, ids, item });
+    setMenu({ x, y, ids, item });
+  };
+
+  const onContextMenu = (item: Item, e: ReactMouseEvent) => {
+    e.preventDefault();
+    openContextMenu(item, e.clientX, e.clientY);
   };
 
   const onMenuAction = (action: MenuAction) => {
+    const multi = menu?.ids.length ? menu.ids.length > 1 : false;
     if (!menu) return;
     const ids = menu.ids;
     switch (action) {
       case "copy":
         copySelection(state, ids, setToast);
+        if (ids.length === 1) markActive(ids[0]);
         break;
       case "copyList":
-        void api
-          .copyText(ids.map((id) => state.items.find((i) => i.id === id)?.content).filter(Boolean).join("\n"))
-          .then(() => setToast("Copied as list"));
+        copyAsList(state, ids, setToast);
         break;
       case "favorite":
         for (const id of ids) {
           const it = state.items.find((i) => i.id === id);
-          if (it) void api.setFavorite(id, !it.favorite);
+          if (it) void api.setFavorite(id, multi ? !menu.item?.favorite : !it.favorite);
         }
         refresh();
         break;
@@ -377,11 +435,12 @@ export default function Panel({
         if (menu.item && menu.item.kind === "text") setEditingId(menu.item.id);
         break;
       case "caption":
-        if (menu.item) void api.addNoteToImage(menu.item.id).then(refresh);
+        if (menu.item?.kind === "image") void api.addNoteToImage(menu.item.id).then(refresh);
         break;
       case "delete":
         for (const id of ids) void api.deleteItem(id);
         setSelectedIds(new Set());
+        if (activeItemId !== null && ids.includes(activeItemId)) markActive(null);
         refresh();
         break;
     }
@@ -408,15 +467,37 @@ export default function Panel({
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <button
-          className={`icon-btn${showOverflow ? " active" : ""}`}
-          aria-label="More"
-          aria-haspopup="menu"
-          aria-expanded={showOverflow}
-          onClick={() => setShowOverflow((v) => !v)}
-        >
-          <MoreHorizontal size={16} strokeWidth={2} />
-        </button>
+        <div className="header-actions" role="group" aria-label="Bard tools">
+          <button
+            type="button"
+            className="icon-btn header-action"
+            aria-label="Create drawing"
+            title="Create drawing"
+            onClick={() => void api.openDraw()}
+          >
+            <Paintbrush size={16} strokeWidth={1.8} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn header-action"
+            aria-label="Open Settings"
+            title="Open Settings"
+            onClick={() => void api.openSettings()}
+          >
+            <Settings2 size={16} strokeWidth={1.8} />
+          </button>
+          <button
+            type="button"
+            className={`icon-btn header-action${showOverflow ? " active" : ""}`}
+            aria-label="More"
+            title="More"
+            aria-haspopup="menu"
+            aria-expanded={showOverflow}
+            onClick={() => setShowOverflow((v) => !v)}
+          >
+            <MoreHorizontal size={16} strokeWidth={2} />
+          </button>
+        </div>
       </header>
 
       <div className="resize-layer">
@@ -425,7 +506,7 @@ export default function Panel({
         ))}
       </div>
 
-      <div className="timeline">
+      <div className="timeline" role="listbox" aria-label="Captured items">
         {state.items.length === 0 ? (
           <EmptyState section={activeSectionName} />
         ) : grouped.length === 0 ? (
@@ -462,17 +543,31 @@ export default function Panel({
                   item={it}
                   attachments={state.attachments.filter((a) => a.itemId === it.id)}
                   selected={selectedIds.has(it.id)}
+                  active={activeItemId === it.id}
                   editing={editingId === it.id}
                   search={query}
                   onClick={(e) => onItemClick(it, e)}
+                  onActivate={() => {
+                    setSelectedIds(new Set([it.id]));
+                    setAnchorId(it.id);
+                    markActive(it.id);
+                  }}
                   onContextMenu={(e) => onContextMenu(it, e)}
-                  onCopyImage={() => copySelection(state, [it.id], setToast)}
+                  onOpenContextMenu={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    openContextMenu(it, rect.left + rect.width / 2, rect.top + rect.height / 2);
+                  }}
+                  onCopyImage={() => {
+                    copySelection(state, [it.id], setToast);
+                    markActive(it.id);
+                  }}
                   onToggleDone={() => {
                     void api.setDone(it.id, it.done === 0).then(refresh);
                   }}
                   onDelete={() => {
                     void api.deleteItem(it.id).then(() => {
                       setSelectedIds(new Set());
+                      if (activeItemId === it.id) markActive(null);
                       refresh();
                     });
                   }}
@@ -484,6 +579,13 @@ export default function Panel({
           ))
         )}
       </div>
+
+      {state.license.state === "restricted" ? (
+        <div className="license-gate" role="status">
+          <span>{state.license.message || "Activate Bard to continue capturing."}</span>
+          <button type="button" className="btn" onClick={() => void api.openSettings()}>Open Settings</button>
+        </div>
+      ) : null}
 
       <div className="composer">
         {dictation.listening || dictation.transcribing ? (
@@ -497,6 +599,7 @@ export default function Panel({
             type="button"
             className="composer-add"
             aria-label="Attach or draw"
+            disabled={!state.license.canUse}
             aria-haspopup="menu"
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -524,6 +627,7 @@ export default function Panel({
             ref={composerRef}
             className="composer-input"
             rows={1}
+            disabled={!state.license.canUse}
             placeholder={`Add a note or a prompt${
               activeSectionName ? ` (${activeSectionName.toLowerCase()})` : ""
             }`}
@@ -602,6 +706,24 @@ export default function Panel({
         />
       ) : null}
 
+      {showShortcuts ? (
+        <div className="shortcut-sheet" role="dialog" aria-modal="true" aria-label="Bard keyboard shortcuts">
+          <div className="shortcut-sheet-head">
+            <strong>Keyboard shortcuts</strong>
+            <button className="icon-btn" aria-label="Close shortcuts" onClick={() => setShowShortcuts(false)}>×</button>
+          </div>
+          <div className="shortcut-list">
+            <div><kbd>Enter</kbd><span>Copy active or selected items</span></div>
+            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd><span>Copy as Markdown list</span></div>
+            <div><kbd>Ctrl</kbd><kbd>K</kbd><span>Switch section</span></div>
+            <div><kbd>Ctrl</kbd><kbd>,</kbd><span>Open Settings</span></div>
+            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd><span>Open Draw</span></div>
+            <div><kbd>Space</kbd><span>Toggle done</span></div>
+            <div><kbd>Esc</kbd><span>Close, clear, or hide</span></div>
+          </div>
+        </div>
+      ) : null}
+
       {menu ? (
         <ContextMenu
           x={menu.x}
@@ -613,7 +735,7 @@ export default function Panel({
         />
       ) : null}
 
-      {toast ? <div className="toast">{toast}</div> : null}
+      {toast ? <div className="toast" role="status" aria-live="polite">{toast}</div> : null}
     </>
   );
 }
@@ -660,10 +782,10 @@ function copySelection(state: AppState, ids: number[], toast: (m: string) => voi
     .filter((i): i is Item => !!i);
   if (items.length === 1) {
     const it = items[0];
-    if (it.kind === "image" && it.imagePath) {
-      void api.copyItem(it.id).then(() => toast("Copied"));
+    if (it.kind === "image") {
+      void api.copyItem(it.id).then(() => { playCue("copy"); toast("Copied"); });
     } else {
-      void api.copyText(it.content).then(() => toast("Copied"));
+      void api.copyText(it.content).then(() => { playCue("copy"); toast("Copied"); });
     }
     return;
   }
@@ -671,7 +793,16 @@ function copySelection(state: AppState, ids: number[], toast: (m: string) => voi
     .copyText(
       items.map((i) => (i.kind === "text" ? `- ${i.content}` : `- [image]`)).join("\n")
     )
-    .then(() => toast("Copied as list"));
+    .then(() => { playCue("copy"); toast("Copied as list"); });
+}
+
+function copyAsList(state: AppState, ids: number[], toast: (m: string) => void) {
+  const markdown = ids
+    .map((id) => state.items.find((item) => item.id === id))
+    .filter((item): item is Item => !!item)
+    .map((item) => (item.kind === "text" ? `- ${item.content}` : "- [image]"))
+    .join("\n");
+  if (markdown) void api.copyText(markdown).then(() => { playCue("copy"); toast("Copied as list"); });
 }
 
 /**
@@ -708,28 +839,6 @@ function readBlob(file: File): Promise<{ b64: string; ext: string }> {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-}
-
-let audioCtx: AudioContext | null = null;
-function playPop() {
-  try {
-    if (!audioCtx) audioCtx = new AudioContext();
-    const c = audioCtx;
-    const t = c.currentTime;
-    const osc = c.createOscillator();
-    const gain = c.createGain();
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(1500, t);
-    osc.frequency.exponentialRampToValueAtTime(480, t + 0.05);
-    gain.gain.setValueAtTime(0.22, t);
-    gain.gain.exponentialRampToValueAtTime(0.0008, t + 0.07);
-    osc.connect(gain);
-    gain.connect(c.destination);
-    osc.start(t);
-    osc.stop(t + 0.08);
-  } catch {
-    /* audio unavailable */
-  }
 }
 
 /*

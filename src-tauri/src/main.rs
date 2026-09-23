@@ -10,10 +10,12 @@ mod dictation;
 mod gesture;
 mod guardian;
 mod hf;
+mod license;
 mod monitor;
 mod panel;
 mod paste;
 mod tray;
+mod updater;
 
 use std::sync::Mutex;
 
@@ -25,9 +27,10 @@ use crate::db::Db;
 /// Passed by the autostart registration, and by nothing else.
 const AUTOSTART_FLAG: &str = "--autostart";
 
-/// Tauri resolves the app data directory from the bundle identifier, and this
-/// has to match it exactly: `%APPDATA%\<identifier>`. Opening the database
-/// here rather than in setup() is what makes every later read safe.
+/// Tauri resolves the local application-data directory from the bundle
+/// identifier as `%LOCALAPPDATA%\<identifier>`. Clipboard history, transcripts,
+/// images, and models deliberately stay off roaming profiles. The database is
+/// opened before setup so every later read is safe.
 fn diagnostics_dir() -> std::path::PathBuf {
     let base = std::env::var("LOCALAPPDATA")
         .or_else(|_| std::env::var("APPDATA"))
@@ -37,11 +40,91 @@ fn diagnostics_dir() -> std::path::PathBuf {
         .join("logs")
 }
 
-fn open_database() -> Option<rusqlite::Connection> {
+fn local_data_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var("LOCALAPPDATA").ok()?;
+    Some(std::path::Path::new(&base).join("com.miisodev.bard"))
+}
+
+fn legacy_roaming_dir() -> Option<std::path::PathBuf> {
     let base = std::env::var("APPDATA").ok()?;
-    let dir = std::path::Path::new(&base).join("com.miisodev.bard");
-    std::fs::create_dir_all(&dir).ok()?;
+    Some(std::path::Path::new(&base).join("com.miisodev.bard"))
+}
+
+fn move_legacy_contents(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    if !source.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = destination.join(entry.file_name());
+        if to.exists() {
+            // Never overwrite a newer local file. A remaining roaming file is
+            // evidence, not permission to destroy one side of the user's data.
+            continue;
+        }
+        if std::fs::rename(&from, &to).is_err() {
+            copy_then_remove(&from, &to)?;
+        }
+    }
+    let _ = std::fs::remove_dir(source);
+    Ok(())
+}
+
+fn copy_then_remove(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    if source.is_dir() {
+        std::fs::create_dir_all(destination)?;
+        for entry in std::fs::read_dir(source)? {
+            let entry = entry?;
+            copy_then_remove(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+        std::fs::remove_dir(source)
+    } else {
+        std::fs::copy(source, destination)?;
+        std::fs::remove_file(source)
+    }
+}
+
+fn migrate_roaming_data(destination: &std::path::Path) -> std::io::Result<()> {
+    if let Some(source) = legacy_roaming_dir() {
+        if source != destination {
+            move_legacy_contents(&source, destination)?;
+        }
+    }
+    std::fs::create_dir_all(destination)
+}
+
+fn open_database() -> Option<rusqlite::Connection> {
+    let dir = local_data_dir()?;
+    migrate_roaming_data(&dir).ok()?;
     db::init(&dir.join("bard.db")).ok()
+}
+
+fn usable_paths(args: &[String]) -> Vec<String> {
+    args.iter()
+        .skip(1)
+        .filter(|arg| {
+            !arg.starts_with("--") && !arg.starts_with('/') && std::path::Path::new(arg).is_file()
+        })
+        .cloned()
+        .collect()
+}
+
+fn ingest_startup_paths(app: &tauri::AppHandle, args: &[String]) -> bool {
+    let paths = usable_paths(args);
+    if paths.is_empty() {
+        return false;
+    }
+    commands::ingest_paths(app, paths);
+    panel::show_now(app);
+    true
 }
 
 fn main() {
@@ -56,7 +139,14 @@ fn main() {
     // A clean-exit marker belongs to the previous process. Leaving it on disk
     // would make a crash during this launch look clean to the new guardian.
     guardian::clear_stale_marker();
-    if !args.iter().any(|a| a == "--restarted") && std::env::var("BARD_NO_GUARDIAN").is_err() {
+    // The old relaunch watchdog could not distinguish a WebView2 startup
+    // failure from a person choosing End Task. Relicensing a deliberate kill
+    // is worse than surfacing a crash, so the guardian is opt-in for diagnosis
+    // and is no longer part of normal operation.
+    if std::env::var("BARD_ENABLE_GUARDIAN").is_ok()
+        && !args.iter().any(|a| a == "--restarted")
+        && std::env::var("BARD_NO_GUARDIAN").is_err()
+    {
         if let Some(exe) = args.first() {
             if exe.contains(':') || exe.contains('\\') || exe.contains('/') {
                 guardian::spawn(exe);
@@ -64,8 +154,9 @@ fn main() {
         }
     }
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             guardian::mark_clean_exit();
+            ingest_startup_paths(app, &args);
             panel::show_now(app);
         }))
         // The autostart entry carries a flag so the app can tell "Windows
@@ -78,6 +169,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // The database is opened here, before the builder runs, rather than in
         // setup(). Windows declared in tauri.conf are created before setup(),
         // so anything reacting to a window event — a focus change, the webview
@@ -87,7 +179,8 @@ fn main() {
         .manage(Db(Mutex::new(open_database())))
         .setup(|app| {
             let handle = app.handle().clone();
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = local_data_dir()
+                .ok_or("Bard could not resolve its local application-data directory.")?;
             std::fs::create_dir_all(&data_dir)?;
             // Already opened before the builder ran; this only covers the case
             // where that failed, so the app still has a working database
@@ -99,6 +192,9 @@ fn main() {
             let images_dir = data_dir.join("images");
             std::fs::create_dir_all(&images_dir)?;
             app.manage(commands::ImagesDir(images_dir));
+            crate::license::spawn_revalidation(handle.clone());
+            let startup_args: Vec<String> = std::env::args().collect();
+            let launched_with_paths = ingest_startup_paths(&handle, &startup_args);
 
             // Re-assert the login entry so it always points at *this* executable:
             // an install to a new location would otherwise leave Windows
@@ -125,6 +221,8 @@ fn main() {
                 );
             }
             capture::repair_keybinds(&handle);
+            db::cleanup_origin(&handle, "clipboard");
+            db::cleanup_origin(&handle, "dictation");
 
             monitor::start(handle.clone());
             capture::start(handle.clone());
@@ -139,7 +237,7 @@ fn main() {
             // start — so the panel appears unless Windows launched us at
             // login, which is the one case where staying quiet is the point.
             let launched_at_login = std::env::args().any(|a| a == AUTOSTART_FLAG);
-            if !launched_at_login {
+            if !launched_at_login && !launched_with_paths {
                 panel::show_now(&handle);
             }
             Ok(())
@@ -154,6 +252,7 @@ fn main() {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();
+                    panel::focus_panel(window.app_handle());
                 }
                 return;
             }
@@ -171,6 +270,9 @@ fn main() {
                 // told reliably when the *native* window loses activation —
                 // which is exactly the case that matters, a click into another
                 // application.
+                WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                    panel::reposition_companions(window.app_handle());
+                }
                 WindowEvent::Focused(focused) => {
                     panel::on_focus_change(window.app_handle(), *focused);
                 }
@@ -183,15 +285,21 @@ fn main() {
             commands::add_item,
             commands::add_image,
             commands::open_draw,
+            commands::toggle_draw,
             commands::open_settings,
+            commands::toggle_settings,
             commands::delete_item,
             commands::set_favorite,
             commands::set_done,
             commands::clear_completed,
             commands::clear_history,
+            commands::clear_captures,
+            commands::delete_all_data,
             commands::copy_text,
             commands::copy_item,
-            commands::image_data,
+            commands::copy_attachment,
+            commands::item_image_data,
+            commands::attachment_image_data,
             commands::set_theme,
             commands::set_keybinds,
             commands::set_shortcut_recording,
@@ -219,13 +327,16 @@ fn main() {
             commands::rename_section,
             commands::delete_section,
             commands::update_item,
-            commands::add_files,
             commands::attach_image,
             commands::detach_attachment,
             commands::add_note_to_image,
             commands::export_markdown,
             commands::set_export_dir,
             commands::get_export_dir,
+            commands::set_active_item,
+            commands::set_retention_days,
+            commands::get_retention_days,
+            commands::prune_history_now,
             commands::set_sound_on_capture,
             commands::get_sound_on_capture,
             commands::get_microphones,
@@ -245,6 +356,14 @@ fn main() {
             commands::test_postprocessing,
             commands::test_postprocessing_cancel,
             commands::get_crash_report,
+            commands::get_license,
+            commands::start_trial,
+            commands::activate_license,
+            commands::refresh_license,
+            commands::deactivate_license,
+            commands::clear_license,
+            commands::check_for_update,
+            commands::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run bard");

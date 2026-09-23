@@ -15,6 +15,8 @@ import type {
   PostprocessingSettings,
   PostprocessingTestResponse,
   SavePostprocessingInput,
+  LicenseStatus,
+  UpdateInfo,
 } from "./types";
 
 export const api = {
@@ -22,10 +24,11 @@ export const api = {
   getSettingStr: (key: string) => invoke<string>("get_setting_str", { key }),
   addItem: (content: string) => invoke<void>("add_item", { content }),
   openDraw: () => invoke<void>("open_draw"),
+  toggleDraw: () => invoke<void>("toggle_draw"),
   openSettings: () => invoke<void>("open_settings"),
+  toggleSettings: () => invoke<void>("toggle_settings"),
   addImage: (dataBase64: string, ext: string) =>
     invoke<number>("add_image", { dataBase64, ext }),
-  addFiles: (paths: string[]) => invoke<number>("add_files", { paths }),
   deleteItem: (id: number) => invoke<void>("delete_item", { id }),
   updateItem: (id: number, content: string) =>
     invoke<void>("update_item", { id, content }),
@@ -34,9 +37,15 @@ export const api = {
   setDone: (id: number, done: boolean) => invoke<void>("set_done", { id, done }),
   clearCompleted: () => invoke<void>("clear_completed"),
   clearHistory: () => invoke<void>("clear_history"),
+  clearCaptures: () => invoke<void>("clear_captures"),
+  deleteAllData: () => invoke<void>("delete_all_data"),
   copyText: (text: string) => invoke<unknown>("copy_text", { text }),
   copyItem: (id: number) => invoke<unknown>("copy_item", { id }),
-  imageData: (path: string) => invoke<string | null>("image_data", { path }),
+  copyAttachment: (id: number) => invoke<unknown>("copy_attachment", { id }),
+  itemImageData: (id: number) => invoke<string | null>("item_image_data", { id }),
+  attachmentImageData: (id: number) =>
+    invoke<string | null>("attachment_image_data", { id }),
+  setActiveItem: (id: number | null) => invoke<void>("set_active_item", { id }),
   createSection: (name: string) => invoke<number>("create_section", { name }),
   setActiveSection: (id: number | null) =>
     invoke<void>("set_active_section", { id }),
@@ -69,6 +78,22 @@ export const api = {
   showPanel: () => invoke<void>("show_panel"),
   hidePanel: () => invoke<void>("hide_panel"),
   togglePanel: () => invoke<void>("toggle_panel"),
+
+  setRetentionDays: (origin: "clipboard" | "dictation", days: number | null) =>
+    invoke<void>("set_retention_days", { origin, days }),
+  getRetentionDays: (origin: "clipboard" | "dictation") =>
+    invoke<number | null>("get_retention_days", { origin }),
+  pruneHistoryNow: () => invoke<void>("prune_history_now"),
+
+  getLicense: () => invoke<LicenseStatus>("get_license"),
+  startTrial: () => invoke<LicenseStatus>("start_trial"),
+  activateLicense: (key: string) =>
+    invoke<LicenseStatus>("activate_license", { key }),
+  refreshLicense: () => invoke<LicenseStatus>("refresh_license"),
+  deactivateLicense: () => invoke<LicenseStatus>("deactivate_license"),
+  clearLicense: () => invoke<LicenseStatus>("clear_license"),
+  checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
+  installUpdate: () => invoke<void>("install_update"),
 
   // Model inventory and lifecycle.
   getModels: () => invoke<ModelInfo[]>("get_models"),

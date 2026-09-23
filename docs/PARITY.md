@@ -1,6 +1,7 @@
 # bard — parity ledger
 
-The build plan. bard ships when every row below is **done** and the whole thing
+The build plan. bard ships when every in-scope row below is complete, every
+`later` row remains out of the consumer release, and the whole installed product
 survives the two tests:
 
 **The specification lives in `docs/blueprints/`** — five documents describing
@@ -18,9 +19,13 @@ And the standard above both: *would Apple ship this, and would they show it at W
 
 ## What bard is
 
-A paid ($30, one-time) native Windows app: Copper's capture/clipboard workspace and
-best-in-class offline dictation in one keyboard-first panel. Sold on miiso.dev,
-possibly the Microsoft Store later.
+A US$20-per-year native Windows app: Copper's capture/clipboard workspace and
+best-in-class local dictation in one keyboard-first panel. The licence renews
+annually, covers three activated machines, and is backed by a 30-day signed
+offline lease between bounded online checks. A 14-day feature-complete local
+trial needs no account. The Phase 1 consumer download is a signed NSIS
+installer from miiso.dev; Microsoft Store distribution remains a separate later
+path.
 
 Dictation targets Wispr Flow's *capability* (minus notetaking) but delivers local
 transcription on open weights, with genuine freedom of model choice — choose a
@@ -42,7 +47,7 @@ is the pattern to follow.
 
 ## Where we actually stand
 
-Measured 2026-09-23. The original 2026-09-19 inventory remains in the dated log
+Measured 2026-09-24. The original 2026-09-19 inventory remains in the dated log
 as a baseline; these figures describe the current working tree.
 
 | | bard | cooper | Handy |
@@ -53,8 +58,10 @@ as a baseline; these figures describe the current working tree.
 
 bard is larger than the 2026-09-19 skeleton while still owing the surface of
 both references. The model and post-processing paths have code
-implementations; release verification and the rows marked `partial` or
-`verify` remain below.
+implementations; the current product mandate adds a separate set of licence,
+surface, lifecycle and release rows below. Blueprint reconciliation changes the
+contract, not the implementation status: no row is `done` because a document was
+updated.
 
 ---
 
@@ -64,30 +71,37 @@ Verified against the Copper demo videos and cooper's source.
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| A1 | **Done-state checkboxes** — hollow circle to filled check + strikethrough | **done** | `done` column, `set_done`/`clear_completed`, Space toggles the selection off its lead item. Favorites survive behind the overflow menu as a filter |
+| A1 | **Done-state checkboxes** — hollow circle to filled check + strikethrough | **done** | `done` column, `set_done`/`clear_completed`, Space toggles the selection off its active item. Favorites survive behind the overflow menu as a filter |
 | A2 | **Inline markdown** — bold, italic, strikethrough, code; underscore emphasis deliberately unsupported | **done** | `src/markdown.tsx`; composes with search highlighting so a hit inside emphasis still marks. All four forms verified on screen |
 | A3 | **Glass theme** — DWM acrylic, alongside System/Light/Dark | **removed by decision** | Built and verified — the desktop genuinely read through the panel — then cut. Copper offers it; bard does not, because a translucent panel over arbitrary desktop content cannot be made to hold contrast, and a theme that looks wrong over the wrong wallpaper is not one to sell. Themes are System / Light / Dark. `glass.rs` and `window-vibrancy` are gone with it |
 | A4 | **Light theme quality** | **done** | Rebuilt off the measured Copper values. Panel `#e6e7ea` vs Copper `#e5e6e9`, card `#f9f9fb` vs `#f8f8f8`, field `#f3f4f7` exact |
 | A5 | **Sub-branches / nesting** — `add_child`, branch style, per-item collapse | **missing** | cooper: `BranchPanel.tsx`, nesting to 10 deep |
 | A6 | **Section collapse** — `##` clears the board, others compress to one-line dropdowns | **missing** | `set_section_collapsed` absent |
-| A7 | **Drawing** — composer plus-menu to "Create Drawing…" to canvas window to an item in the panel | **done** | Own window (`draw.html`), native Windows chrome because it is a document window rather than a summoned overlay. Select / pen / line / arrow / rect / ellipse / text, five colours, three widths, undo, redo, delete, Save and Copy and Save. `src/draw/shapes.ts` is a fresh pure model — no React, no Tauri — rather than a copy of cooper's, which is Apache-2.0 and would have entangled a paid product. Whole round trip verified on screen |
-| A8 | **Composer plus-menu** — "Attach Files…" / "Create Drawing…" | **done** | The plus sits *inside* the field, as in Copper — beside it, it stole enough width to clip the placeholder. Shared `Menu` component with the header overflow |
+| A7 | **Drawing** — persistent Draw icon to a companion canvas to a retained timeline item | **partial** | The canvas implements select / pen / line / arrow / rect / ellipse / text, five colours, three widths, undo, redo, delete, Save and Copy. The companion placement path exists; save durability, focus restoration and installed visual QA remain. |
+| A8 | **Composer plus-menu** — "Attach Files…" only | **off** | The old "Create Drawing…" duplicate contradicts the persistent header Draw icon. The plus remains inside the field; the shared keyboard-complete `Menu` component remains required |
 | A9 | **Click thumbnail to copy image to clipboard** | **done** | The row was wrong: `copy_item` already handled images, only the click affordance was missing. Card images and attachment thumbnails now copy on click |
-| A10 | **Copy as List** — multi-select to Markdown list (`Ctrl+Shift+C`) | **verify** | Multi-select exists; list-copy path unconfirmed |
+| A10 | **Copy as List** — multi-select to Markdown list (`Ctrl+Shift+M`) | **verify** | The list-copy action is implemented and keyboard-complete; the final shortcut collision and installed interaction still need a receipt. |
 | A11 | **Shortcuts sheet** (`Ctrl+/`) and shortcuts editor | **done** | Settings → Shortcuts is live; normal chords are recorded transactionally, while fixed gestures are shown separately and cannot be rebound |
 | A12 | **Focus hand-back** — Esc returns focus to the previous app | **verify** | `panel.rs` remembers and restores the previous foreground window; still untested by hand |
 | A13 | **Right-Shift x2 toggles panel** (Left-Shift x2 captures) | **done** | One shared raw-input coordinator, same-side timing/dirty rules, synthetic-input guard, and deterministic gesture tests; packaged Windows runtime remained responsive through both gestures |
 | A14 | **Obsidian export** — vault detection, one file per section | **missing** | cooper has all three commands |
 | A15 | **Merge notes** | **missing** | Named on Copper's own feature list |
-| A16 | **Update checker** + in-app update banner | **missing** | cooper: `update.ts`; Handy: full `update-checker/` |
-| A17 | **Sound preferences** — per-event sounds, themes, volume | **partial** | bard has one `sound_on_capture` boolean; cooper has prefs, Handy a picker + volume |
-| A24 | **Dismiss on losing focus** — the panel goes away when you move on | **done** | Driven by the native window's focus event, not a webview blur listener: the webview is not reliably told when the *native* window loses activation, which is the case that matters. A 140 ms grace absorbs focus flicker, and the panel stays put when the foreground window belongs to bard, so opening settings or the canvas does not yank it away |
+| A16 | **Update checker** + in-app update banner | **partial** | Tauri updater discovery/install commands and signed-artifact generation exist; the public manifest, Authenticode-signed installer, restart/rollback and clean-machine update tests remain. |
+| A17 | **Central sound preferences** — master toggle/volume plus Capture, Copy, Dictation start/stop and Error cues | **partial** | A small shared cue registry now drives capture, copy, dictation and error tones in the panel; native hidden-panel delivery, master volume and per-event settings remain. |
+| A24 | **Dismiss on losing focus** — the panel goes away when you move on | **done** | Driven by the native window's focus event, not a webview blur listener: the webview is not reliably told when the *native* window loses activation, which is the case that matters. A 140 ms grace absorbs focus flicker, and the panel stays put when the foreground window belongs to bard, so opening a companion does not yank it away |
 | A18 | **Empty state** — contextual, uses the active section name | **done** | Asks "What should we build in &lt;section&gt;?" over a quiet glyph, with a first-run hint about double-shift. Verified, then centred and the hint re-cut to stop it orphaning a word |
 | A19 | **No window chrome** — frameless, keyboard-dismissed | **done** | Titlebar row removed |
-| A20 | **No branding in the panel** | **done** | Wordmark removed; the header is a search pill and one overflow button |
-| A21 | **No timestamps on cards** | **done** | The whole per-card action row went with it — actions are keyboard and context menu, as in Copper |
+| A20 | **No branding in the panel** | **done** | The wordmark remains absent. The target header adds persistent Draw and Settings actions without adding a wordmark or title row |
+| A21 | **No timestamps on cards** | **done** | Cards keep the direct Copy affordance required by A27; the broader per-card action-row prohibition is retired. Other actions remain keyboard and context-menu routes |
 | A22 | **Section header style** — small-caps letterspaced label + hairline rule | **done** | |
 | A23 | **Composer copy** — `Add a note or a prompt` | **done** | `#`/`##` still work; the active section name is appended in lowercase parentheses |
+| A25 | **Persistent Draw and Settings header icons** | **partial** | Paintbrush and Settings controls now have labels, tooltips and keyboard focus states; the global `Ctrl+,` / `Ctrl+Shift+D` routes and installed visual receipt remain. |
+| A26 | **Companion windows** — dock left/right, exact panel height, DPI/work-area recompute, one visible companion | **partial** | Native companion placement, side selection, work-area clamping, one-visible-companion behaviour and move/resize hooks are implemented; DPI and installed visual/lifecycle evidence remain. |
+| A27 | **Copy button on items** | **verify** | A direct labelled copy affordance exists for text and images, with attachment copy routed by ID; contrast and keyboard/visual inspection remain to be recorded. |
+| A28 | **Active item treatment** | **verify** | Native `activeItemId` and an aria-current/active class now distinguish the active row from multi-selection; installed keyboard and visual evidence remains. |
+| A29 | **7-Zip-like in-app menu** | **verify** | Grouped actions, role semantics, initial focus, arrow/Home/End navigation, typeahead, Escape handling, pointer clamping, disabled states and focus restoration are implemented; installed QA remains. |
+| A30 | **Explorer `Send to Bard`** | **partial** | NSIS registers the per-user `Send to Bard` all-files verb and the app validates/ingests startup paths through a native-only handoff with path deduplication; cold/warm, unreadable and uninstall receipts remain. |
+| A31 | **Independent clipboard and dictation lifespans** | **partial** | Origin-aware age cleanup, favourite/manual exemption, file-safe pruning, independent 1/7/30/90/180-day-or-Forever controls and Prune now exist; the full crash-safe matrix and visual receipt remain. |
 
 ## B. Handy parity — the dictation half
 
@@ -101,10 +115,10 @@ Every row is a user-visible capability.
 | B3 | **HF repo paste + one-click install** | **verify** | `owner/repository`, Hugging Face repository URLs, and main-branch resolve URLs are normalized; listing supplies LFS SHA-256, downloads resume and hash the complete file, and installation probes the engine before explicit activation. A live listing check passed; a full HF download/install/use round trip remains to be recorded. Arbitrary non-Hugging-Face direct URLs are rejected. |
 | B4 | **Discover models already on the machine** | **verify** | The shared HF cache scan follows snapshot links, checks the exact file with the engine, and supports explicit Use; Forget unregisters an external file without deleting it. No live cache discovery and Use round trip has been recorded. |
 | B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, qwen3, voxtral, granite…) | **partial** | `transcribe-cpp` is the sole engine, and the final catalogue now includes `parakeet` and `qwen3_asr` alongside `whisper`, all as single GGUF files. The three selected defaults passed exact-blob Windows load/transcription; the broader Handy architecture catalogue is not present. |
-| B6 | **Transcription history** + retention period + limit | **missing** | Handy: `managers/history.rs`, history settings pane |
+| B6 | **Transcription history** + independent retention period | **partial** | Dictation inserts carry a `dictation` origin, persist only after verified clipboard output, and use the independent 30-day default/lifespan control; the full real-speech and retention matrix remains. |
 | B7 | **Post-processing via LLM** — provider, base URL, API key, model, prompt library | **partial** | The fixed OpenRouter text-only service, bounded/cancellable metadata test, keyring v1 Windows Credential Manager storage, separate Post-processing pane, first explicit model ID, non-streaming request, no-fallback provider routing, response identity checks, and local fallback are implemented. A disposable Windows Credential Manager round-trip and a live metadata-only request passed; the full transcript post-processing round trip remains pending. There is no user-editable endpoint or prompt library. |
 | B8 | **VAD** — enable, backend selector (earshot/silero), smoothing | **partial** | `dictation/vad.rs` exists; no settings |
-| B9 | **Paste method / clipboard handling / paste delay / reliable paste** | **partial** | `paste.rs` is 47 LOC; Handy has per-OS `paste_tx/` + 5 settings |
+| B9 | **Paste method / clipboard handling / paste delay / reliable paste** | **partial** | Clipboard writes are verified before recording own-write suppression or pasting; text/image selection capture restores the prior text/HTML/image/file snapshot. Full custom-format and locked-clipboard Windows matrix remains. |
 | B10 | **Auto-submit** (+ key) | **missing** | |
 | B11 | **Append trailing space** | **missing** | |
 | B12 | **Custom words / vocabulary** + correction threshold | **missing** | |
@@ -116,7 +130,7 @@ Every row is a user-visible capability.
 | B18 | **Hardware acceleration** — GPU backend + runtime CPU-ISA dispatch, and a selector | **blocked on the build** | The change itself is one line: on Windows x86_64, `transcribe-cpp` with `features = ["dynamic-backends", "vulkan"]` — a Vulkan GPU backend plus per-ISA CPU modules scored at runtime. But any non-default feature set makes `transcribe-cpp-sys` compile ggml from source, and that build does not come up on this machine: it shortens paths through a symlink under `%LOCALAPPDATA%	cs` pointing at a per-build `out/` directory, and CMake cannot write into it (`os error 267`, then `Unable to open check cache file for write`). CMake also is not on PATH — see `docs/BUILD.md`. Solve the from-source build first; it is the gate for the whole acceleration story. (ONNX Runtime stays CPU-only on Windows on purpose — DirectML pulled a prebuilt with an AVX2 static initialiser that crashes pre-Haswell CPUs) |
 | B19 | **Recording overlay** — position, style, on/off | **partial** | The overlay is a compact, centered pill with no clipped border/shadow edge; six persisted placements (top/bottom × left/middle/right) are implemented with DPI-aware, clamped bounds and live repositioning. On/off remains future work. |
 | B20 | **Shortcut activation mode** (hold vs toggle) + hold threshold | **done** | Same-key Ctrl+Ctrl has a 50 ms activation grace, 300 ms push-to-talk threshold, short-tap lock, ownership tokens, and cooperative `transcribe-cpp` cancellation. |
-| B21 | **Audio feedback** — start/stop sounds, theme, volume | **partial** | Capture sound only |
+| B21 | **Central audio cues** — capture/copy/dictation start-stop/error, master volume, per-event toggle | **partial** | A shared bounded Web Audio cue registry drives the visible panel's capture, copy, dictation and error events; native hidden-panel playback, volume, per-event toggles and visual-equivalent coverage remain. |
 | B22 | **Start hidden / show tray icon / autostart** | **partial** | Autostart done and now in General; start-hidden and tray-icon toggles still missing |
 | B23 | **Debug pane** — log level, live log viewer, paths, keyboard diagnostic | **missing** | |
 | B24 | **What's new on update** | **missing** | |
@@ -126,14 +140,15 @@ Every row is a user-visible capability.
 
 Neither reference does this; it is the reason bard is one app and not two.
 
-| # | Item | Status |
-| --- | --- | --- |
-| C1 | Dictation lands in the panel when open, pastes into the focused app when closed | **verify** |
-| C2 | Dictate directly into the composer (voice to note) | **missing** |
-| C3 | Dictate into an existing card (voice to edit / append) | **missing** |
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| C1 | Dictation lands in the panel when open, pastes into the focused app when closed | **verify** | |
+| C2 | Dictate directly into the composer (voice to note) | **missing** | |
+| C3 | Dictate into an existing card (voice to edit / append) | **missing** | |
 | C4 | One coherent shortcut map across both halves, no collisions | **done** | Fixed Shift/Control gestures share one raw-input coordinator; normal chords are conflict-checked and registration is transactional. |
-| C5 | One settings surface where dictation and clipboard read as one product | **missing** |
-| C6 | One onboarding covering both halves | **partial** |
+| C5 | One settings surface where dictation and clipboard read as one product | **missing** | |
+| C6 | One onboarding covering both halves | **partial** | The onboarding now reaches model setup, feature/keybind summary, trial/licence activation and startup choice; clean install and every state still need visual QA. |
+| C7 | One semantic audio-cue service shared by capture, copy, dictation and errors | **partial** | The visible shell now uses one semantic cue registry; native delivery and the complete accessibility/equivalence contract remain. |
 
 ## D. Apple-standard polish
 
@@ -141,29 +156,61 @@ Neither reference does this; it is the reason bard is one app and not two.
 | --- | --- | --- | --- |
 | D1 | **Design system** — tokens, type scale, spacing, motion, both themes | **done** | `src/styles/tokens.css`: type, space, shape, motion, four themes on two axes, reduced-motion. A legacy-alias block at the end shrinks to nothing as components migrate |
 | D2 | **Motion and depth** — panel in/out, card insert, state changes; measured, never bouncy | **partial** | Tokens and per-control transitions are in. The panel's own show/hide and list reordering still need a pass. **The panel also has no drop shadow**, and cannot simply be given one: a window-frame shadow makes save/restore of the window size non-idempotent and the panel grows every launch. A real shadow has to be drawn by the web layer into a transparent margin *inside* the window, which means the app no longer fills its own window — a deliberate change to layout, positioning and the resize handles |
-| D3 | **Startup** — cold boot time, no flash, no crash | **partial** | Guardian self-heals a ~1-in-15 WebView2 startup crash. **A guardian is a patch, not a fix — find the root cause.** It also has a side effect nobody chose: because it relaunches any death inside 20s that left no clean-exit marker, **End Task in Task Manager resurrects the app.** An app that will not stay killed is user-hostile; whatever replaces the guardian must not do this |
+| D3 | **Startup** — cold boot time, no flash, no crash | **partial** | Deliberate termination no longer resurrects because the guardian is opt-in; the underlying WebView2 crash investigation and clean-machine cold/warm evidence remain. |
 | D4 | **Dictation engine** | **resolved** | One engine: `transcribe-cpp`, which loads the shipped `whisper`, `parakeet`, and `qwen3_asr` catalogue entries as single GGUF files. No ONNX runtime is linked; see B5 and E0 for why the second engine was removed. Acceleration (`dynamic-backends`, `vulkan` on Windows x86_64) is a feature flag away and gated on B18's from-source build |
-| D10 | **Settings has its own window** | **done** | 760x620, native chrome, sidebar: General / Capture / Dictation / Models / Post-processing / Shortcuts / Data / About. `src/settings/ui.tsx` carries the primitives — Pane, Group, Row, Toggle, Segmented, Select, Button, TextField, Note, Progress — so a new setting is a line of markup rather than a design decision taken again. The old sheet is deleted |
+| D10 | **Settings is a companion surface** | **partial** | Native Settings is a docked companion beside the panel, with work-area side selection, one-visible-companion behavior and panel-height matching; frame/DPI and installed lifecycle evidence remain. |
 | D9 | **Generate `types.ts` instead of hand-mirroring it** | **missing** | Today a Rust struct change breaks the frontend with no compile error. Handy generates bindings with `specta` + `tauri-specta`. Worth adopting before the surface triples |
 | D5 | **Real-audio verification** — the mic has never been exercised | **verify** | CPAL start, bounded recording, VAD silence stop, and no-speech fast exit were exercised on Windows; a human speech transcript round trip remains to be recorded. |
-| D6 | **Visual QA of every surface** | **in progress** | Earlier visual passes verified the panel (light and dark), overflow menu, empty state, composer menu, the drawing window and its round trip, and the settings window's General, Models, and Shortcuts panes. The current native pass additionally exercised the fixed gesture surface, Post-processing cancel state, the refined recording overlay, and the new Dictation settings controls. Onboarding, the section switcher, the context menu, and the Capture / Data / About panes remain unseen or need rechecking. |
-| D7 | **Accessibility** — keyboard reachability, focus rings, contrast, screen reader | **missing** | |
-| D8 | **Empty / error / loading states everywhere** | **missing** | |
+| D6 | **Visual QA of every surface** | **in progress** | Fresh local captures now cover the four-step onboarding shell, panel, exact-height Settings companion, About/licence entry, masked key input and explicit update confirmation. Installed/light-dark/150% and remaining state receipts are still required. |
+| D7 | **Accessibility** — keyboard reachability, focus restoration, menu/list semantics, live announcements, contrast, screen reader | **partial** | Required panel chords, active-item navigation, shortcut sheet, menu typeahead/focus restoration, labelled copy, live status, reduced motion and corrected AA token values are implemented; NVDA/200% and installed focus passes remain. |
+| D8 | **Empty / error / loading / restricted states everywhere** | **partial** | Onboarding, trial/licence, update confirmation, retention/prune, model, overlay, panel and native restricted commands now have explicit copy and controls; the complete surface matrix is not yet visually verified. |
+| D11 | **Licence and trial surfaces** — onboarding, About, active/offline/revalidation/restricted/machine-limit states | **partial** | Four-step onboarding, explicit trial start, masked activation, release/deactivate, revalidation, offline-lease and restricted copy are implemented; the real Polar key lifecycle and machine-limit states still need end-to-end evidence. |
 
 ## E. Ship
 
-| # | Item | Status |
-| --- | --- | --- |
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
 | E0 | **ONNX Runtime must not be pyke's prebuilt** | **resolved by removal** | `transcribe-rs` is gone, and `ort` with it, so nothing downloads pyke's prebuilt ONNX Runtime any more. The hazard was real — that build runs AVX in a static initialiser and crashes at startup on pre-Haswell CPUs — but it only ever existed because the dependency was added on a wrong premise (B5). **If an ONNX engine is ever genuinely needed, this row comes back**, and the fix is a baseline runtime via `ORT_LIB_LOCATION` |
-| E8 | **Host our own models** | **done** | The catalogue points all three final defaults at the immutable `miisodev/bard-models` release `models-v2`, with exact asset URLs, conversion provenance, model-specific notices, byte sizes, and SHA-256 values. The public release assets match the staged hashes, support `Range` requests, and each exact file passed a Windows `transcribe-cpp` load/transcription smoke test. |
+| E8 | **Host our own models** | **done** | The catalogue points all three final defaults at the pinned, hash-verified `miisodev/bard-models` release `models-v2`, with exact asset URLs, conversion provenance, model-specific notices, byte sizes, and SHA-256 values. The public release assets match the staged hashes, support `Range` requests, and each exact file passed a Windows `transcribe-cpp` load/transcription smoke test. |
 | E9 | **A release panic is a silent death** | **partial** | A local panic hook is installed before Tauri startup, writes bounded timestamped crash logs, preserves the previous hook, and exposes a latest-log reader; the Data pane can load the newest report. A secret-free lifecycle log now records console interrupts, gesture outcomes, audio failures, model phases, and cloud test boundaries. A release-profile probe confirmed the hook writes before abort and captures a backtrace. Native/WebView2 process failures and the operator artifact-retention/field workflow remain unverified. |
-| E1 | Licensing — $30 one-time key issue + offline validation | **missing** |
-| E2 | Code signing (SmartScreen) | **missing** |
-| E3 | Auto-update channel + signed releases | **missing** |
-| E4 | miiso.dev purchase + download page | **missing** |
-| E5 | Microsoft Store packaging | **later** |
+| E1 | **Recurring annual licence** — US$20/year, 14-day local trial, three paid activations, signed 30-day offline lease, bounded revalidation | **partial** | CSPRNG installation identity, Credential Manager key/lease storage, replay and temporal checks, key rotation, explicit trial, terminal revocation handling, scheduled bounded refresh, Polar broker routes and activation/deactivation UI are implemented. Live four-device, renewal/refund and checkout evidence remain. |
+| E2 | Code signing (SmartScreen) | **missing** | |
+| E3 | Auto-update channel + signed releases | **partial** | The Tauri updater endpoint, embedded public key, cryptographically verified updater artifact, user-invoked confirmed check/install flow, release workflow and updater signature verification exist. A public immutable manifest, Authenticode-signed installer, live upgrade and rollback receipt remain. |
+| E4 | miiso.dev purchase + download page | **partial** | The authenticated Bard storefront, annual Polar product/benefits, secure entitlement retrieval, broker routes, legal pages and download redirect are implemented locally; production remains fail-closed until signed release assets and checkout smoke tests are complete. |
+| E5 | Microsoft Store packaging | **later** | Separate Phase 3 distribution path; it is not a second Phase 1 consumer installer |
+| E10 | **NSIS-only signed consumer package** | **partial** | Packaging emits only NSIS with embedded WebView2 bootstrapper, Send to Bard hooks, a Tauri updater signature and release verification/metadata scripts. Authenticode signing, clean install/upgrade/uninstall, SmartScreen evidence and legal-notice packaging remain. |
 | E6 | Licence review — cooper is Apache-2.0, Handy is MIT | **clear, keep it that way** | bard ships **no code from either**. Handy was read for facts — which crates, which features, what its catalog records — and facts carry no licence. cooper was read for approach only; `shapes.ts` and `markdown.tsx` are bard's own. The markdown tokenizer *was* a verbatim copy of cooper's regex and has been rewritten as an independent scanner. Attribution attaches to code, so none is owed today — but it becomes owed the moment anything is vendored, `catalog.json` included |
-| E7 | Name/brand check against shadcn's Copper — bard must not read as a clone or a knock-off | **open** |
+| E7 | Name/brand check against shadcn's Copper — bard must not read as a clone or a knock-off | **open** | |
+
+---
+
+## Production gate
+
+**Overall: NO-GO.** Bard ships only when every gate below is `pass` against the
+signed NSIS release candidate installed on a clean supported Windows machine.
+A green build, a development-binary screenshot, a passing unit suite or a
+feature marked `done` in source is not a substitute for the gate's evidence.
+Any P0/P1 defect, secret exposure, data-loss path, unsigned artefact, dishonest
+licence state or unexamined primary surface blocks release.
+
+| Gate | Pass condition | Current state |
+|---|---|---|
+| **G1 Product truth** | Blueprint 1.2 contradictions, currency, retention, installer and licence registers are clean; every A/B/C row is `done`, `off`, or `resolved` with no `missing`, `partial`, `verify`, `regression`, `blocked` or `open` state; public copy matches runtime behaviour | **blocked** — new mandate rows open; blueprint reconciliation is specification only |
+| **G2 Commerce and licence** | Sandbox purchase, US$20 annual renewal, cancellation, paid-through access, refund/subscription loss, 14-day trial, three activations, fourth-machine refusal, local/portal deactivation, replacement key, 30-day offline lease, tamper/replay/clock failures and revalidation bounds all pass on installed builds | **blocked** — local contract is implemented; live Polar lifecycle and installed evidence remain |
+| **G3 Security and privacy** | No secret licence key, signed lease, signing private key, OpenRouter key or service credential appears in repo, binary strings, SQLite, events, URLs, logs, crash reports or notifications; keyring round trip passes; CSP/capabilities are least-privilege; signed lease and updater signatures reject tampering; uninstall removes persistent secrets and the shell verb | **blocked** — local lease/updater checks pass, but Authenticode, installed secret inspection and uninstall receipt remain |
+| **G4 Installer and distribution** | Exactly one signed NSIS consumer artifact; clean install, repair, upgrade and uninstall pass; no unwanted installer format is emitted; SmartScreen evidence is recorded; NSIS onboarding and in-app onboarding match the design system; Explorer verb registers, repairs and removes | **blocked** — NSIS/updater candidate is built and checked, but Authenticode and installed lifecycle evidence remain |
+| **G5 Update and lifecycle** | Signed update discovery/download/install, restart, rollback and failure copy pass; updater pre-exit does not resurrect Bard; deliberate Task Manager exit stays dead; single-instance, autostart and companion lifecycle pass cold/warm | **blocked** — updater artifact and opt-in guardian are implemented; public feed, Authenticode and installed lifecycle evidence remain |
+| **G6 Installed visual QA** | Every window, overlay, menu, onboarding step, settings pane and state is captured in light/dark, 100%/150% scaling and at least one narrow display; no clipping, smudge, stale frame, overlap, hidden scrollbar or misaligned companion | **blocked** — local onboarding/panel/settings/About captures exist; installed matrix remains |
+| **G7 Keyboard and accessibility** | Every action completes without a mouse; focus never disappears or lands behind a window; menu/list/companion focus order is correct; screen reader announces capture, copy, active/selected state, dictation, errors and licence changes; reduced motion and 200% text pass; rendered contrast meets WCAG 2.2 AA in every state | **blocked** — local keyboard/contrast/focus improvements pass; screen-reader and installed matrix remain |
+| **G8 Dictation and audio** | Human speech round trip, silence/no-speech/cancel, 300ms hold/short tap, 20-minute boundary, cancellation, local/cloud fallback and hidden-panel errors pass; cue events are bounded, non-mixing, non-recording and independently adjustable; visual equivalents remain complete | **blocked** — human speech, error delivery, B21 and C7 open |
+| **G9 Clipboard, files and retention** | Sentinel capture, own-write suppression, excluded history, Send to Bard cold/warm/multi-file/unreadable/duplicate paths, Copy failures, favourite/manual exemption, each lifespan, crash-safe pruning and orphaned-file checks pass without deleting external data | **blocked** — local ownership/transaction/clipboard fixes pass; installed matrix remains |
+| **G10 Reliability and performance** | Cold/warm launch, idle memory, panel resize/move, monitor change, a synthetic 500-item stress fixture (not a retention cap), long timeline, rapid gestures/captures, model switching/download cancellation, network loss and process termination meet documented budgets without deadlock, leak, data loss or ghost process | **blocked** — D2/D3 partial; stress and long-session evidence absent |
+| **G11 Diagnostics and support** | Panic, native/WebView2 and updater failures leave bounded redacted evidence; symbols/PDB are retained; latest-report UX works; a release operator can triage, reproduce or escalate from the documented workflow | **blocked** — E9 partial |
+| **G12 Legal and commercial** | Terms, Privacy, refund/renewal language, model licences/notices, third-party attributions, brand check and every product-page claim are reviewed against the installed build | **blocked** — E7 open; licence Terms/Privacy absent |
+
+A gate moves to `pass` only with a reproducible receipt against the release
+candidate. Evidence belongs in this ledger or its referenced release record, not
+in the blueprint bodies.
 
 ---
 
@@ -189,15 +236,18 @@ someone used the app.
 
 **done** verified working · **partial** exists, incomplete · **missing** not built ·
 **verify** may exist, unconfirmed · **off** built but wrong against the target ·
-**regression** built in a way that actively breaks a reference behaviour ·
-**blocked** needs a decision or an upstream fix · **open** decision not yet made
+**regression** actively breaks the target · **resolved** closed by a settled
+architecture or removed requirement · **blocked** release-stopping work ·
+**open** decision not yet made · **later** valid outside the current release ·
+**in progress** actively being implemented but not yet gated
 
 ## Working rules
 
 1. **Nothing is done until it has been looked at.** Capture the window
    (`scripts/shot.ps1`) and inspect it. v0.1.0 shipped unseen; that does not happen again.
 2. **Copper over cooper** wherever they disagree.
-3. **No feature creep.** Every row here traces to Copper, Handy, or cohesion.
+3. **No feature creep.** Every row traces to the current product mandate,
+   Copper, Handy, or cohesion between those products.
 4. **A workaround is logged as a workaround**, never as a fix (see D3).
 
 ---
@@ -482,7 +532,7 @@ three explicit roles: `whisper-small-Q6_K.gguf` for **Fast multilingual**,
 `parakeet-tdt-0.6b-v2-Q6_K.gguf` for **Best English**, and
 `Qwen3-ASR-1.7B-Q6_K.gguf` for **Best multilingual**. The embedded catalogue
 records the exact Handy conversion revisions, byte sizes, full-file SHA-256
-values, model-specific licences, and the immutable first-party
+values, model-specific licences, and the pinned first-party
 `miisodev/bard-models` release `models-v2` assets. `transcribe-cpp` is the only
 engine. Installation does not activate a model: activation loads the exact file
 and writes `model_id` only after verification. Downloads resume and hash the
@@ -510,8 +560,9 @@ checkpoints rather than the current host decision.
 warnings`, and all 35 Rust tests pass. The live Hugging Face listing check, the
 Windows Credential Manager round-trip, the exact Q6_K load/transcription gate,
 the public `models-v2` hash/range checks, and a release-profile crash-hook probe
-also pass. The final package pass emits both MSI and NSIS installers and keeps
-`target/release/bard.pdb` beside the release binary for symbolication. A real
+also pass. The final package pass emits the then-current dual-installer set and keeps
+`target/release/bard.pdb` beside the release binary for symbolication; E10 now
+retires every consumer format except signed NSIS. A real
 OpenRouter request and native/WebView2 crash collection remain explicit
 follow-up evidence because they require a user credential or a customer failure
 environment.
@@ -564,3 +615,16 @@ complete long take; the provider request now has a 45-second timeout inside a
 60-second cancellable deadline. Prompt contract and cap-boundary tests are part
 of the Rust suite. The rebuilt NSIS installer completed successfully and the
 installed binary remained responsive on a clean launch.
+
+**2026-09-23 — product mandate reconciled into the canonical library.** The five
+blueprints now specify the US$20 recurring annual licence, 14-day local trial,
+three paid activations, Ed25519-signed 30-day offline lease with bounded online
+revalidation, signed NSIS-only consumer distribution, persistent Draw/Settings
+header actions, panel-height companion docking, item Copy, one active item, a
+keyboard-complete desktop-style menu, the narrow Explorer `Send to Bard` verb,
+independent clipboard/dictation lifespans, one central five-cue audio service and
+an all-or-nothing Apple-level production gate. Old rows that implement the
+superseded standalone Settings/Draw, composer Drawing route, hidden 500-item
+prune or capture-only sound preference are marked `off`/`partial`; missing work
+is added rather than inferred complete. The production gate is **NO-GO** until
+the installed signed release candidate supplies every receipt.

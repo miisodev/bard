@@ -31,7 +31,7 @@ extern "system" {
 }
 
 pub fn marker_path() -> std::path::PathBuf {
-    let root = std::env::var("APPDATA")
+    let root = std::env::var("LOCALAPPDATA")
         .map(|p| format!("{p}\\com.miisodev.bard"))
         .unwrap_or(std::env::temp_dir().to_string_lossy().to_string());
     std::path::Path::new(&root).join("clean-exit")

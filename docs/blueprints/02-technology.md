@@ -63,6 +63,23 @@ bindings via [specta](https://github.com/specta-rs/specta) and
 [tauri-specta](https://github.com/specta-rs/tauri-specta), which makes the
 breakage a compile error instead of a runtime one.
 
+### Central audio-cue service
+
+One Rust-owned `AudioCueService` is the only playback path. Callers emit a
+semantic event—`Capture`, `Copy`, `DictationStart`, `DictationStop`, or
+`Error`—and never name an audio file, device or mixer. The service resolves the
+event through the palette in `Design System §4`, applies the stored master
+volume and per-event enable flags, and plays a short bundled asset through the
+default Windows output device.
+
+Assets are decoded once into bounded memory, cached by event and released with
+the process; no cue is fetched from the network. Playback failure is non-fatal,
+is never allowed to block input or dictation, and never includes user text in a
+log. The dictation-start cue finishes before the microphone gate opens, and the
+stop cue begins only after the gate closes, so Bard does not record its own
+notification. No microphone monitoring is possible. Every audio event has a
+visual equivalent; sound is reinforcement, never the sole status signal.
+
 ---
 
 ## §2 Window architecture
@@ -72,15 +89,42 @@ bard owns four windows and a crowd of helpers.
 | Label | Title | Size | Chrome | Purpose |
 |---|---|---|---|---|
 | `main` | Bard | 380 × 620 | Frameless, transparent, always-on-top, off the taskbar | The panel |
-| `settings` | Bard Settings | 760 × 620 | Native | Settings |
-| `draw` | Drawing | 760 × 560 | Native | The drawing canvas |
+| `settings` | Bard Settings | 680 px wide × panel height | Frameless companion | Settings |
+| `draw` | Drawing | 680 px wide × panel height | Frameless companion | The drawing canvas |
 | `overlay` | Recording | 260 × 60 | Frameless, transparent, never focused | The dictation indicator |
+
+**Settings and Drawing are companions, not centred documents.** Their physical
+outer height always equals the panel's current physical outer height, and every
+panel resize updates the visible companion in the same main-thread transaction.
+Their preferred width is 680 CSS pixels, clamped to the available work area on
+the chosen side. A companion is positioned on the monitor containing the panel,
+with a 10-pixel gutter between the two windows and a 16-pixel minimum gap from
+the outer screen edge.
+
+The preferred side is inward from the panel's nearest vertical screen edge: a
+left-docked panel prefers a companion on its right, and a right-docked panel
+prefers one on its left. If that side cannot fit the preferred width, the native
+layer selects the opposite side when it has more usable width; if neither side
+can fit, it uses the side with more space and reduces the companion to that
+side's available width. It never changes the companion height to solve a
+horizontal constraint. Work-area, scale and monitor changes recompute all three
+window rectangles before the next paint.
+
+Companions use the active theme's `--r-panel`, `--canvas` and `--el-panel`; they
+have no native title bar, resize grips or independent position. The shadow
+belongs to the companion surface, where a transparent margin can contain it,
+and never to the panel.
+
+**Only one companion is visible.** The persistent Draw and Settings header
+icons open, focus and toggle their companion. Activating the other icon closes
+the first companion before opening the second. Closing a companion returns
+focus to the panel and leaves its icon available; it does not hide the panel.
 
 The overlay position is persisted as one of six values: `top-left`,
 `top-middle`, `top-right`, `bottom-left`, `bottom-middle`, or `bottom-right`.
 The native layer selects the monitor under the cursor, applies a DPI-aware
 40-pixel edge margin, and clamps the physical window bounds on small displays.
-The default is `bottom-middle`, preserving the original placement.
+The default is `bottom-middle`.
 
 **The panel is frameless and transparent** so its own rounded corners show the
 desktop through them. **It has no window shadow.** A window frame makes the
@@ -92,9 +136,10 @@ transparent margin inside the window, which means the application content stops
 filling its own window and layout, positioning and the resize handles all
 account for that. **Phase 2.**
 
-**Settings and the canvas hide on close; they are never destroyed.** A closed
+**Settings and Drawing hide on close; they are never destroyed.** A closed
 window is dropped by the framework, after which the command that opens it finds
-nothing and returns silently. Their close is intercepted and hides instead.
+nothing and returns silently. Their close is intercepted, the companion
+geometry is recomputed against the panel, and the window hides instead.
 
 **Secondary windows are declared in the manifest, not created at runtime**, and
 each must also be listed in `src-tauri/capabilities/default.json` or every
@@ -118,7 +163,7 @@ deferred window operation dispatches back to the main thread.
 
 ## §3 Transcription
 
-**One engine: [transcribe-cpp](https://crates.io/crates/transcribe-cpp).** It
+**One engine: [transcribe-cpp](https://docs.rs/transcribe-cpp/latest/transcribe_cpp/).** It
 loads GGUF models through ggml. The shipped catalogue uses the `whisper`,
 `parakeet`, and `qwen3_asr` single-file architecture paths; the loader also has
 explicit handlers for the other supported single-file families. No ONNX runtime
@@ -190,10 +235,10 @@ branch. Each default `file.url` is under
 `https://github.com/miisodev/bard-models/releases/download/models-v2/` and
 ends with the exact asset filename. The release assets are exact-byte rehosts
 with model-specific notices.
-The release gate is satisfied for these three files: the public assets match the
-recorded bytes, expose `Range` responses, and each exact file passed the Windows
-`transcribe-cpp` load-and-transcription smoke test. A matching architecture header
-or checksum alone would not have been sufficient evidence.
+Each default is eligible for release only when the public asset matches the
+recorded byte count and SHA-256, exposes `Range` responses, and the exact file
+opens and transcribes through the Windows `transcribe-cpp` build. A matching
+architecture header or checksum alone is not sufficient evidence.
 
 ### Entry contract
 
@@ -225,7 +270,7 @@ no bars for them — empty bars would claim a measurement that does not exist.
 ### Where model files come from
 
 **Anchored, pinned, and verified at acquisition.** The three Bard defaults are
-immutable assets in the `models-v2` release of
+pinned, hash-verified assets in the `models-v2` release of
 [miisodev/bard-models](https://github.com/miisodev/bard-models). Each entry
 names the conversion repository and revision, the upstream model lineage, the
 model-specific licence, the exact byte size, and the full-file SHA-256. The
@@ -303,7 +348,7 @@ treats a URL or filename as compatibility proof moves failure into dictation.
 ## §6 Storage layout
 
 ```
-%APPDATA%\com.miisodev.bard\
+%LOCALAPPDATA%\com.miisodev.bard\
   bard.db          the single source of truth for application-owned data
   images\          captured and drawn images, by timestamp
   models\          Bard-owned catalogue files and Advanced model imports
@@ -312,7 +357,9 @@ treats a URL or filename as compatibility proof moves failure into dictation.
 
 The identifier is fixed by the application manifest and the database path is
 derived from it directly, because the database opens before the framework is
-available to resolve it.
+available to resolve it. Existing `%APPDATA%\\com.miisodev.bard` contents are
+migrated once into this local directory; captures and credentials are not left
+on a roaming profile.
 
 ---
 
@@ -320,9 +367,9 @@ available to resolve it.
 
 ```sh
 bun install
-bun run tauri dev      # dev server and app
-bun run tauri build    # MSI and NSIS installers
-bun run build          # typecheck, CSS audit, bundle — the frontend gate
+bun run tauri dev                     # dev server and app
+bun run tauri build --bundles nsis    # the only consumer installer
+bun run build                         # typecheck, CSS audit, bundle
 ```
 
 `bun run build` is the gate: TypeScript strict with unused-symbol checks, then
@@ -330,6 +377,49 @@ bun run build          # typecheck, CSS audit, bundle — the frontend gate
 duplicate selectors and undefined custom properties**, neither of which a
 typecheck can see and both of which are silent at runtime — a duplicated
 selector is not an error, it is a rule that quietly wins.
+
+The Tauri bundle target is `nsis` only. The generated custom installer carries
+the welcome, install-location, progress and finish-page contract in
+`Product & Business §7`; it has no second format and no silent fallback. A
+release job fails when any MSI artifact is emitted. The NSIS installer registers
+the narrow Explorer verb below, preserves that registration across upgrades and
+removes it on uninstall. Installer failure, cancellation and rollback leave the
+previous installed version runnable.
+
+Authenticode signing follows [Tauri's Windows signing contract](https://v2.tauri.app/distribute/sign/windows/);
+the updater artifact has its own required signature under the
+[Tauri updater contract](https://v2.tauri.app/plugin/updater/). Signing private
+keys and passwords are release-operator secrets and never enter the repository,
+the webview or a diagnostic artefact. The public updater key and active/next
+licence verification keys may ship in the application.
+
+### Explorer integration
+
+Windows Explorer is extended through the [Windows Shell](https://learn.microsoft.com/en-us/windows/win32/shell/).
+The per-user registration adds exactly one static verb, **Send to Bard**, for
+regular files. It is a narrow launcher, not a COM shell extension, context-menu
+handler, file association takeover or resident Explorer process. Windows may
+place a static verb in the context-menu overflow according to its own shell
+policy; Bard does not replace built-in entries to force a position. Folders,
+shortcuts and virtual shell items do not receive the verb.
+
+The command launches or signals Bard with a one-time handoff containing the
+selected canonical file paths. Windows may invoke a static verb once per
+selected item; the receiving instance coalesces equivalent handoffs for 250
+milliseconds before importing so a multi-selection produces one batch. A cold
+launch consumes the handoff only after the database and single-instance
+listener are ready; a warm launch routes it to the running panel. The receiving
+command accepts no executable path, shell command, working directory or
+serialized file content. It verifies that each path resolves to an existing
+regular file accessible by the current user, then passes the paths to the same
+bounded attachment pipeline as **Attach Files…**. Duplicate paths in one
+handoff collapse to one item. A missing or inaccessible file produces a safe
+per-file failure and never blocks the valid files.
+
+Registration changes are transactional and per user. Bard verifies the exact
+verb after install and after every settings toggle, repairs a missing or stale
+command, and removes only its own verb on disable or uninstall. `Input & Commands
+§2` owns what happens after handoff; `Surfaces §1` owns the visible result.
 
 ### Prerequisites
 
@@ -352,15 +442,68 @@ because a rename-based write defeats the bundler's file watcher.
 
 ## §8 Configuration and secrets
 
-bard has no user account or application data backend. Its non-secret settings
-are the keys defined in `Product & Business §5`. Optional cloud
-post-processing is off by default and is enabled only after a key and an exact
-OpenRouter model ID are present.
+bard has no Bard-operated user account or application-data backend. Its
+non-secret settings are the keys defined in `Product & Business §5`. The
+licence service and optional OpenRouter post-processing are the only product
+network boundaries; neither receives captures, audio or unrelated local data.
 
 | Name | Reaches | Purpose |
 |---|---|---|
 | `BARD_NO_GUARDIAN` | The application, development only | Suppresses the relaunch guardian |
 | `--autostart` | The application, from the login entry | Marks a launch as started by Windows |
+| `--send-to` | The application, from the Explorer verb | Hands off one or more selected file paths |
+
+### Licensing service
+
+The external licence service is Polar's
+[License Keys](https://polar.sh/docs/features/benefits/license-keys) and
+[subscription benefits](https://polar.sh/docs/features/benefits/introduction).
+Bard requires an annual recurring product, three activation instances,
+customer-controlled deactivation and subscription-state enforcement. The exact
+API request and response fields, authentication method, rate limits and current
+endpoint are read from the linked canonical API documentation; the resolved
+product, benefit and organisation identifiers live in the release operator's
+dashboard, never in this library or the repository.
+
+The Rust core owns activation, validation and deactivation. The webview may ask
+for the current licence state, submit a newly typed key, open the customer
+portal, or release this installation, but it never receives the stored key,
+lease, service credential, raw activation payload or private signing material.
+All credential and lease access is serialized per Windows user. Returned secret
+buffers are zeroized after use, and a credential-store failure changes no
+entitlement state.
+
+The stable installation identifier is 128 bits from the operating system CSPRNG,
+stored as an opaque credential, and contains no hardware fingerprint or personal
+data. The local trial record is a separate protected credential containing only
+a format version, start timestamp and end timestamp. Bard writes it once when
+the person selects **Start trial**, treats any end time at or before Windows UTC
+as expired, and never contacts the service about it. A successful paid
+activation makes the signed lease authoritative but does not erase the local
+trial receipt.
+
+The first paid activation creates the service activation record. Validation
+returns the signed lease defined in `Product & Business §6`; the service signs
+its canonical payload and Bard verifies it locally with the embedded Ed25519
+public key selected by `key_id`. A signature, payload version, key fingerprint,
+installation identifier, entitlement, lease sequence or time failure rejects
+the response atomically and preserves the last valid lease.
+
+| Failure | Bard's behaviour |
+|---|---|
+| No key or no stored activation | Uses the local trial; paid features remain restricted when the trial ends |
+| Initial activation is offline or times out | Keeps the local state, reports `Couldn't activate Bard. Check your connection and try again.` and opens no paid session |
+| All three activations are in use | Keeps the local state and reports `All 3 activations are in use. Deactivate a machine, then try again.` |
+| Service rejects or suspends the key | Installs a valid signed end-state response when supplied; otherwise the current signed lease remains authoritative until its own expiry |
+| Revalidation timeout, rate limit, transport or 5xx error | Retains the current signed lease, applies the bounded retry policy and never blocks startup |
+| Response signature, identity, sequence or clock validation fails | Rejects the whole response, keeps the previous lease and records a secret-free diagnostic |
+| Credential store is unavailable | Treats activation and lease writes as failed; never falls back to SQLite or plaintext |
+
+The application checks after activation, at online startup and once every 24
+hours while running. It makes no more than three revalidation attempts in a
+rolling 24-hour period, permits one in-flight request, and applies a 15-second
+deadline to each. The service is never polled from a render loop, webview timer
+or background thread that can outlive process shutdown.
 
 **The OpenRouter endpoint is fixed by the application.** Text cleanup always
 posts to the official HTTPS endpoint
@@ -441,7 +584,7 @@ build that only works while a dev server happens to be up.
 **The guardian is a workaround and is named as one.** It watches for the process
 dying within twenty seconds of launch without leaving a clean-exit marker, and
 relaunches once. It exists because of a WebView2 startup flake on transparent
-frameless windows. **It has a cost that was not chosen:** a process that
+frameless windows. **Its cost is deliberate-kill survival:** a process that
 relaunches itself also survives being ended from Task Manager, which is
 user-hostile. **Phase 2 removes it** by finding the startup failure, and
 whatever replaces it must not resurrect a deliberately killed process.
@@ -467,20 +610,27 @@ default. Downloader unit tests cover resume handling, full-file hashing, and
 path containment; the acquisition path installs without activation, and the
 engine probe is invoked before the checked `model_id` write. Post-processing
 unit tests cover the first-model-ID contract, comma-list parsing, fixed request
-shape, non-streaming output, redaction, and response validation. Each exact
-`models-v2` asset passed the Windows `transcribe-cpp` load/transcription gate,
-and the Windows Credential Manager round-trip passed with a disposable test
-credential. A live Hugging Face/cache round-trip and a real OpenRouter request
-remain release verification; catalog metadata alone does not establish them.
+shape, non-streaming output, redaction, and response validation.
+
+**Release evidence covers exact bytes and real boundaries.** Each catalogue
+asset requires byte-count, SHA-256, ranged-download and Windows
+`transcribe-cpp` load-and-transcription evidence. Windows Credential Manager
+requires a disposable round trip, and a live OpenRouter request requires a real
+test credential. Licensing evidence covers trial start and expiry, all three
+activations, the fourth-machine refusal, portal and local deactivation,
+purchase, renewal, cancellation, refund or subscription loss, signed-lease
+tampering, clock bounds and every revalidation failure. Release status and
+receipts live in `docs/PARITY.md`; a passing metadata assertion is not a
+substitute for the boundary it claims to cover.
 
 **These verify the installed application, not a development build.** A
 development build cannot be run by the person who bought the product, so
-evidence from it is evidence about something else. Two consequences follow, both
-learned expensively: a window raised with `ShowWindow` from outside is not one
-the framework believes is visible, so a later hide does nothing and auto-hide
-looks broken when it is not; and a capture of a hidden window returns its last
+evidence from it is evidence about something else. Two platform consequences
+follow: a window raised with `ShowWindow` from outside is not one the framework
+believes is visible, so a later hide does nothing and auto-hide looks broken
+when it is not; and a capture of a hidden window returns its last
 painted frame rather than failing, so it silently shows the past.
 
 ---
 
-*Technology · version 1.1*
+*Technology · version 1.2*

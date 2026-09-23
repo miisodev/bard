@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, RecvTimeoutError},
@@ -22,6 +23,45 @@ static CAPTURING: AtomicBool = AtomicBool::new(false);
 static SHORTCUT_RECORDING: AtomicBool = AtomicBool::new(false);
 static SYNTHETIC_INPUT: AtomicBool = AtomicBool::new(false);
 static GESTURE_RESET: AtomicBool = AtomicBool::new(false);
+
+struct ClipboardSnapshot {
+    text: Option<String>,
+    html: Option<String>,
+    image: Option<arboard::ImageData<'static>>,
+    files: Option<Vec<PathBuf>>,
+}
+
+fn snapshot_clipboard(clipboard: &mut arboard::Clipboard) -> ClipboardSnapshot {
+    ClipboardSnapshot {
+        text: clipboard.get_text().ok(),
+        html: clipboard.get().html().ok(),
+        image: clipboard.get_image().ok().map(|image| image.to_owned_img()),
+        files: clipboard.get().file_list().ok(),
+    }
+}
+
+fn restore_snapshot(app: &AppHandle, snapshot: &ClipboardSnapshot) {
+    let mut clipboard = match arboard::Clipboard::new() {
+        Ok(clipboard) => clipboard,
+        Err(_) => return,
+    };
+    let restored = if let Some(text) = snapshot.text.as_ref() {
+        if let Some(html) = snapshot.html.as_ref() {
+            clipboard.set().html(html.clone(), Some(text.clone()))
+        } else {
+            clipboard.set_text(text.clone())
+        }
+    } else if let Some(image) = snapshot.image.as_ref() {
+        clipboard.set_image(image.clone())
+    } else if let Some(files) = snapshot.files.as_ref() {
+        clipboard.set().file_list(files)
+    } else {
+        clipboard.clear()
+    };
+    if restored.is_ok() {
+        crate::monitor::note_own_write(app);
+    }
+}
 
 pub struct SyntheticInputGuard;
 
@@ -330,18 +370,45 @@ fn register_map(
     Ok(())
 }
 
+fn shortcuts_in(map: &KeybindMap) -> Vec<Shortcut> {
+    ["capture", "panel"]
+        .iter()
+        .filter_map(|key| {
+            map.get(*key)
+                .and_then(|value| value.as_str())
+                .and_then(parse_keybind)
+        })
+        .collect()
+}
+
+fn unregister_map(
+    manager: &tauri_plugin_global_shortcut::GlobalShortcut<tauri::Wry>,
+    map: &KeybindMap,
+) -> Result<(), String> {
+    let shortcuts = shortcuts_in(map);
+    if shortcuts.is_empty() {
+        return Ok(());
+    }
+    manager
+        .unregister_multiple(shortcuts)
+        .map_err(|error| error.to_string())
+}
+
 fn unregister_and_register(app: &AppHandle, map: &KeybindMap) -> Result<(), String> {
     let manager = app.global_shortcut();
-    manager
-        .unregister_all()
-        .map_err(|error| error.to_string())?;
+    let old = normalized_or_default(&crate::db::get_setting(app, "keybinds").unwrap_or_default());
+    unregister_map(manager, &old)?;
     register_map(manager, map)
 }
 
 fn restore_registration(app: &AppHandle, raw: &str) {
     let manager = app.global_shortcut();
-    let _ = manager.unregister_all();
-    let _ = register_map(manager, &normalized_or_default(raw));
+    let previous = normalized_or_default(raw);
+    let _ = unregister_map(
+        manager,
+        &normalized_or_default(&crate::db::get_setting(app, "keybinds").unwrap_or_default()),
+    );
+    let _ = register_map(manager, &previous);
 }
 
 /// Validate, register, and persist a candidate map as one user-visible action.
@@ -351,9 +418,8 @@ pub fn apply_keybinds(app: &AppHandle, json: &str) -> Result<(), String> {
     let candidate = normalize_keybinds(json)?;
     let old_raw = crate::db::get_setting(app, "keybinds").unwrap_or_default();
     let manager = app.global_shortcut();
-    manager
-        .unregister_all()
-        .map_err(|error| error.to_string())?;
+    let previous = normalized_or_default(&old_raw);
+    unregister_map(manager, &previous)?;
     if let Err(error) = register_map(manager, &candidate) {
         restore_registration(app, &old_raw);
         return Err(error);
@@ -373,6 +439,10 @@ pub fn register_shortcuts(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn capture_clipboard(app: &AppHandle) {
+    if let Err(error) = crate::license::require(app) {
+        let _ = app.emit("license-restricted", error);
+        return;
+    }
     let mut cb = match arboard::Clipboard::new() {
         Ok(c) => c,
         Err(_) => return,
@@ -386,6 +456,10 @@ pub fn capture_clipboard(app: &AppHandle) {
 }
 
 pub fn capture_selection(app: &AppHandle) {
+    if let Err(error) = crate::license::require(app) {
+        let _ = app.emit("license-restricted", error);
+        return;
+    }
     if CAPTURING.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -401,7 +475,7 @@ fn do_capture(app: &AppHandle) {
         Ok(c) => c,
         Err(_) => return,
     };
-    let old = cb.get_text().ok();
+    let old = snapshot_clipboard(&mut cb);
     if cb.set_text(SENTINEL.to_string()).is_err() {
         return;
     }
@@ -412,27 +486,17 @@ fn do_capture(app: &AppHandle) {
         if let Ok(text) = cb.get_text() {
             if text != SENTINEL && !text.trim().is_empty() {
                 crate::monitor::capture_text(app, &text);
+                restore_snapshot(app, &old);
+                return;
+            }
+        } else if let Ok(image) = cb.get_image() {
+            if crate::monitor::capture_image(app, &image) {
+                restore_snapshot(app, &old);
                 return;
             }
         }
     }
-    restore(app, old);
-}
-
-fn restore(app: &AppHandle, old: Option<String>) {
-    crate::monitor::note_own_write(app);
-    let mut cb = match arboard::Clipboard::new() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    match old {
-        Some(text) => {
-            let _ = cb.set_text(text);
-        }
-        None => {
-            let _ = cb.clear();
-        }
-    }
+    restore_snapshot(app, &old);
     let _ = app.emit("capture-failed", ());
 }
 

@@ -1,0 +1,155 @@
+name: Bard release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, for example v0.1.0
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: github.repository == 'miisodev/bard'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      BARD_NO_GUARDIAN: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          components: rustfmt, clippy
+
+      - name: Add native build tools to PATH
+        shell: pwsh
+        run: |
+          $cmake = (Get-ChildItem 'C:\Program Files\CMake\bin' -Filter cmake.exe -ErrorAction Stop | Select-Object -First 1).DirectoryName
+          "$cmake;C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install and verify dependencies
+        shell: pwsh
+        run: |
+          bun install --frozen-lockfile
+          bun audit
+
+      - name: Rust release gates
+        shell: pwsh
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo check --locked --manifest-path src-tauri/Cargo.toml
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Require release secrets
+        shell: pwsh
+        env:
+          UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          UPDATER_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AUTH_PFX: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_BASE64 }}
+          AUTH_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_PASSWORD }}
+          RELEASE_TOKEN: ${{ secrets.BARD_RELEASES_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:UPDATER_KEY) -or
+              [string]::IsNullOrWhiteSpace($env:UPDATER_PASSWORD) -or
+              [string]::IsNullOrWhiteSpace($env:AUTH_PFX) -or
+              [string]::IsNullOrWhiteSpace($env:AUTH_PASSWORD) -or
+              [string]::IsNullOrWhiteSpace($env:RELEASE_TOKEN)) {
+            throw 'A release cannot be built without updater, Authenticode, and release-repository secrets.'
+          }
+
+      - name: Build the signed-updater NSIS candidate
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bun run tauri build --bundles nsis
+
+      - name: Sign the executable and installer
+        shell: pwsh
+        env:
+          AUTH_PFX: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_BASE64 }}
+          AUTH_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_PASSWORD }}
+        run: |
+          $cert = Join-Path $env:RUNNER_TEMP 'bard-code-signing.pfx'
+          [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($env:AUTH_PFX))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          $stamp = 'https://timestamp.digicert.com'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $artifacts = @(
+            'src-tauri\target\release\bard.exe',
+            "src-tauri\target\release\bundle\nsis\Bard_${version}_x64-setup.exe"
+          )
+          foreach ($artifact in $artifacts) {
+            & $signtool sign /fd SHA256 /tr $stamp /td SHA256 /f $cert /p $env:AUTH_PASSWORD $artifact
+            if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed for $artifact" }
+            & $signtool verify /pa /all $artifact
+            if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed for $artifact" }
+          }
+          Remove-Item -Force $cert
+
+      - name: Verify the release candidate
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          .\scripts\verify-release.ps1 -Version $version -RequireSignature
+
+      - name: Stage immutable release assets
+        shell: pwsh
+        env:
+          RELEASE_TOKEN: ${{ secrets.BARD_RELEASES_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'bard-release-assets'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tagVersion = $env:TAG.TrimStart('v')
+          if ($tagVersion -ne $version) { throw "Tag $env:TAG does not match package version $version" }
+          $installer = "src-tauri\target\release\bundle\nsis\Bard_${version}_x64-setup.exe"
+          $sig = "$installer.sig"
+          Copy-Item $installer, $sig, 'src-tauri\target\release\bard.exe' -Destination $stage
+          .\scripts\generate-release-metadata.ps1 -Version $version -OutputDir (Join-Path $stage 'metadata')
+          git archive --format=zip --output (Join-Path $stage 'metadata' "Bard_${version}_source.zip") HEAD
+          Copy-Item (Join-Path $stage 'metadata\*') $stage -Force
+          $hashes = Get-FileHash (Join-Path $stage '*') -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" }
+          $hashes | Set-Content (Join-Path $stage 'SHA256SUMS') -Encoding ascii
+          $releaseUrl = "https://github.com/miisodev/bard-releases/releases/download/$($env:TAG)"
+          $manifest = [ordered]@{
+            version = $version
+            notes = "Bard $version for Windows x64."
+            pub_date = [DateTime]::UtcNow.ToString('o')
+            platforms = [ordered]@{
+              'windows-x86_64' = [ordered]@{
+                signature = (Get-Content $sig -Raw).Trim()
+                url = "$releaseUrl/Bard_${version}_x64-setup.exe"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $stage 'latest.json') -Encoding utf8
+          $env:GH_TOKEN = $env:RELEASE_TOKEN
+          gh release create $env:TAG --repo miisodev/bard-releases --title "Bard $version" --notes "Signed Windows x64 release. See https://miiso.dev/saas/bard." --target $env:TAG 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release upload $env:TAG --repo miisodev/bard-releases --clobber (Join-Path $stage '*')
+          } else {
+            gh release upload $env:TAG --repo miisodev/bard-releases --clobber (Join-Path $stage '*')
+          }

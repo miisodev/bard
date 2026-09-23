@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "draw",
+  "description": "Bard Drawing permissions",
+  "windows": ["draw"],
+  "permissions": [
+    "core:window:allow-close",
+    "allow-get-state",
+    "allow-add-image",
+    "allow-copy-item"
+  ]
+}

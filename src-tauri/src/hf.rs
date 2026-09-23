@@ -3,9 +3,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, Once, OnceLock};
-use std::time::{Duration, Instant};
 #[cfg(not(windows))]
 use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -267,8 +267,8 @@ pub fn hf_cache_dir() -> PathBuf {
 pub fn local_models_dir(app: &AppHandle) -> PathBuf {
     let data = app
         .path()
-        .app_data_dir()
-        .expect("application data directory is unavailable");
+        .app_local_data_dir()
+        .expect("local application data directory is unavailable");
     let dir = data.join("models");
     let _ = fs::create_dir_all(&dir);
     dir
@@ -360,14 +360,17 @@ fn is_catalog_filename(filename: &str) -> bool {
 }
 
 fn detected_path_id(path: &Path) -> String {
-    format!("local|{}", normalized_path_string(&canonicalize_for_comparison(path)))
+    format!(
+        "local|{}",
+        normalized_path_string(&canonicalize_for_comparison(path))
+    )
 }
 
 fn custom_for_path(app: &AppHandle, path: &Path) -> Option<crate::db::CustomModel> {
     let canonical = canonicalize_for_comparison(path);
-    crate::db::list_custom_models(app).into_iter().find(|model| {
-        canonicalize_for_comparison(Path::new(&model.local_path)) == canonical
-    })
+    crate::db::list_custom_models(app)
+        .into_iter()
+        .find(|model| canonicalize_for_comparison(Path::new(&model.local_path)) == canonical)
 }
 
 fn append_detected_file(
@@ -599,8 +602,8 @@ fn model_probe_guard() -> MutexGuard<'static, ()> {
 }
 
 fn probe_model_path(path: &Path) -> Result<CompatibilityResult, String> {
-    let metadata = fs::metadata(path)
-        .map_err(|_| format!("Model file does not exist: {}", path.display()))?;
+    let metadata =
+        fs::metadata(path).map_err(|_| format!("Model file does not exist: {}", path.display()))?;
     if !metadata.is_file() {
         return Err("Model path is not a regular model file.".into());
     }
@@ -719,7 +722,8 @@ pub fn verify_pinned_file(
     {
         return Ok(());
     }
-    let actual = sha256_file(path).map_err(|error| format!("Could not hash model file: {error}"))?;
+    let actual =
+        sha256_file(path).map_err(|error| format!("Could not hash model file: {error}"))?;
     if !actual.eq_ignore_ascii_case(&expected_sha256) {
         return Err("Model checksum does not match the verified catalogue value.".into());
     }
@@ -735,7 +739,10 @@ pub fn probe_local_model(app: &AppHandle, path_arg: &str) -> Result<Compatibilit
     let in_app_models = path_is_within(&local_models_dir(app), &path);
     let in_hf_cache = path_is_within(&hf_cache_dir(), &path);
     if !in_app_models && !in_hf_cache {
-        return Err("Bard only checks models in its model directory or the shared Hugging Face cache.".into());
+        return Err(
+            "Bard only checks models in its model directory or the shared Hugging Face cache."
+                .into(),
+        );
     }
     let result = probe_model_path(&path)?;
     crate::db::set_custom_model_compatibility(app, path_arg, result.status);
@@ -764,8 +771,8 @@ pub fn verify_model_file(app: &AppHandle, id: &str, path: &Path) -> Result<(), S
         return verify_pinned_file(path, model.file.size_bytes, &model.file.sha256);
     }
 
-    let custom = crate::db::custom_model_by_id(app, id)
-        .ok_or_else(|| format!("Unknown model: {id}"))?;
+    let custom =
+        crate::db::custom_model_by_id(app, id).ok_or_else(|| format!("Unknown model: {id}"))?;
     let link_metadata = fs::symlink_metadata(path)
         .map_err(|_| "The selected model file is no longer available.".to_string())?;
     let target_metadata = fs::metadata(path)
@@ -1110,13 +1117,9 @@ async fn download_resumable_inner(
         {
             last_progress = received;
             last_emit = Instant::now();
-            let (speed, eta) = progress_timing(
-                 transfer_started,
-                 transfer_initial_received,
-                 received,
-                 total,
-             );
-             emit_progress(app, &request.id, received, total, speed, eta);
+            let (speed, eta) =
+                progress_timing(transfer_started, transfer_initial_received, received, total);
+            emit_progress(app, &request.id, received, total, speed, eta);
         }
     }
     file.flush().map_err(|e| e.to_string())?;
@@ -1388,17 +1391,17 @@ mod tests {
         let mut data = None;
         while offset + 8 <= bytes.len() {
             let id = &bytes[offset..offset + 4];
-            let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap())
-                as usize;
+            let size =
+                u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
             let start = offset + 8;
             let end = start.checked_add(size).expect("valid WAV chunk");
             if id == b"fmt " && end <= bytes.len() && size >= 16 {
-                channels = u16::from_le_bytes(bytes[start + 2..start + 4].try_into().unwrap())
-                    as usize;
-                sample_rate = u32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap())
-                    as usize;
-                bits = u16::from_le_bytes(bytes[start + 14..start + 16].try_into().unwrap())
-                    as usize;
+                channels =
+                    u16::from_le_bytes(bytes[start + 2..start + 4].try_into().unwrap()) as usize;
+                sample_rate =
+                    u32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap()) as usize;
+                bits =
+                    u16::from_le_bytes(bytes[start + 14..start + 16].try_into().unwrap()) as usize;
             } else if id == b"data" {
                 data = Some((start, end));
             }
@@ -1408,7 +1411,9 @@ mod tests {
         assert!(channels > 0 && sample_rate > 0);
         let (start, end) = data.expect("WAV data chunk");
         bytes[start..end]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|sample| i16::from_le_bytes([sample[0], sample[1]]) as f32 / 32768.0)
             .collect()
     }
@@ -1421,8 +1426,12 @@ mod tests {
         let files = list_repo_files("handy-computer/whisper-small-gguf")
             .await
             .expect("live Hugging Face listing succeeds");
-        assert!(files.iter().any(|file| file.path == "whisper-small-Q6_K.gguf"));
-        assert!(files.iter().all(|file| file.compatibility == ModelCompatibility::Unverified));
+        assert!(files
+            .iter()
+            .any(|file| file.path == "whisper-small-Q6_K.gguf"));
+        assert!(files
+            .iter()
+            .all(|file| file.compatibility == ModelCompatibility::Unverified));
     }
 
     #[test]
@@ -1444,7 +1453,10 @@ mod tests {
             let result = session
                 .run(&samples, &transcribe_cpp::RunOptions::default())
                 .unwrap_or_else(|error| panic!("transcription failed for {path}: {error}"));
-            assert!(!result.text.trim().is_empty(), "model produced no text: {path}");
+            assert!(
+                !result.text.trim().is_empty(),
+                "model produced no text: {path}"
+            );
             println!("{} => {}", path, result.text.trim());
         }
     }
@@ -1458,7 +1470,11 @@ mod tests {
         for path in value.split(';').filter(|path| !path.trim().is_empty()) {
             let result = probe_model_path(Path::new(path))
                 .unwrap_or_else(|error| panic!("model probe failed for {path}: {error}"));
-            assert_eq!(result.status, ModelCompatibility::Verified, "model did not load: {path}");
+            assert_eq!(
+                result.status,
+                ModelCompatibility::Verified,
+                "model did not load: {path}"
+            );
         }
     }
 

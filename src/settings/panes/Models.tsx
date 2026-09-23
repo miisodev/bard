@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Cloud,
   Download,
+  ExternalLink,
   HardDrive,
   LoaderCircle,
   RefreshCw,
@@ -664,7 +665,16 @@ export default function ModelsPane({
                       <Tag>{model.quantization ?? model.quant}</Tag>
                     ) : null}
                     {model.license ?? model.source?.license?.name ? (
-                      <Tag>{model.license ?? model.source?.license?.name}</Tag>
+                      <a
+                        className="model-license-link"
+                        href={model.source?.license?.url ?? model.source?.url ?? model.host?.url ?? "https://miiso.dev/terms"}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open model licence and source details"
+                      >
+                        <Tag>{model.license ?? model.source?.license?.name}</Tag>
+                        <ExternalLink size={11} aria-hidden="true" />
+                      </a>
                     ) : null}
                     {model.downloaded ? <Tag tone="success">Installed</Tag> : null}
                   </div>

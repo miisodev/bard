@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-active-item"
+description = "Enables the set_active_item command without any pre-configured scope."
+commands.allow = ["set_active_item"]
+
+[[permission]]
+identifier = "deny-set-active-item"
+description = "Denies the set_active_item command without any pre-configured scope."
+commands.deny = ["set_active_item"]

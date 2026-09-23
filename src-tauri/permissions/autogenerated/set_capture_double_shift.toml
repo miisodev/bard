@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-capture-double-shift"
+description = "Enables the set_capture_double_shift command without any pre-configured scope."
+commands.allow = ["set_capture_double_shift"]
+
+[[permission]]
+identifier = "deny-set-capture-double-shift"
+description = "Denies the set_capture_double_shift command without any pre-configured scope."
+commands.deny = ["set_capture_double_shift"]
