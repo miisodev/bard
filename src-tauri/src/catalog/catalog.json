@@ -1,5 +1,5 @@
 {
-  "catalogVersion": 1,
+  "catalogVersion": 3,
   "note": [
     "bard's curated transcription models.",
     "",
@@ -7,25 +7,23 @@
     "engine a model belongs to, and nothing in a model's own files states it",
     "reliably. Adding a model means adding a row here, not a branch in the loader.",
     "",
-    "`accuracy` and `speed` are 0-100 and deliberately coarse. They exist to let",
-    "someone choose without knowing what a mel spectrogram is, and they are",
-    "relative to the other rows in this file, not to any benchmark.",
+    "`accuracy`, `speed`, and `value` are 0-100 and deliberately coarse. They",
+    "help someone choose without knowing what a mel spectrogram is, and they",
+    "are relative to the other rows in this file, not to any benchmark.",
     "",
-    "HOSTING: every URL points at the model's canonical upstream on Hugging Face,",
-    "pinned to a commit, with the file's own sha256 recorded. The whisper files are",
-    "ggerganov's reference ggml builds - the same bytes bard used to fetch from a",
-    "third-party mirror, verified identical by size and hash before the switch.",
-    "Non-whisper families need a GGUF conversion upstream does not publish; those",
-    "will be converted and hosted under bard's own org rather than taken from",
-    "another project. See docs/PARITY.md E8."
+    "Every row records the exact conversion repository and revision that produced",
+    "the bytes, the upstream model and licence, and the immutable Bard release",
+    "that serves the file. The file's own SHA-256 and byte size are verified",
+    "before the engine is allowed to activate it."
   ],
   "models": [
     {
       "id": "whisper-small",
-      "name": "Whisper Small",
-      "description": "Reliable multilingual transcription. The sensible default.",
+      "name": "Bard Fast",
+      "description": "The small, broad-coverage multilingual model for everyday dictation.",
+      "role": "multilingualFast",
       "architecture": "whisper",
-      "family": "whisper",
+      "family": "Whisper Small",
       "parameters": "244M",
       "languages": 99,
       "capabilities": {
@@ -33,75 +31,129 @@
         "translate": true,
         "languageDetect": true
       },
-      "accuracy": 72,
-      "speed": 58,
+      "accuracy": 68,
+      "speed": 92,
+      "value": 90,
       "recommended": true,
       "recommendedRank": 1,
       "file": {
-        "filename": "ggml-small.bin",
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
-        "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
-        "sizeBytes": 487601967
+        "filename": "whisper-small-Q6_K.gguf",
+        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/whisper-small-Q6_K.gguf",
+        "sha256": "4d14215a972101fff787fc59e30b908ee511c725600317e02c9032cb8799f32d",
+        "sizeBytes": 212107328,
+        "quant": "Q6_K"
       },
       "source": {
-        "repo": "ggerganov/whisper.cpp",
-        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+        "repo": "handy-computer/whisper-small-gguf",
+        "revision": "a2073177cb69bd74b9ca9460b852d17fbfd5d68c",
+        "url": "https://huggingface.co/handy-computer/whisper-small-gguf",
+        "upstreamRepo": "openai/whisper-small",
+        "upstreamRevision": "973afd2",
+        "upstreamUrl": "https://huggingface.co/openai/whisper-small",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0"
+        }
+      },
+      "host": {
+        "provider": "githubReleases",
+        "repository": "miisodev/bard-models",
+        "releaseTag": "models-v2",
+        "asset": "whisper-small-Q6_K.gguf",
+        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/whisper-small-Q6_K.gguf",
+        "status": "active"
       }
     },
     {
       "id": "whisper-medium",
-      "name": "Whisper Medium",
-      "description": "More accurate on accents and noise, at some cost in speed.",
-      "architecture": "whisper",
-      "family": "whisper",
-      "parameters": "769M",
-      "languages": 99,
+      "name": "Bard English",
+      "description": "A dedicated English model tuned for low word error rate, punctuation, and clean technical dictation.",
+      "role": "englishQuality",
+      "architecture": "parakeet",
+      "family": "Parakeet TDT",
+      "parameters": "600M",
+      "languages": 1,
       "capabilities": {
         "streaming": false,
-        "translate": true,
-        "languageDetect": true
+        "translate": false,
+        "languageDetect": false
       },
-      "accuracy": 84,
-      "speed": 41,
-      "recommended": true,
-      "recommendedRank": 2,
+      "accuracy": 96,
+      "speed": 76,
+      "value": 84,
+      "recommended": false,
       "file": {
-        "filename": "ggml-medium-q5_0.bin",
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium-q5_0.bin",
-        "sha256": "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
-        "sizeBytes": 539212467,
-        "quant": "Q5_0"
+        "filename": "parakeet-tdt-0.6b-v2-Q6_K.gguf",
+        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/parakeet-tdt-0.6b-v2-Q6_K.gguf",
+        "sha256": "44c7c363438e03b613cf8ced8b7e6fd1beb2b3805008136fe5e922ab3c79eea9",
+        "sizeBytes": 600408576,
+        "quant": "Q6_K"
       },
       "source": {
-        "repo": "ggerganov/whisper.cpp",
-        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+        "repo": "handy-computer/parakeet-tdt-0.6b-v2-gguf",
+        "revision": "382796e405a9fe37145938dccbabfb25e93e4286",
+        "url": "https://huggingface.co/handy-computer/parakeet-tdt-0.6b-v2-gguf",
+        "upstreamRepo": "nvidia/parakeet-tdt-0.6b-v2",
+        "upstreamRevision": "1b149a3",
+        "upstreamUrl": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2",
+        "license": {
+          "name": "CC-BY-4.0",
+          "url": "https://creativecommons.org/licenses/by/4.0/"
+        }
+      },
+      "host": {
+        "provider": "githubReleases",
+        "repository": "miisodev/bard-models",
+        "releaseTag": "models-v2",
+        "asset": "parakeet-tdt-0.6b-v2-Q6_K.gguf",
+        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/parakeet-tdt-0.6b-v2-Q6_K.gguf",
+        "status": "active"
       }
     },
     {
       "id": "whisper-turbo",
-      "name": "Whisper Turbo",
-      "description": "Highest accuracy here, and large. Best on a machine with headroom.",
-      "architecture": "whisper",
-      "family": "whisper",
-      "parameters": "809M",
-      "languages": 99,
+      "name": "Bard Multilingual",
+      "description": "The broad multilingual quality choice, with automatic language detection across 30 languages.",
+      "role": "multilingualQuality",
+      "architecture": "qwen3_asr",
+      "family": "Qwen3 ASR",
+      "parameters": "1.7B",
+      "languages": 30,
       "capabilities": {
         "streaming": false,
         "translate": false,
         "languageDetect": true
       },
-      "accuracy": 91,
-      "speed": 52,
+      "accuracy": 99,
+      "speed": 44,
+      "value": 78,
       "recommended": false,
       "file": {
-        "filename": "ggml-large-v3-turbo.bin",
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo.bin",
-        "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
-        "sizeBytes": 1624555275
+        "filename": "Qwen3-ASR-1.7B-Q6_K.gguf",
+        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/Qwen3-ASR-1.7B-Q6_K.gguf",
+        "sha256": "c75a961b7134a6c952d89797865cb0d0376876185aee04ef6d12c31c2952e4e1",
+        "sizeBytes": 1692554208,
+        "quant": "Q6_K"
       },
       "source": {
-        "repo": "ggerganov/whisper.cpp",
-        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+        "repo": "handy-computer/Qwen3-ASR-1.7B-gguf",
+        "revision": "3555bd238a8572bbace3ebf60d23b036dc0a5dbe",
+        "url": "https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf",
+        "upstreamRepo": "Qwen/Qwen3-ASR-1.7B",
+        "upstreamRevision": "7278e1e",
+        "upstreamUrl": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0"
+        }
+      },
+      "host": {
+        "provider": "githubReleases",
+        "repository": "miisodev/bard-models",
+        "releaseTag": "models-v2",
+        "asset": "Qwen3-ASR-1.7B-Q6_K.gguf",
+        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/Qwen3-ASR-1.7B-Q6_K.gguf",
+        "status": "active"
       }
     }
   ]

@@ -1,14 +1,31 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { ArrowRight, Download, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "../store";
 import type { AppState, ModelInfo, ModelProgress } from "../types";
 
 const WAVE = (
-  <svg viewBox="0 0 42 42">
+  <svg viewBox="0 0 42 42" aria-hidden="true">
     <rect x="4" y="16" width="7" height="10" rx="3.5" opacity="0.85" />
     <rect x="16" y="6" width="7" height="30" rx="3.5" />
     <rect x="28" y="12" width="7" height="18" rx="3.5" opacity="0.9" />
   </svg>
 );
+
+function errorText(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  const text = String(error);
+  return text.replace(/^Error:\s*/i, "").trim() || "Something went wrong.";
+}
+
+function preferredModel(models: ModelInfo[], activeId: string): ModelInfo | null {
+  return (
+    models.find((model) => model.id === activeId) ??
+    models.find((model) => model.role?.toLowerCase().includes("fast")) ??
+    models.find((model) => model.recommended) ??
+    models[0] ??
+    null
+  );
+}
 
 export default function Onboarding({
   state,
@@ -17,22 +34,96 @@ export default function Onboarding({
 }: {
   state: AppState;
   modelProgress: ModelProgress | null;
-  onDone: () => void;
+  onDone: () => void | Promise<void>;
 }) {
   const [step, setStep] = useState(0);
   const [model, setModel] = useState<ModelInfo | null>(null);
-  const [autostart, setAutostart] = useState(true);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [modelsAttempt, setModelsAttempt] = useState(0);
+  const [completedModelId, setCompletedModelId] = useState<string | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [activating, setActivating] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [autostart, setAutostart] = useState(state.autostartEnabled);
+  const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
 
-  useState(() => {
-    void api.getModels().then((ms) => {
-      const picked = ms.find((m) => m.id === state.modelId) ?? ms[0];
-      setModel(picked);
-    });
-    return 0;
-  });
+  useEffect(() => {
+    let alive = true;
+    setModelsLoading(true);
+    setModelsError(null);
+    void api
+      .getModels()
+      .then((models) => {
+        if (!alive) return;
+        setModel(preferredModel(models, state.modelId));
+      })
+      .catch((reason: unknown) => {
+        if (alive) setModelsError(errorText(reason));
+      })
+      .finally(() => {
+        if (alive) setModelsLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [modelsAttempt, state.modelId]);
 
-  const modelReady = model?.downloaded ?? false;
-  const installing = modelProgress !== null;
+  const modelReady =
+    model !== null && (model.downloaded || completedModelId === model.id);
+  const modelActive = modelReady && state.modelId === model.id;
+  const progressForModel = modelProgress?.id === model?.id ? modelProgress : null;
+  const activeProgress = progressForModel && !progressForModel.error ? progressForModel : null;
+  const displayInstallError = installError ?? progressForModel?.error ?? null;
+  const working = installing || activating;
+
+  const installModel = async () => {
+    if (!model || working) return;
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      await api.downloadModel(model.id);
+      await api.setModel(model.id);
+      setCompletedModelId(model.id);
+      const models = await api.getModels();
+      const refreshed = models.find((item) => item.id === model.id);
+      if (refreshed) setModel(refreshed);
+    } catch (reason) {
+      setInstallError(errorText(reason));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const activateAndContinue = async () => {
+    if (!model || !modelReady || working) return;
+    setActivating(true);
+    setInstallError(null);
+    try {
+      if (!modelActive) await api.setModel(model.id);
+      setCompletedModelId(model.id);
+      setStep(2);
+    } catch (reason) {
+      setInstallError(errorText(reason));
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  const finish = async () => {
+    if (finishing) return;
+    setFinishing(true);
+    setFinishError(null);
+    try {
+      await api.setAutostart(autostart);
+      await onDone();
+    } catch (reason) {
+      setFinishError(errorText(reason));
+    } finally {
+      setFinishing(false);
+    }
+  };
 
   return (
     <div className="onboarding">
@@ -41,37 +132,65 @@ export default function Onboarding({
         <>
           <h1>Bard</h1>
           <p>
-            Capture anything you copy. Dictate offline with your own voice. Everything
-            you capture stays on this machine, in one minimal panel.
+            Capture anything you copy. Dictate offline with your own voice. Captures stay
+            on this machine, and cloud text cleanup is always opt-in.
           </p>
         </>
       ) : step === 1 ? (
         <>
           <h1>Offline voice</h1>
           <p>
-            Bard dictates with a local Whisper model — nothing leaves your machine.
-            One download, works everywhere.
+            Bard downloads one model, then transcribes audio locally. Nothing in this step
+            leaves your machine.
           </p>
           <div className="model-card">
-            <div className="name">{model?.name ?? "Whisper Small"}</div>
+            <div className="name">{model?.name ?? (modelsLoading ? "Preparing model…" : "Voice model")}</div>
             <div className="meta">
-              {modelReady
-                ? "Installed and ready"
-                : `${model?.sizeMb ?? 465} MB · runs fully offline`}
+              {modelsLoading
+                ? "Checking the Bard model catalogue…"
+                : modelsError
+                  ? "The model catalogue could not be loaded."
+                  : modelReady
+                    ? modelActive
+                      ? "Installed, active, and ready"
+                      : "Installed — activate it to continue"
+                    : model
+                      ? `${model.sizeMb} MB · runs fully offline`
+                      : "No downloadable model is available"}
             </div>
-            {installing ? (
-              <div className="progress">
+            {activeProgress || installing ? (
+              <div
+                className="progress"
+                role="progressbar"
+                aria-label="Voice model installation"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(activeProgress?.percent ?? 0)}
+              >
                 <div
                   className="fill"
-                  style={{ width: `${Math.min(100, modelProgress.percent)}%` }}
+                  style={{ width: `${Math.max(0, Math.min(100, activeProgress?.percent ?? 0))}%` }}
                 />
               </div>
-            ) : !modelReady ? (
+            ) : null}
+            {displayInstallError ? <div className="meta" role="alert">{displayInstallError}</div> : null}
+            {modelsError ? (
+              <button
+                className="btn"
+                onClick={() => setModelsAttempt((attempt) => attempt + 1)}
+                disabled={modelsLoading}
+              >
+                <RotateCcw aria-hidden="true" />
+                Retry catalogue
+              </button>
+            ) : !modelReady && model && !working ? (
               <button
                 className="btn primary"
-                onClick={() => void api.downloadModel(model!.id)}
+                onClick={() => void installModel()}
+                disabled={Boolean(activeProgress)}
               >
-                Download {model?.sizeMb ?? 465} MB
+                {displayInstallError ? <RotateCcw aria-hidden="true" /> : <Download aria-hidden="true" />}
+                {displayInstallError ? "Retry download" : `Download ${model.sizeMb} MB`}
               </button>
             ) : null}
           </div>
@@ -90,18 +209,34 @@ export default function Onboarding({
               <div className="sub">Runs quietly in the tray</div>
             </span>
             <button
+              type="button"
+              role="switch"
+              aria-checked={autostart}
+              aria-label="Start Bard at login"
               className={`toggle${autostart ? " on" : ""}`}
-              onClick={() => setAutostart(!autostart)}
+              onClick={() => setAutostart((current) => !current)}
             >
               <span className="knob" />
             </button>
           </div>
+          {finishError ? <div className="meta" role="alert">{finishError}</div> : null}
         </>
       )}
 
-      <div className="steps">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className={`step${i <= step ? " on" : ""}`} />
+      <div
+        className="steps"
+        role="progressbar"
+        aria-label={`Onboarding step ${step + 1} of 3`}
+        aria-valuemin={1}
+        aria-valuemax={3}
+        aria-valuenow={step + 1}
+      >
+        {[0, 1, 2].map((index) => (
+          <div
+            key={index}
+            className={`step${index <= step ? " on" : ""}`}
+            aria-current={index === step ? "step" : undefined}
+          />
         ))}
       </div>
 
@@ -109,29 +244,31 @@ export default function Onboarding({
         {step === 0 ? (
           <button className="btn primary" onClick={() => setStep(1)}>
             Continue
+            <ArrowRight aria-hidden="true" />
           </button>
         ) : step === 1 ? (
-          installing ? null : (
+          working ? null : (
             <>
               {modelReady ? (
-                <button className="btn primary" onClick={() => setStep(2)}>
-                  Continue
+                <button
+                  className="btn primary"
+                  onClick={() => void activateAndContinue()}
+                  disabled={activating}
+                  autoFocus
+                >
+                  {activating ? <LoaderCircle aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
+                  {activating ? "Activating…" : "Continue"}
                 </button>
               ) : null}
-              <button className="btn" onClick={() => setStep(2)}>
+              <button className="btn" onClick={() => setStep(2)} disabled={installing || activating}>
                 Skip for now
               </button>
             </>
           )
         ) : (
-          <button
-            className="btn primary"
-            onClick={() => {
-              if (autostart) void api.setAutostart(true);
-              onDone();
-            }}
-          >
-            Start using Bard
+          <button className="btn primary" onClick={() => void finish()} disabled={finishing}>
+            {finishing ? <LoaderCircle aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
+            {finishing ? "Starting Bard…" : "Start using Bard"}
           </button>
         )}
       </div>

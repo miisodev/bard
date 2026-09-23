@@ -19,8 +19,8 @@ document name, as in `Technology §3`. A bare §3 is a section of this document.
 the reference products. Phase 3 is beyond them. Markers describe scope, never
 progress.
 
-**Anchor policy.** Model licences, platform requirements and store policies are
-named and linked, never transcribed.
+**Anchor policy.** Model licences, provider requirements, platform requirements
+and store policies are named and linked, never transcribed.
 
 ---
 
@@ -31,8 +31,12 @@ AI-assisted work needs constantly and otherwise gets from two places: a place
 to put the fragments worth keeping, and a way to speak instead of type.
 
 It is **one keyboard-first panel**, always a shortcut away, that holds captured
-text, images and drawings — and transcribes speech entirely on the machine,
-against open-weights models the owner chooses.
+text, images and drawings and transcribes speech on the machine with the three
+curated GGUF roles defined in `Technology §4` or another compatible local model.
+Audio capture and local transcription remain on-device. When the person
+explicitly enables Post-processing, only the already-produced transcript text
+may be sent to the fixed OpenRouter endpoint through the first model ID they
+entered; audio and unrelated local data remain on the machine.
 
 **The product's claim is cohesion, not accumulation.** A clipboard manager and
 a dictation tool running side by side are two utilities. bard is one surface
@@ -62,10 +66,15 @@ placeholder, an unexamined empty state, a window that has never been looked at.
 - **Not a note-taking application.** Dictation targets Wispr Flow's capability
   minus its notetaking. bard captures and transcribes; it does not organise
   long-form documents.
-- **Not a cloud product.** No account, no sync, no telemetry, no server. Every
-  capture and every recording stays on the machine. This is a feature and a
-  constraint: it rules out server-side transcription, cross-device history, and
-  any recovery of data from a lost machine.
+- **Not a Bard-operated cloud product.** There is no Bard account, sync,
+  telemetry, or data-processing backend. Captures and recordings stay on the
+  machine, and the local transcript is produced there. When cloud
+  post-processing is enabled, a copy of the text from the dictation that
+  triggered it is sent to the fixed OpenRouter endpoint using the first model
+  ID stored for that stage; audio, clipboard contents, history, images, and
+  other captured items do not. The default rules out server-side transcription
+  and cross-device history; enabling text post-processing does not change the
+  local recording or transcription path.
 - **Not a Copper clone.** bard follows Copper's interaction design because that
   design is right and its users should not have to relearn it. It is an
   independent product with its own name, its own dictation half, and no
@@ -81,7 +90,7 @@ bard sits between three products, and takes something different from each.
 |---|---|---|---|
 | **Copper** by shadcn | A Mac capture app: clipboard, scratchpad and to-do list purpose-built for AI-assisted work | The interaction design, the panel's shape, the keyboard-first discipline — **this is the target** | Windows-native rather than Mac; adds dictation |
 | **Handy** | An open-source dictation app with a curated local-model catalogue | The shape of the model story: curated recommendations, one-click acquisition, no configuration sprawl | Adds the capture half; paid rather than free |
-| **Wispr Flow** | A commercial AI dictation product | The capability bar — what good dictation feels like | Fully offline on open weights, rather than cloud; no notetaking |
+| **Wispr Flow** | A commercial AI dictation product | The capability bar — what good dictation feels like | Local transcription on open weights, with optional text-only cleanup after transcription; no notetaking |
 
 **Copper is the target and `cooper/` is only a means.** The `cooper/`
 repository in the workspace is an open-source recreation of Copper, read as a
@@ -95,7 +104,8 @@ watching those rather than inferred from the recreation's source.
 Someone doing AI-assisted work on Windows — writing prompts, collecting
 answers, moving fragments between a browser, a terminal and a chat. They
 already use a clipboard manager or wish they did, they type more than they want
-to, and they will not tolerate a tool that sends their work to a server.
+to, expect capture and audio to remain local, and require any cloud processing
+of dictated text to be an explicit choice.
 
 **Two constraints follow from who they are.** They are keyboard-first, so every
 action has a key and the mouse is optional. And they are not machine-learning
@@ -174,34 +184,62 @@ Holding the dictation shortcut records; releasing transcribes. The text is
 pasted into whatever application has focus, or lands in the timeline when the
 panel is open.
 
-**Transcription runs entirely on the machine.** No audio and no text leaves it.
-The model is chosen by the owner from a curated catalogue, from models already
-present on the machine, or from any Hugging Face repository by name.
+**Audio capture and local transcription run entirely on the machine.** The model
+is selected in `Models`, which presents `Bard models`, `On this computer`, and
+`Advanced model import`; the exact surface contract is `Surfaces §3.4`.
 
-**A model is registered only once it has actually loaded.** A repository that
-looks right but cannot run — an architecture the engine does not know, or a
-conversion in a layout it cannot read — is refused at install time rather than
-installed and left broken. *The cost of the wrong choice:* a model that fails
-at first use fails during dictation, which is the worst moment to discover it.
+**Bard models presents the three catalogue roles defined in `Technology §4`:
+Fast multilingual, Best English, and Best multilingual.** The catalogue owns
+the role-to-asset mapping, conversion provenance, model-specific licence,
+quantization, byte size, SHA-256, host, and relative quality/speed meters. The
+role labels are product promises; the exact files and metadata are pinned in
+the embedded catalogue.
+
+**A model becomes active only after compatibility and engine-load verification;
+Bard-managed downloads also require the full file's byte count and SHA-256 to
+match.** Installation and activation are separate transitions: a download is
+not allowed to change `model_id`, and the activation command loads the file
+before it writes `model_id`. A repository that looks right but cannot run — an
+unsupported architecture or a conversion in a layout the engine cannot read —
+stays unavailable rather than failing during dictation. Files found in an
+external Hugging Face cache can be used but are never removed by Bard. The
+active model cannot be removed until another verified model is active, and
+Bard never substitutes a different model when the active file becomes
+unavailable. *The cost of the wrong choice:* a model that first fails during
+dictation takes the most important action in the product down with it.
 
 The model unloads after five minutes idle and reloads on demand.
+
+**Cloud post-processing is a separate, off-by-default capability.** A person
+starts dictation explicitly, the local transcript is completed, and only then
+may the enabled stage send that transcript text to the fixed OpenRouter
+endpoint using the first explicitly configured model ID. The stored setting may
+contain a comma-separated list, but only its first ID is sent; there is no
+automatic model fallback. Audio samples, clipboard
+contents, capture history, images, prompts, and unrelated local data never
+enter the request. The API key is stored through keyring v1 in Windows
+Credential Manager, never in SQLite, application state, events, or logs;
+`Technology §8` owns the integration and secret boundary. A disabled,
+unconfigured, rejected, rate-limited, timed-out, malformed, empty, or
+policy-blocked cloud response leaves the local transcript untouched and uses
+it as the final text. A partial cloud response is never pasted.
 
 **Phase 2** completes the dictation settings surface: voice activity detection
 and its backend, filler-word removal and its vocabulary, custom words, paste
 method and delay, auto-submit, append-trailing-space, translate-to-English,
 language selection, microphone muting during recording, output device, and
-hardware acceleration selection. Each is a row in `Surfaces §3` when it lands.
-
-**Phase 3** adds post-processing through a chosen language model provider,
-which is the one capability in this half that is not offline and is therefore
-off by default and explicitly opted into.
+hardware acceleration selection. Phase 2 adds those rows to the Dictation and
+Models panes.
 
 ---
 
 ## §5 Data
 
-Everything bard holds lives in one SQLite file in the application's own data
-directory, beside a folder of images and a folder of models.
+bard-owned application data lives in one SQLite file in the application's own
+data directory, beside folders for images and Bard-managed model files. External
+model caches remain where their owner placed them. The optional OpenRouter API
+key is the one secret outside SQLite and lives in Windows Credential Manager;
+`Technology §8` owns that boundary.
 
 **The database is opened before any window exists.** Windows declared in the
 application manifest are created before application setup runs, so anything
@@ -241,15 +279,19 @@ CREATE TABLE attachments (
 );
 CREATE INDEX idx_attachments_item ON attachments(item_id);
 
--- Models installed from Hugging Face rather than the catalogue. They carry no
--- curation, which is why the settings surface shows them without scores.
+-- Models downloaded through Advanced model import. Files discovered in an
+-- external cache remain outside Bard's ownership and are not deleted by Bard.
 CREATE TABLE custom_models (
-  id         TEXT PRIMARY KEY,
-  repo       TEXT    NOT NULL,
-  file       TEXT    NOT NULL,
-  size_mb    INTEGER NOT NULL DEFAULT 0,
-  local_path TEXT    NOT NULL,
-  created_at INTEGER NOT NULL
+  id            TEXT PRIMARY KEY,
+  repo          TEXT    NOT NULL,
+  file          TEXT    NOT NULL,
+  size_mb       INTEGER NOT NULL DEFAULT 0,
+  size_bytes    INTEGER NOT NULL DEFAULT 0,
+  sha256        TEXT    NOT NULL DEFAULT '',
+  local_path    TEXT    NOT NULL,
+  ownership     TEXT    NOT NULL DEFAULT 'external',
+  compatibility TEXT    NOT NULL DEFAULT 'unverified',
+  created_at    INTEGER NOT NULL
 );
 
 CREATE TABLE settings (
@@ -257,6 +299,13 @@ CREATE TABLE settings (
   value TEXT NOT NULL
 );
 ```
+
+`settings` holds `model_id` and the non-secret post-processing values
+`openrouter_postprocess_enabled` (false by default) and
+`openrouter_postprocess_model_ids`. The model-ID setting is a comma-separated
+list of opaque IDs; the first ID is the only one sent to OpenRouter. The
+endpoint is a fixed application constant, not a user setting. `settings` never
+holds an API key, access token, authorization header, or secret-bearing URL.
 
 **Migrations are additive `ALTER TABLE` statements whose errors are ignored.** A
 duplicate-column error is the expected result on every launch after the first.
@@ -313,12 +362,15 @@ does not block shipping. Requirements are at
 
 ### Crash reporting
 
-**Phase 1 requires a panic hook that writes a log before the process dies.** The
-release profile aborts on panic and its symbols are stripped, so an unhandled
-panic today exits with a status code and nothing else — a crash report from a
-customer would be unusable. *The cost of the wrong choice:* the one class of
-defect that cannot be reproduced on the developer's machine is exactly the one
-that produces no evidence.
+**Phase 1 installs a local panic hook before application startup.** It writes
+bounded, timestamped reports under `%LOCALAPPDATA%\com.miisodev.bard\logs`
+before the release profile's `panic = "abort"` terminates the process, and the
+Data pane can load the newest report. Release line tables and PDB symbols are
+retained for operator symbolication; native/WebView2 failures remain outside
+the Rust hook, and the artifact-retention and symbolication workflow is part of
+release verification. *The cost of the wrong choice:* the one class of defect
+that cannot be reproduced on the developer's machine is exactly the one that
+must still leave usable evidence.
 
 ---
 
@@ -337,18 +389,24 @@ list of what it learned from in its settings.
 endorsed by shadcn, and does not use the Copper name, mark or branding. The
 name, the icon and the product page are bard's own.
 
-**Model licences are the model's, not bard's.** Each catalogue entry records the
-upstream repository and revision it came from; the licence is the upstream's and
-is linked from the entry. bard redistributes no model weights — it downloads
-them from their canonical home on the user's machine, on the user's request.
+**Model licences are the model's, not Bard's.** Every catalogue entry records
+the exact conversion repository and revision, the upstream model and revision,
+the model-specific licence, the byte size, and the SHA-256 of the file. Bard's
+first-party release rehosts the three default files under those terms and keeps
+their provenance and notices with the assets. A model imported through
+`Advanced model import` is obtained from its named source under that source's
+terms; Bard claims no ownership of it. The complete role-to-asset mapping is
+owned by `Technology §4`.
 
-**Model hosting is bard's own.** Whisper models are fetched from
-[ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp), pinned to
-a revision, which is their canonical upstream. Architectures whose GGUF
-conversions upstream does not publish are converted and hosted under bard's own
-organisation rather than taken from another project's infrastructure. *The cost
-of the wrong choice:* serving a paid product's downloads from a free project's
-bandwidth is not a licence question and is still not acceptable.
+**The three Bard defaults have one immutable first-party host.** Their release
+assets come from [miisodev/bard-models](https://github.com/miisodev/bard-models),
+release `models-v2`. The files are exact-byte rehosts, not substitutions, and
+carry model-specific notices alongside the upstream licence. A release is not
+accepted until those assets are published and each exact file has passed the
+Windows `transcribe-cpp` load-and-transcription smoke test. *The cost of the
+wrong choice:* serving a paid product's defaults from another project's
+bandwidth leaves Bard without control of availability, provenance, or the bytes
+its checksum policy promises.
 
 ---
 
@@ -359,12 +417,14 @@ system requirement, a purchase action and a download.
 
 **It answers four questions in this order**, because that is the order a visitor
 asks them: what is this, what does it look like, what does it cost, how do I get
-it. Everything else — the offline claim, the model story, the shortcut map — is
-supporting material below that fold.
+it. Everything else — the local-processing promise, the model story, the
+shortcut map — is supporting material below that fold.
 
-**The offline claim is the headline, not a footnote.** It is the one thing no
-competitor in this category can say, and the one thing this buyer cares most
-about.
+**The local-first promise is the headline, not a footnote, and it is
+conditional.** The page says: `Audio capture and transcription run on your PC.
+If you enable cloud post-processing, Bard sends the completed transcript text
+to OpenRouter using the model ID you enter.` It never claims that every part of
+Bard remains on-device while a cloud stage is enabled.
 
 ---
 
@@ -386,4 +446,4 @@ promise forbids it.
 
 ---
 
-*Product & Business · version 1.0*
+*Product & Business · version 1.1*

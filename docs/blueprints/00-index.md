@@ -8,7 +8,8 @@ the library follows. It carries no product facts of its own.
 
 **Deliverables.** The library is complete enough that a team who has never met
 the author can build bard from it: a paid native Windows application that
-merges a capture and clipboard workspace with fully offline dictation.
+merges a capture and clipboard workspace with local-first dictation and an
+explicitly opt-in cloud cleanup stage.
 
 **Path conventions.** Repository paths are relative to `bard/` — the product
 repository. `src/` is the webview, `src-tauri/` the Rust core, `docs/` the
@@ -40,7 +41,7 @@ the constraint bard depends on, never transcribed. Resolved values live in
 | # | Document | Owns |
 |---|---|---|
 | 01 | **Product & Business** | What bard is, who it is for, the market it sits in, every behaviour of the product, the data schema, pricing, licensing, distribution, legal position |
-| 02 | **Technology** | The stack, the window architecture, the transcription engine, the model catalogue contract, the Hugging Face integration, the build and release pipeline |
+| 02 | **Technology** | The stack, the window architecture, the transcription engine, the model catalogue contract, model discovery/import and OpenRouter integration, the build and release pipeline |
 | 03 | **Design System** | Philosophy, tokens, type, space, shape, motion, themes, components, accessibility, anti-patterns — everything true of all surfaces |
 | 04 | **Surfaces** | Every window and overlay, specified to build-readiness — everything true of one surface |
 | 05 | **Input & Commands** | Global shortcuts, the capture mechanism, the tray, dictation triggers, paste behaviour — the command surface of a keyboard-first application |
@@ -116,4 +117,4 @@ nothing to announce it.
 
 ---
 
-*Library version 1.0 · five documents*
+*Library version 1.1 · five documents*

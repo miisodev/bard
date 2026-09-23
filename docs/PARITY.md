@@ -22,11 +22,12 @@ A paid ($30, one-time) native Windows app: Copper's capture/clipboard workspace 
 best-in-class offline dictation in one keyboard-first panel. Sold on miiso.dev,
 possibly the Microsoft Store later.
 
-Dictation targets Wispr Flow's *capability* (minus notetaking) but delivers it
-**fully offline on open weights**, with genuine freedom of model choice — paste a
-Hugging Face repo link, or pick up a model already on the machine — without the
-configuration sprawl that would lose a non-technical user. Handy's curated
-recommendation list is the pattern to follow.
+Dictation targets Wispr Flow's *capability* (minus notetaking) but delivers local
+transcription on open weights, with genuine freedom of model choice — choose a
+curated Bard role, use a compatible file already in the shared Hugging Face
+cache, or inspect a public Hugging Face repository — without the configuration
+sprawl that would lose a non-technical user. Handy's curated recommendation list
+is the pattern to follow.
 
 ## Reference material
 
@@ -41,16 +42,19 @@ recommendation list is the pattern to follow.
 
 ## Where we actually stand
 
-Measured 2026-09-19, first session with vision on the project.
+Measured 2026-09-23. The original 2026-09-19 inventory remains in the dated log
+as a baseline; these figures describe the current working tree.
 
 | | bard | cooper | Handy |
 | --- | --- | --- | --- |
-| Source LOC | 6,274 | 6,393 | 43,952 |
-| Tauri commands | 52 | 40 | 53 |
-| User-facing settings | **9** | ~15 | **62** |
+| Source LOC | 11,069 | 6,393 | 43,952 |
+| Tauri commands | 64 | 40 | 53 |
+| User-facing settings panes | **8** | ~15 | **62** |
 
-bard is roughly *one* of its two references in size while owing the surface of both.
-The v0.1.0 build is a working skeleton with both halves sketched — not a parity build.
+bard is larger than the 2026-09-19 skeleton while still owing the surface of
+both references. The model and post-processing paths have code
+implementations; release verification and the rows marked `partial` or
+`verify` remain below.
 
 ---
 
@@ -83,21 +87,22 @@ Verified against the Copper demo videos and cooper's source.
 | A20 | **No branding in the panel** | **done** | Wordmark removed; the header is a search pill and one overflow button |
 | A21 | **No timestamps on cards** | **done** | The whole per-card action row went with it — actions are keyboard and context menu, as in Copper |
 | A22 | **Section header style** — small-caps letterspaced label + hairline rule | **done** | |
-| A23 | **Composer copy** — "Add a note, type a prompt, or describe a task" | **done** | `#`/`##` still work; the placeholder no longer teaches syntax |
+| A23 | **Composer copy** — `Add a note or a prompt` | **done** | `#`/`##` still work; the active section name is appended in lowercase parentheses |
 
 ## B. Handy parity — the dictation half
 
-bard exposes 9 settings; Handy exposes 62. Every row is a user-visible capability.
+The Settings window exposes eight panes; Handy's reference exposes 62 settings.
+Every row is a user-visible capability.
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, streaming/translate badges, size, checksums | **done** | `src-tauri/src/catalog/catalog.json`, baked in at compile time so a machine that has never been online still has a list to offer. Carries `architecture`, which is what decides the engine — bard's own curation, not a copy of Handy's file. Not yet: multiple quants per model, and the catalog still lists only whisper — not an engine limit (see B5) but a hosting decision (E8) |
-| B2 | **Model manager UI** — downloaded vs available, search, language filter, per-model Active/Delete, progress with speed + cancel | **partial** | Now a real pane, in three groups in the order a person tries them: the curated list, models already in the machine's HF cache, then any repo by name. Still missing search, language filter, delete, and download speed |
-| B3 | **HF repo paste + one-click install** | **done** | Resume, checksum verify, cancel, load-verified registration |
-| B4 | **Discover models already on the machine** | **done** | HF cache scan with one-click Use |
-| B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, qwen3, voxtral, granite…) | **reshaped — no engine work needed** | This row was wrong, and so was the work started on it. `transcribe-cpp` 0.2.3 already covers these: it ships `parakeet.h` and `moonshine_streaming.h` beside `whisper.h`, and **all sixty-nine models in Handy's catalog — seventeen architectures — are single GGUF files loaded through it.** `transcribe-rs` is Handy's *legacy* ONNX path, not the one their catalog uses. So there is no second engine, no directory-shaped model, and no new acquisition path: supporting a family is adding catalog rows. What remains is (a) the rows, and (b) the fact that a GGUF must be one this engine can read — a third-party conversion of the same model may not load, which is what the qwen3-asr refusal actually was |
+| B1 | **Curated model catalog** — recommended ranking, accuracy/speed bars, language count, model metadata, size, checksums | **done** | `src-tauri/src/catalog/catalog.json` is embedded at compile time and carries the three final roles, exact Q6_K assets, conversion provenance, model-specific licences, byte sizes, full-file SHA-256 values, and `models-v2` host metadata. The public release assets match those bytes and each exact blob passed the Windows `transcribe-cpp` load/transcription gate. |
+| B2 | **Model manager UI** — downloaded vs available, search, language filter, per-model Active/Delete, progress with speed + cancel | **partial** | The Models pane now has `Bard models`, `On this computer`, and `Advanced model import`, with explicit download/use/remove, cache check/use/forget, import, progress, speed/ETA when available, cancel, and retry paths. There is no guaranteed model search or language filter; visual and round-trip verification remain pending. |
+| B3 | **HF repo paste + one-click install** | **verify** | `owner/repository`, Hugging Face repository URLs, and main-branch resolve URLs are normalized; listing supplies LFS SHA-256, downloads resume and hash the complete file, and installation probes the engine before explicit activation. A live listing check passed; a full HF download/install/use round trip remains to be recorded. Arbitrary non-Hugging-Face direct URLs are rejected. |
+| B4 | **Discover models already on the machine** | **verify** | The shared HF cache scan follows snapshot links, checks the exact file with the engine, and supports explicit Use; Forget unregisters an external file without deleting it. No live cache discovery and Use round trip has been recorded. |
+| B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, qwen3, voxtral, granite…) | **partial** | `transcribe-cpp` is the sole engine, and the final catalogue now includes `parakeet` and `qwen3_asr` alongside `whisper`, all as single GGUF files. The three selected defaults passed exact-blob Windows load/transcription; the broader Handy architecture catalogue is not present. |
 | B6 | **Transcription history** + retention period + limit | **missing** | Handy: `managers/history.rs`, history settings pane |
-| B7 | **Post-processing via LLM** — provider, base URL, API key, model, prompt library | **missing** | Handy: `llm_client.rs` + post-processing settings. bard removed its Ask layer |
+| B7 | **Post-processing via LLM** — provider, base URL, API key, model, prompt library | **partial** | The fixed OpenRouter text-only service, keyring v1 Windows Credential Manager storage, separate Post-processing pane, first explicit model ID, non-streaming request, no-fallback provider routing, response identity checks, and local fallback are implemented. A disposable Windows Credential Manager round-trip passed; a live credential/request and UI round-trip remain pending. There is no user-editable endpoint or prompt library. |
 | B8 | **VAD** — enable, backend selector (earshot/silero), smoothing | **partial** | `dictation/vad.rs` exists; no settings |
 | B9 | **Paste method / clipboard handling / paste delay / reliable paste** | **partial** | `paste.rs` is 47 LOC; Handy has per-OS `paste_tx/` + 5 settings |
 | B10 | **Auto-submit** (+ key) | **missing** | |
@@ -137,11 +142,11 @@ Neither reference does this; it is the reason bard is one app and not two.
 | D1 | **Design system** — tokens, type scale, spacing, motion, both themes | **done** | `src/styles/tokens.css`: type, space, shape, motion, four themes on two axes, reduced-motion. A legacy-alias block at the end shrinks to nothing as components migrate |
 | D2 | **Motion and depth** — panel in/out, card insert, state changes; measured, never bouncy | **partial** | Tokens and per-control transitions are in. The panel's own show/hide and list reordering still need a pass. **The panel also has no drop shadow**, and cannot simply be given one: a window-frame shadow makes save/restore of the window size non-idempotent and the panel grows every launch. A real shadow has to be drawn by the web layer into a transparent margin *inside* the window, which means the app no longer fills its own window — a deliberate change to layout, positioning and the resize handles |
 | D3 | **Startup** — cold boot time, no flash, no crash | **partial** | Guardian self-heals a ~1-in-15 WebView2 startup crash. **A guardian is a patch, not a fix — find the root cause.** It also has a side effect nobody chose: because it relaunches any death inside 20s that left no clean-exit marker, **End Task in Task Manager resurrects the app.** An app that will not stay killed is user-hostile; whatever replaces the guardian must not do this |
-| D4 | **Dictation engine** | **resolved** | One engine: `transcribe-cpp`, which loads every architecture in the catalogue as a single GGUF — whisper, parakeet, moonshine, canary, sensevoice, gigaam, qwen3, voxtral. No ONNX runtime is linked; see B5 and E0 for why the second engine was removed. Acceleration (`dynamic-backends`, `vulkan` on Windows x86_64) is a feature flag away and gated on B18's from-source build |
-| D10 | **Settings has its own window** | **done** | 760x620, native chrome, sidebar: General / Capture / Dictation / Models / Shortcuts / Data / About. `src/settings/ui.tsx` carries the primitives — Pane, Group, Row, Toggle, Segmented, Select, Button, TextField, Note, Progress — so a new setting is a line of markup rather than a design decision taken again. The old sheet is deleted |
+| D4 | **Dictation engine** | **resolved** | One engine: `transcribe-cpp`, which loads the shipped `whisper`, `parakeet`, and `qwen3_asr` catalogue entries as single GGUF files. No ONNX runtime is linked; see B5 and E0 for why the second engine was removed. Acceleration (`dynamic-backends`, `vulkan` on Windows x86_64) is a feature flag away and gated on B18's from-source build |
+| D10 | **Settings has its own window** | **done** | 760x620, native chrome, sidebar: General / Capture / Dictation / Models / Post-processing / Shortcuts / Data / About. `src/settings/ui.tsx` carries the primitives — Pane, Group, Row, Toggle, Segmented, Select, Button, TextField, Note, Progress — so a new setting is a line of markup rather than a design decision taken again. The old sheet is deleted |
 | D9 | **Generate `types.ts` instead of hand-mirroring it** | **missing** | Today a Rust struct change breaks the frontend with no compile error. Handy generates bindings with `specta` + `tauri-specta`. Worth adopting before the surface triples |
 | D5 | **Real-audio verification** — the mic has never been exercised | **missing** | |
-| D6 | **Visual QA of every surface** | **in progress** | Verified: panel (light, dark, glass), overflow menu, empty state, composer menu, the drawing window and its round trip, and the settings window's General, Models and Shortcuts panes. Still unseen: onboarding, the dictation overlay, the section switcher, the context menu, and the Capture / Dictation / Data / About panes |
+| D6 | **Visual QA of every surface** | **in progress** | Earlier visual passes verified the panel (light and dark), overflow menu, empty state, composer menu, the drawing window and its round trip, and the settings window's General, Models, and Shortcuts panes. The final packaged-binary pass rechecked General, Models, and Post-processing in dark mode at native size; the panel also rendered correctly. Onboarding, the dictation overlay, the section switcher, the context menu, and the Capture / Dictation / Data / About panes remain unseen or need rechecking. |
 | D7 | **Accessibility** — keyboard reachability, focus rings, contrast, screen reader | **missing** | |
 | D8 | **Empty / error / loading states everywhere** | **missing** | |
 
@@ -150,8 +155,8 @@ Neither reference does this; it is the reason bard is one app and not two.
 | # | Item | Status |
 | --- | --- | --- |
 | E0 | **ONNX Runtime must not be pyke's prebuilt** | **resolved by removal** | `transcribe-rs` is gone, and `ort` with it, so nothing downloads pyke's prebuilt ONNX Runtime any more. The hazard was real — that build runs AVX in a static initialiser and crashes at startup on pre-Haswell CPUs — but it only ever existed because the dependency was added on a wrong premise (B5). **If an ONNX engine is ever genuinely needed, this row comes back**, and the fix is a baseline runtime via `ORT_LIB_LOCATION` |
-| E8 | **Host our own models** | **done for whisper; conversion pipeline outstanding** | Every catalog URL now points at `ggerganov/whisper.cpp` on Hugging Face, **pinned to commit `5359861c`**, with each file's own sha256. Two of the three files were byte-identical to what the old mirror served — same size, same hash — so that mirror was only re-hosting upstream; the third was a mirror-specific Q4_1 and is now upstream's Q5_0. Nothing bard ships depends on another project's infrastructure. **Remaining:** non-whisper families need a GGUF conversion upstream does not publish, so expanding the catalog means building a conversion pipeline and hosting the output under bard's own org — real work, and it gates catalog breadth rather than shipping |
-| E9 | **A release panic is a silent death** | **open** | `panic = "abort"` means any panic exits with no window, no message and no log — exit code `0xC0000409` and nothing else. Release symbols are stripped too, so `RUST_BACKTRACE=full` yields one line and no frames. A customer's crash report would be useless. Needs a panic hook that writes a log before dying, and a decision about shipping symbols |
+| E8 | **Host our own models** | **done** | The catalogue points all three final defaults at the immutable `miisodev/bard-models` release `models-v2`, with exact asset URLs, conversion provenance, model-specific notices, byte sizes, and SHA-256 values. The public release assets match the staged hashes, support `Range` requests, and each exact file passed a Windows `transcribe-cpp` load/transcription smoke test. |
+| E9 | **A release panic is a silent death** | **partial** | A local panic hook is installed before Tauri startup, writes bounded timestamped crash logs, preserves the previous hook, and exposes a latest-log reader; the Data pane can load the newest report. A release-profile probe confirmed the hook writes before abort and captures a backtrace. Native/WebView2 process failures and the operator artifact-retention/field workflow remain unverified. |
 | E1 | Licensing — $30 one-time key issue + offline validation | **missing** |
 | E2 | Code signing (SmartScreen) | **missing** |
 | E3 | Auto-update channel + signed releases | **missing** |
@@ -467,3 +472,44 @@ E8 is narrower and honest: **non-whisper families need a GGUF conversion that
 upstream does not publish.** Handy converts them; we will not take theirs. That
 means a conversion pipeline and our own org — real work, and it gates how wide
 the catalog can get rather than whether bard can ship.
+
+**2026-09-23 — final model roles, ownership-safe acquisition, and optional text post-processing.**
+
+The model-manager implementation replaces the superseded Whisper-only plan with
+three explicit roles: `whisper-small-Q6_K.gguf` for **Fast multilingual**,
+`parakeet-tdt-0.6b-v2-Q6_K.gguf` for **Best English**, and
+`Qwen3-ASR-1.7B-Q6_K.gguf` for **Best multilingual**. The embedded catalogue
+records the exact Handy conversion revisions, byte sizes, full-file SHA-256
+values, model-specific licences, and the immutable first-party
+`miisodev/bard-models` release `models-v2` assets. `transcribe-cpp` is the only
+engine. Installation does not activate a model: activation loads the exact file
+and writes `model_id` only after verification. Downloads resume and hash the
+complete file; Bard-managed deletion is ownership- and path-contained; external
+Hugging Face cache files are never deleted.
+
+The Models surface is now specified around **Bard models**, **On this
+computer**, and **Advanced model import**, with a separate **Post-processing**
+pane. OpenRouter uses the fixed official HTTPS endpoint, keyring v1 Windows
+Credential Manager, one explicit first model ID (the stored setting may be a
+comma-separated list), a non-streaming text-only request, and the untouched
+local transcript as fallback. There is no user-editable endpoint, prompt
+library, arbitrary non-HF direct URL, or guaranteed model search/filter.
+
+**Verification still open:** exercise live HF/cache install/use and
+ownership-safe deletion paths; run a live OpenRouter request round trip with a
+real, disposable credential; and verify E9's native-crash/artifact-retention
+workflow in a packaged build. E8 and B1 are verified; B3/B4/B7 remain
+implemented but not fully release-verified.
+The historical entries above remain part of the ledger and describe earlier
+checkpoints rather than the current host decision.
+
+**2026-09-23 — final verification pass.** `bun run build`, strict CSS audit,
+`impeccable detect`, `cargo check --locked`, `cargo clippy --locked -- -D
+warnings`, and all 35 Rust tests pass. The live Hugging Face listing check, the
+Windows Credential Manager round-trip, the exact Q6_K load/transcription gate,
+the public `models-v2` hash/range checks, and a release-profile crash-hook probe
+also pass. The final package pass emits both MSI and NSIS installers and keeps
+`target/release/bard.pdb` beside the release binary for symbolication. A real
+OpenRouter request and native/WebView2 crash collection remain explicit
+follow-up evidence because they require a user credential or a customer failure
+environment.

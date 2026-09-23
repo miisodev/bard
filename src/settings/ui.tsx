@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { InputHTMLAttributes, ReactNode } from "react";
 
 /*
   Settings primitives.
@@ -63,10 +63,11 @@ export function Row({ label, hint, children, stacked }: {
   );
 }
 
-export function Toggle({ checked, onChange, label }: {
+export function Toggle({ checked, onChange, label, disabled = false }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -75,6 +76,7 @@ export function Toggle({ checked, onChange, label }: {
       aria-checked={checked}
       aria-label={label}
       className={`toggle${checked ? " on" : ""}`}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
     >
       <span className="knob" />
@@ -106,11 +108,12 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
   );
 }
 
-export function Select({ value, options, onChange, label }: {
+export function Select({ value, options, onChange, label, disabled = false }: {
   value: string;
   options: { value: string; label: string }[];
   onChange: (next: string) => void;
   label: string;
+  disabled?: boolean;
 }) {
   return (
     <div className="select-wrap">
@@ -118,6 +121,7 @@ export function Select({ value, options, onChange, label }: {
         className="select"
         aria-label={label}
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
       >
         {options.map((o) => (
@@ -132,12 +136,14 @@ export function Select({ value, options, onChange, label }: {
   );
 }
 
-export function Button({ children, onClick, variant = "default", disabled, title }: {
+export function Button({ children, onClick, variant = "default", disabled, title, ariaLabel, ariaBusy }: {
   children: ReactNode;
   onClick: () => void;
   variant?: "default" | "primary" | "danger";
   disabled?: boolean;
   title?: string;
+  ariaLabel?: string;
+  ariaBusy?: boolean;
 }) {
   return (
     <button
@@ -146,73 +152,149 @@ export function Button({ children, onClick, variant = "default", disabled, title
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={ariaLabel}
+      aria-busy={ariaBusy || undefined}
     >
       {children}
     </button>
   );
 }
 
-export function TextField({ value, onChange, placeholder, onEnter, label }: {
+type TextFieldProps = Pick<
+  InputHTMLAttributes<HTMLInputElement>,
+  "id" | "type" | "autoComplete" | "spellCheck" | "inputMode" | "disabled"
+> & {
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
   onEnter?: () => void;
   label: string;
-}) {
-  return (
+  showLabel?: boolean;
+};
+
+export function TextField({
+  value,
+  onChange,
+  placeholder,
+  onEnter,
+  label,
+  id,
+  type = "text",
+  autoComplete,
+  spellCheck,
+  inputMode,
+  disabled,
+  showLabel = false,
+}: TextFieldProps) {
+  const input = (
     <input
+      id={id}
       className="field"
       aria-label={label}
       value={value}
+      type={type}
+      autoComplete={autoComplete}
+      spellCheck={spellCheck}
+      inputMode={inputMode}
+      disabled={disabled}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && onEnter) onEnter();
+        if (e.key === "Enter" && onEnter && !disabled) onEnter();
       }}
     />
+  );
+  return showLabel ? (
+    <label className="field-control" htmlFor={id}>
+      <span className="field-label">{label}</span>
+      {input}
+    </label>
+  ) : (
+    input
   );
 }
 
 /** A short explanatory line under a group — never a caveat the UI should have solved. */
 export function Note({ children, tone = "muted" }: {
   children: ReactNode;
-  tone?: "muted" | "danger";
+  tone?: "muted" | "danger" | "success";
 }) {
-  return <p className={`note${tone === "danger" ? " danger" : ""}`}>{children}</p>;
+  return (
+    <p
+      className={`note${tone === "muted" ? "" : ` ${tone}`}`}
+      role={tone === "danger" ? "alert" : undefined}
+    >
+      {children}
+    </p>
+  );
 }
 
-export function Progress({ percent }: { percent: number }) {
+export function Progress({ percent, label, valueText }: {
+  percent: number;
+  label?: string;
+  valueText?: string;
+}) {
+  const bounded = Math.max(0, Math.min(100, percent));
   return (
-    <div className="progress" role="progressbar" aria-valuenow={Math.round(percent)}
-         aria-valuemin={0} aria-valuemax={100}>
-      <div className="fill" style={{ width: `${Math.max(0, Math.min(100, percent))}%` }} />
+    <div
+      className="progress"
+      role="progressbar"
+      aria-label={label}
+      aria-valuenow={Math.round(bounded)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuetext={valueText}
+    >
+      <div className="fill" style={{ width: `${bounded}%` }} />
     </div>
   );
 }
 
+function qualitativeMeterValue(value: number): string {
+  if (value < 25) return "Low";
+  if (value < 50) return "Moderate";
+  if (value < 75) return "High";
+  return "Very high";
+}
+
 /**
- * A coarse 0-100 reading, shown as a bar rather than a number because the
- * number would imply a precision these scores do not have. They rank the
- * catalog against itself; they are not a benchmark.
+ * A coarse relative reading, shown as a bar rather than a number because the
+ * number would imply a precision these scores do not have. They rank Bard's
+ * own choices against one another; they are not benchmark results.
  */
 export function Meter({ label, value }: { label: string; value: number }) {
+  const bounded = Math.max(0, Math.min(100, value));
+  const qualitative = qualitativeMeterValue(bounded);
   return (
     <div className="meter">
       <span className="meter-label">{label}</span>
-      <span className="meter-track" role="img" aria-label={`${label}: ${value} out of 100`}>
-        <span className="meter-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      <span
+        className="meter-track"
+        role="img"
+        aria-label={`Relative ${label.toLowerCase()}: ${qualitative}`}
+        title={`Relative ${label.toLowerCase()}: ${qualitative}`}
+      >
+        <span className="meter-fill" style={{ width: `${bounded}%` }} />
       </span>
     </div>
   );
 }
 
 /** Reads as a capability rather than a label: "English only", "Streaming". */
-export function Tag({ children }: { children: ReactNode }) {
-  return <span className="tag">{children}</span>;
+export function Tag({ children, tone = "default", title }: {
+  children: ReactNode;
+  tone?: "default" | "accent" | "success" | "danger" | "muted";
+  title?: string;
+}) {
+  return (
+    <span className={`tag${tone === "default" ? "" : ` ${tone}`}`} title={title}>
+      {children}
+    </span>
+  );
 }
 
 export function formatBytes(bytes: number): string {
-  if (bytes <= 0) return "—";
+  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
   const gb = bytes / 1024 ** 3;
   if (gb >= 1) return `${Math.round(gb * 10) / 10} GB`;
   return `${Math.round(bytes / 1024 ** 2)} MB`;

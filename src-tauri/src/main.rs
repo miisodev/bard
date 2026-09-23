@@ -2,7 +2,9 @@
 
 mod capture;
 mod catalog;
+mod cloud;
 mod commands;
+mod crash;
 mod db;
 mod dictation;
 mod guardian;
@@ -25,6 +27,15 @@ const AUTOSTART_FLAG: &str = "--autostart";
 /// Tauri resolves the app data directory from the bundle identifier, and this
 /// has to match it exactly: `%APPDATA%\<identifier>`. Opening the database
 /// here rather than in setup() is what makes every later read safe.
+fn diagnostics_dir() -> std::path::PathBuf {
+    let base = std::env::var("LOCALAPPDATA")
+        .or_else(|_| std::env::var("APPDATA"))
+        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
+    std::path::Path::new(&base)
+        .join("com.miisodev.bard")
+        .join("logs")
+}
+
 fn open_database() -> Option<rusqlite::Connection> {
     let base = std::env::var("APPDATA").ok()?;
     let dir = std::path::Path::new(&base).join("com.miisodev.bard");
@@ -33,13 +44,14 @@ fn open_database() -> Option<rusqlite::Connection> {
 }
 
 fn main() {
+    crash::install(&diagnostics_dir());
     let args = std::env::args().collect::<Vec<_>>();
     if args.iter().any(|a| a == "--guardian") {
         guardian::run();
         return;
     }
     if !args.iter().any(|a| a == "--restarted") && std::env::var("BARD_NO_GUARDIAN").is_err() {
-        if let Some(exe) = args.get(0) {
+        if let Some(exe) = args.first() {
             if exe.contains(':') || exe.contains('\\') || exe.contains('/') {
                 guardian::spawn(exe);
             }
@@ -213,11 +225,19 @@ fn main() {
             commands::get_microphones,
             commands::set_microphone,
             commands::hf_cached_models,
+            commands::get_detected_models,
+            commands::check_model,
+            commands::activate_detected_model,
+            commands::forget_detected_model,
             commands::hf_list_repo,
             commands::hf_install,
             commands::hf_use_cached,
             commands::remove_custom_model,
             commands::get_custom_models,
+            commands::get_postprocessing,
+            commands::save_postprocessing,
+            commands::test_postprocessing,
+            commands::get_crash_report,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run bard");

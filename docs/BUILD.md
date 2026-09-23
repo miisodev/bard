@@ -86,4 +86,40 @@ and carry a checksum.
 **Acceleration is off by default.** `transcribe-cpp` reaches a Vulkan GPU
 backend and per-ISA CPU dispatch through non-default features, and those make
 `transcribe-cpp-sys` build ggml from source — which is what needs CMake on
-PATH and the short symlink above.
+PATH and the short symlink above. If an older checkout left a broken
+`target/release/DirectML.dll` reparse point from the removed ONNX path, remove
+that generated link before packaging; WiX will otherwise fail while binding the
+stale DLL.
+
+## First-party model release gate
+
+The three catalogue assets live in the immutable
+[`miisodev/bard-models`](https://github.com/miisodev/bard-models) `models-v2`
+release. Before changing a catalogue URL, size, or checksum, stage the exact
+bytes and run the engine smoke test:
+
+```powershell
+$env:BARD_SMOKE_MODELS = (Get-ChildItem $modelDir -Filter '*.gguf' | ForEach-Object FullName) -join ';'
+cargo test --manifest-path src-tauri/Cargo.toml smoke_test_exact_models_when_requested -- --nocapture
+Remove-Item Env:BARD_SMOKE_MODELS
+```
+
+The test is a no-op unless `BARD_SMOKE_MODELS` is set. A release is not
+accepted until all three exact blobs load through the current
+`transcribe-cpp` path, their SHA-256 values match the host manifest, and the
+release assets are anonymously reachable with resume support. The host
+repository's `NOTICE.md` carries the Apache-2.0 and CC-BY-4.0 obligations for
+the rehosted conversions.
+
+The release profile keeps line tables/symbols (`debug = 1`, `strip = "debuginfo"`)
+so the panic hook's backtrace can be symbolized when the matching
+`src-tauri/target/release/bard.pdb` is retained with the release artifact. The hook itself writes bounded crash
+reports under `%LOCALAPPDATA%\\com.miisodev.bard\\logs` before `panic = "abort"`
+terminates the process; the Data pane exposes the latest report.
+
+## Optional post-processing credentials
+
+OpenRouter keys are stored through `keyring`'s Windows Credential Manager
+backend. They are never written to SQLite, `AppState`, events, logs, or crash
+reports. The Post-processing pane must be tested with a disposable key; the
+metadata-only **Test connection** action does not send dictated text.

@@ -22,21 +22,50 @@ const CATALOG_JSON: &str = include_str!("catalog.json");
 pub enum Architecture {
     /// GGUF / ggml, a single file, loaded by transcribe-cpp.
     Whisper,
-    /// The ONNX families, each a *directory* of files, loaded by transcribe-rs.
+    /// GGUF family handlers exposed by transcribe-cpp.
     Parakeet,
     Moonshine,
     Canary,
     SenseVoice,
     GigaAm,
     Cohere,
+    #[serde(rename = "qwen3_asr")]
+    Qwen3Asr,
 }
 
 impl Architecture {
-    /// Whisper-family models are one file; every ONNX family is a directory.
-    /// Acquisition, storage and loading all branch on this.
+    /// Every architecture currently shipped through transcribe-cpp is one GGUF
+    /// file. This remains explicit so acquisition/storage can reject a future
+    /// directory-shaped entry instead of silently treating it as a file.
     pub fn is_single_file(self) -> bool {
-        matches!(self, Architecture::Whisper)
+        matches!(
+            self,
+            Architecture::Whisper
+                | Architecture::Parakeet
+                | Architecture::Moonshine
+                | Architecture::Canary
+                | Architecture::SenseVoice
+                | Architecture::GigaAm
+                | Architecture::Cohere
+                | Architecture::Qwen3Asr
+        )
     }
+}
+
+/// The job a catalog model is recommended for. This is deliberately a small,
+/// stable vocabulary: a role is a product promise, not a benchmark class.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelRole {
+    /// A compact model that still handles genuinely multilingual dictation.
+    MultilingualFast,
+    /// The strongest English-focused choice in the catalog.
+    EnglishQuality,
+    /// The strongest multilingual choice in the catalog.
+    MultilingualQuality,
+    /// Valid fallback for older catalog data that predates explicit roles.
+    #[default]
+    General,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +87,42 @@ pub struct CatalogFile {
     pub quant: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct License {
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HostProvider {
+    GithubReleases,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HostStatus {
+    Active,
+    Planned,
+}
+
+/// Bard's intended distribution metadata is explicit and travels with the
+/// catalog row. It is separate from `file.url`: a model can remain downloadable
+/// from its canonical upstream while bard's first-party mirror is being staged.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FirstPartyHost {
+    pub provider: HostProvider,
+    /// GitHub `owner/repository`, without a URL or API prefix.
+    pub repository: String,
+    #[serde(default)]
+    pub release_tag: Option<String>,
+    pub asset: String,
+    pub url: String,
+    pub status: HostStatus,
+}
+
 /// Where a model came from, recorded so a catalog row can be traced back to
 /// an exact upstream commit rather than a URL that may have moved.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +130,16 @@ pub struct CatalogFile {
 pub struct Source {
     pub repo: String,
     pub revision: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub upstream_repo: Option<String>,
+    #[serde(default)]
+    pub upstream_revision: Option<String>,
+    #[serde(default)]
+    pub upstream_url: Option<String>,
+    #[serde(default)]
+    pub license: Option<License>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +148,8 @@ pub struct CatalogModel {
     pub id: String,
     pub name: String,
     pub description: String,
+    #[serde(default)]
+    pub role: ModelRole,
     pub architecture: Architecture,
     pub family: String,
     pub parameters: String,
@@ -81,6 +158,9 @@ pub struct CatalogModel {
     /// 0–100, relative to the other entries here rather than to a benchmark.
     pub accuracy: u32,
     pub speed: u32,
+    /// 0–100, relative value at the catalog's quality/size trade-off.
+    #[serde(default)]
+    pub value: u32,
     #[serde(default)]
     pub recommended: bool,
     #[serde(default)]
@@ -88,6 +168,8 @@ pub struct CatalogModel {
     pub file: CatalogFile,
     #[serde(default)]
     pub source: Option<Source>,
+    #[serde(default)]
+    pub host: Option<FirstPartyHost>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,4 +205,60 @@ pub fn ordered() -> Vec<&'static CatalogModel> {
         (false, _) => (1, 0),
     });
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn catalog_contract_is_complete() {
+        assert_eq!(models().len(), 3, "Bard ships exactly three curated defaults");
+        let mut ids = HashSet::new();
+        let mut roles = HashSet::new();
+        let mut filenames = HashSet::new();
+        for model in models() {
+            assert!(ids.insert(model.id.as_str()), "duplicate id {}", model.id);
+            assert!(
+                !model.role.eq(&ModelRole::General),
+                "{} has no role",
+                model.id
+            );
+            assert!(roles.insert(model.role), "duplicate role in catalog");
+            assert!(model.accuracy <= 100 && model.speed <= 100);
+            assert!(model.value <= 100);
+            assert!(model.architecture.is_single_file());
+            assert!(filenames.insert(model.file.filename.as_str()), "duplicate filename {}", model.file.filename);
+            assert!(model.file.size_bytes > 0, "{} has no byte size", model.id);
+            assert_eq!(model.file.sha256.len(), 64, "{} has no SHA-256", model.id);
+            assert!(model.file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            assert!(model.file.url.starts_with("https://"), "{} is not HTTPS", model.id);
+            assert!(model.file.quant.is_some(), "{} has no quant", model.id);
+            let source = model
+                .source
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} has no upstream source", model.id));
+            assert!(!source.repo.is_empty());
+            assert!(!source.revision.is_empty());
+            if source.upstream_repo.is_some() {
+                assert!(source.upstream_revision.is_some());
+                assert!(source.upstream_url.is_some());
+            }
+            assert!(
+                source.license.is_some(),
+                "{} has no model license",
+                model.id
+            );
+            let host = model
+                .host
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} has no first-party host", model.id));
+            assert_eq!(host.repository, "miisodev/bard-models");
+            assert_eq!(host.release_tag.as_deref(), Some("models-v2"));
+            assert_eq!(host.status, HostStatus::Active);
+            assert_eq!(host.asset, model.file.filename);
+            assert_eq!(host.url, model.file.url);
+        }
+    }
 }

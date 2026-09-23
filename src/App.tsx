@@ -1,5 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
+import { AlertCircle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "./store";
 import type { AppState, ModelProgress } from "./types";
 import Panel from "./components/Panel";
@@ -12,92 +13,162 @@ export interface DictationState {
   level: number;
 }
 
+function errorText(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  const text = String(error);
+  return text.replace(/^Error:\s*/i, "").trim() || "Bard could not load its local state.";
+}
+
 export default function App() {
   useTheme();
 
   const [state, setState] = useState<AppState | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [modelProgress, setModelProgress] = useState<ModelProgress | null>(null);
   const [dictation, setDictation] = useState<DictationState>({
     listening: false,
     transcribing: false,
     level: 0,
   });
-  const stateRef = { current: state };
 
   useEffect(() => {
-    const unlisteners: Promise<() => void>[] = [];
+    const pendingUnlisteners: Promise<() => void>[] = [];
     let alive = true;
+    let disposed = false;
 
     const refresh = () => {
-      if (alive) void api.getState().then(setState);
+      if (!alive) return;
+      void api
+        .getState()
+        .then((next) => {
+          if (!alive) return;
+          setState(next);
+          setLoadError(null);
+        })
+        .catch((error: unknown) => {
+          if (alive) setLoadError(errorText(error));
+        });
     };
 
-    void api.getState().then(setState);
-    unlisteners.push(listen("refresh", refresh));
-    unlisteners.push(
+    const subscribe = (subscription: Promise<() => void>) => {
+      pendingUnlisteners.push(
+        subscription.catch(() => () => {
+          // An unavailable optional event must not prevent the rest of the shell
+          // from loading. Commands remain the source of truth.
+        }),
+      );
+    };
+
+    refresh();
+    subscribe(listen("refresh", refresh));
+    subscribe(
       listen("captured", () => {
         window.dispatchEvent(new CustomEvent("bard-captured"));
-      })
+      }),
     );
-    unlisteners.push(
+    subscribe(
       listen("panel-shown", () => {
         refresh();
-      })
+      }),
     );
-    unlisteners.push(
-      listen("dictation-panel", (e) => {
+    subscribe(
+      listen("dictation-panel", (event) => {
         window.dispatchEvent(
           new CustomEvent("bard-toast", { detail: "Dictated — saved to clipboard" })
         );
-        void (e.payload as string);
-      })
+        void (event.payload as string);
+      }),
     );
-    unlisteners.push(
-      listen("dictation-error", (e) => {
-        const msg = e.payload as string;
-        window.dispatchEvent(new CustomEvent("bard-toast", { detail: msg }));
-      })
+    subscribe(
+      listen("dictation-error", (event) => {
+        const message = event.payload as string;
+        window.dispatchEvent(new CustomEvent("bard-toast", { detail: message }));
+      }),
     );
-    unlisteners.push(
-      listen("dictation-overlay", (e) => {
-        const s = e.payload as string;
-        setDictation((d) => ({
-          ...d,
-          listening: s === "listening",
-          transcribing: s === "transcribing",
+    subscribe(
+      listen("dictation-cloud-warning", (event) => {
+        const message = event.payload as string;
+        window.dispatchEvent(
+          new CustomEvent("bard-toast", { detail: `Cloud cleanup skipped — ${message}` }),
+        );
+      }),
+    );
+    subscribe(
+      listen("dictation-overlay", (event) => {
+        const status = event.payload as string;
+        setDictation((current) => ({
+          ...current,
+          listening: status === "listening",
+          transcribing: status === "transcribing" || status === "finishing",
         }));
-      })
+      }),
     );
-    unlisteners.push(
-      listen("mic-level", (e) => {
-        const [level] = e.payload as [number, number];
-        setDictation((d) => ({ ...d, level }));
-      })
+    subscribe(
+      listen("mic-level", (event) => {
+        const [level] = event.payload as [number, number];
+        setDictation((current) => ({ ...current, level }));
+      }),
     );
-    unlisteners.push(
-      listen("model-progress", (e) => {
-        setModelProgress(e.payload as ModelProgress);
-      })
+    subscribe(
+      listen("model-progress", (event) => {
+        setModelProgress(event.payload as ModelProgress);
+      }),
     );
-    unlisteners.push(
+    subscribe(
+      listen("model-download-failed", (event) => {
+        const payload = event.payload as { id?: string; error?: string };
+        setModelProgress({
+          id: payload.id ?? "unknown",
+          received: 0,
+          total: 0,
+          percent: 0,
+          phase: "Download failed",
+          error: payload.error ?? "The model download failed.",
+        });
+      }),
+    );
+    subscribe(
       listen("model-ready", () => {
         setModelProgress(null);
         refresh();
-      })
+      }),
     );
 
     return () => {
       alive = false;
-      for (const u of unlisteners) void u.then((fn) => fn());
+      disposed = true;
+      for (const pending of pendingUnlisteners) {
+        void pending.then((unlisten) => {
+          if (disposed) unlisten();
+        });
+      }
     };
   }, []);
 
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state?.theme]);
-
   if (!state) {
-    return <div className="app" />;
+    return (
+      <div className="app">
+        <div className="onboarding">
+          {loadError ? (
+            <>
+              <AlertCircle width={28} height={28} aria-hidden="true" />
+              <h1>Bard could not start</h1>
+              <p role="alert">{loadError}</p>
+              <button className="btn primary" onClick={() => window.location.reload()}>
+                <RotateCcw aria-hidden="true" />
+                Try again
+              </button>
+            </>
+          ) : (
+            <>
+              <LoaderCircle width={28} height={28} aria-hidden="true" />
+              <h1>Starting Bard</h1>
+              <p role="status">Loading your local workspace…</p>
+            </>
+          )}
+        </div>
+      </div>
+    );
   }
 
   if (!state.onboardingCompleted) {
@@ -106,9 +177,10 @@ export default function App() {
         <Onboarding
           state={state}
           modelProgress={modelProgress}
-          onDone={() => {
-            void api.setOnboardingCompleted(true);
-            void api.getState().then(setState);
+          onDone={async () => {
+            await api.setOnboardingCompleted(true);
+            const next = await api.getState();
+            setState(next);
           }}
         />
       </div>

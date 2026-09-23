@@ -18,7 +18,7 @@ pub fn marker_path() -> std::path::PathBuf {
 }
 
 pub fn mark_clean_exit() {
-    let _ = std::fs::write(&marker_path(), "1");
+    let _ = std::fs::write(marker_path(), "1");
 }
 
 pub fn spawn(exe: &str) {
@@ -28,7 +28,7 @@ pub fn spawn(exe: &str) {
 
 pub fn run() {
     let args = std::env::args().collect::<Vec<_>>();
-    let Some(exe) = args.get(0) else {
+    let Some(exe) = args.first() else {
         return;
     };
     let Some(pid) = args.get(2).and_then(|s| s.parse::<u32>().ok()) else {

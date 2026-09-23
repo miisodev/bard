@@ -851,8 +851,19 @@ body {
   font-size: 10px;
   line-height: 1;
   cursor: pointer;
+  padding: 0;
   display: grid;
   place-items: center;
+}
+
+.overlay-x svg {
+  width: 12px;
+  height: 12px;
+}
+
+.overlay-x:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .overlay-x:hover {

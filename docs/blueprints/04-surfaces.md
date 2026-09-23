@@ -131,9 +131,9 @@ with a progress meter · ready · failed, with a retry.
 - Step 3 option: `Start Bard at login` / `Runs quietly in the tray`
 
 **Fails when.** *The model download fails.* Onboarding completes anyway. A
-person who cannot reach Hugging Face on first run still has a working capture
-and clipboard product, and dictation reports its own missing model when it is
-first used. Blocking here would make a network failure look like a broken
+person who cannot reach Bard's model host on first run still has a working
+capture and clipboard product, and dictation reports its own missing model when
+it is first used. Blocking here would make a network failure look like a broken
 purchase.
 
 **Leaves to.** The panel, with onboarding recorded as completed.
@@ -142,15 +142,16 @@ purchase.
 
 ## §3 Settings
 
-**Purpose.** Every preference bard has, one window, seven panes.
+**Purpose.** Every preference bard has, one window, eight panes.
 
 **Entered from.** The panel's overflow menu. The window is created at startup
 and hidden; opening it shows and focuses it.
 
-**Zones.** A native window (`Technology §2`): a sidebar of seven items on the
-left, the active pane on the right. Each pane is a title, a one-line description, then
-groups. A group is one card with hairlines between its rows; explanatory notes
-sit above the card.
+**Zones.** A native window (`Technology §2`): a sidebar of eight items on the
+left, the active pane on the right. The sidebar order is `General` · `Capture` ·
+`Dictation` · `Models` · `Post-processing` · `Shortcuts` · `Data` · `About`.
+Each pane is a title, a one-line description, then groups. A group is one card
+with hairlines between its rows; explanatory notes sit above the card.
 
 ### 3.1 General
 
@@ -169,27 +170,83 @@ Hint: `System follows your Windows appearance setting.`
 
 ### 3.3 Dictation
 
-`Dictation` · `Speech to text, entirely on this machine.`
+`Dictation` · `Speech to text on this machine, with optional post-processing.`
 
 **Input** → Microphone, a select. Hint: `The system default is used unless you
-pick one.` A note states that audio never leaves the machine.
+pick one.` The pane states that audio and local transcription stay on the
+device; if Post-processing is enabled, only the already-produced transcript
+text is sent to OpenRouter after local transcription.
 
 ### 3.4 Models
 
-`Models` · `Transcription runs offline. Pick the model it runs.`
+`Models` · `Choose what Bard uses for local transcription.`
 
-Three groups, in the order a person tries them:
+The pane has three named groups, in the order a person encounters them:
 
-1. **Transcription models** — the curated catalogue. Each row: name,
-   description, size, an accuracy meter and a speed meter, and one action —
-   Download, Use, or In use.
-2. **Already on this machine** — models found in the shared Hugging Face cache.
-   Same row shape, **no meters**, and the action is always Use.
-3. **From Hugging Face** — a repository field and a listing of the
-   transcription files it contains, each installable.
+1. **Bard models** — the three first-party catalogue roles: **Fast multilingual**
+   (`whisper-small-Q6_K.gguf`), **Best English**
+   (`parakeet-tdt-0.6b-v2-Q6_K.gguf`), and **Best multilingual**
+   (`Qwen3-ASR-1.7B-Q6_K.gguf`). Each row shows the display name, role,
+   description, hosted state, source repository, exact size, language count,
+   parameter count, Q6_K quantization, relative `Quality` and `Speed` meters,
+   and its current installation state. The catalogue record behind the row
+   carries the exact conversion repository and revision, model-specific
+   licence, byte size, SHA-256, and `miisodev/bard-models` release `models-v2`
+   asset; those values are pinned, not user-editable.
+2. **On this computer** — compatible files discovered in the shared Hugging
+   Face cache. Each row shows the repository, file, size, source revision when
+   available, and the engine compatibility result. A compatible external file
+   can be checked and then used; **Forget** removes Bard's reference only and
+   never deletes the external file.
+3. **Advanced model import** — a **Hugging Face repository or resolve URL**
+   field with placeholder `owner/repository or huggingface.co/owner/repository/resolve/main/model.gguf`,
+   a **Check repository** action, and the compatible files found in the
+   repository. The accepted inputs are an `owner/repository` identifier, a
+   Hugging Face repository URL, or a direct Hugging Face `resolve/main/<file>`
+   URL. A listed file offers **Install & use** through its compatibility gate;
+   an arbitrary non-Hugging-Face URL is not an import source.
 
-**Meters appear only on catalogue entries.** A discovered or pasted model has
-no scores, and empty bars would claim it had been measured and found wanting.
+**First-party actions are explicit.** An absent file offers **Download & use**
+and **Download only**. An installed inactive file offers **Use** and **Remove**.
+An active file remains visibly active, and the native deletion boundary refuses
+to remove it until another verified model is active. Download and install
+complete full-file checksum and engine-load checks before activation can write
+`model_id`. Removing a Bard-managed row opens the inline confirmation
+`Remove <model> from Bard?` with `Cancel` and `Remove`.
+
+**Local-file actions are explicit.** A discovered file can be **Check again**;
+a compatible file can be **Use**; an external row can be **Forget**. If a
+managed copy is represented in the local inventory, its action is **Remove**
+and the same ownership boundary applies. An external cache file has no
+destructive delete action. The native model manager owns path containment for
+Bard-managed files and treats the shared cache as read-only external state.
+
+**Advanced-import actions are explicit.** A listed file is initially marked
+**Verify on install** when the repository listing has not yet proved engine
+compatibility; **Install & use** is allowed, and the exact file is probed during
+installation. A file that has passed the probe is labelled **Compatible**; an
+unsupported file is labelled **Not supported**. A running transfer shows
+received bytes, total bytes, percent, transfer speed and ETA when available,
+**Cancel**, and **Retry** on failure. The import registers a Bard-owned file
+only after the complete file passes its SHA-256 and the current
+`transcribe-cpp` engine loads it.
+
+**Meters appear only on Bard models.** Quality and speed are coarse relative
+guidance within those three roles. A discovered or imported model has no
+measured scores, so its row shows no bars and makes no cross-model quality
+claim. The model pane has no guaranteed search or language-filter control;
+discovery is list-based.
+
+**Fails when.**
+
+- *The model link cannot be inspected.* The repository row reports the input
+  error and no file is enabled for installation.
+- *No compatible file is found.* The advanced-import area reports that no
+  compatible model files were found.
+- *A Bard asset or import fails download, checksum verification, or engine
+  loading.* The file is not activated, the error is shown in its row, and a
+  Bard-managed transfer offers **Retry**. Bard never offers to delete an
+  external cache file.
 
 ### 3.5 Shortcuts
 
@@ -206,34 +263,88 @@ every binding back: `Puts every binding back to its default.`
 
 **Export** → the export folder, and `Export to Markdown`, hinted
 `Writes bard-export.md to the folder above.`
+
+**Diagnostics** → `Latest crash report`, with the hint `Crash evidence is
+written locally before Bard exits. This never includes audio, captures, or API
+keys.` **Load report** reads the newest local report. With no report, the pane
+shows `No crash report has been recorded on this machine.`; a read or decode
+failure shows its error without blocking the rest of Data.
+
 **Danger** → `Clear history`, hinted `Removes every captured item. This cannot
-be undone.`, behind a confirmation.
+be undone.`, with a `Clear` action.
 
 ### 3.7 About
 
 `About` · the product name and the line `Capture. Dictate. Keep.`, the version,
-and a **Privacy** group stating that nothing captured or spoken leaves the
-machine.
+and a **Privacy** group.
+
+- `Local by default` — `Audio capture, speech recognition, captures, and history stay on this computer. Bard has no account, sync, or telemetry.`
+- `Optional cloud post-processing` — `If you explicitly enable Post-processing, Bard sends only the finished transcript text to OpenRouter. Audio, captures, history, and unrelated items are not sent. Bard falls back to the untouched local transcript whenever cloud processing is off or fails.`
 
 **There is no credits list and no third-party licence roll.** bard ships no
 code from either reference product, and a paid product does not open its About
 pane with other people's names. The obligations it does carry are stated in
 `Product & Business §8`.
 
-**States.** Each pane reads its values from the store on open. A pane whose
-values have not loaded renders its controls disabled rather than at a default
-that would be written back on the first interaction.
+### 3.8 Post-processing
+
+`Post-processing` · `Optional text cleanup after local transcription. Off by
+default.`
+
+The privacy note reads: `Audio and local transcription always stay on this
+machine. When cloud post-processing is enabled, only the already-produced
+transcript text is sent to OpenRouter.` A lower note adds: `Bard has no
+account, sync, or telemetry.`
+
+**OpenRouter** contains one off-by-default `Cloud post-processing` toggle, an
+`OpenRouter API key` masked field, and one `OpenRouter model IDs` field. The
+model field uses provider-prefixed IDs separated by commas, for example
+`vendor/model`; the values are preserved exactly. Bard uses only the first ID
+for a request and never selects a fallback automatically. There is no endpoint
+field, provider selector, or prompt library. The API is always Bard's fixed
+official HTTPS OpenRouter endpoint.
+
+The key field sends a replacement only through an explicit save action. The
+native service stores it through keyring v1 in Windows Credential Manager and
+returns only whether a key is configured; the key is not returned in
+application state or events. The stored model-ID setting preserves the
+comma-separated list, while the first ID remains the only one sent.
+
+The actions are **Save**, **Test connection**, and **Clear key**. **Test
+connection** validates the stored key and model through OpenRouter metadata;
+it sends no transcript. **Clear key** turns the stage off and removes the
+credential through the native keyring boundary. The pane's status text reports
+save, test, and failure outcomes without exposing a key or provider response
+body.
+
+**States.** Off · saving or testing · on · failed. The local transcript is
+always the fallback for the next explicitly started dictation when the stage is
+off, unconfigured, or unavailable.
 
 **Fails when.**
+
+- *The model ID is missing while enabling the stage.* `Enter the exact
+  OpenRouter model ID before enabling post-processing.`
+- *The API key is missing while enabling the stage.* `Add an OpenRouter API key
+  before enabling post-processing.`
+- *The key cannot be saved or cleared.* The existing credential is retained and
+  the pane reports the credential-store failure without exposing the secret.
+- *OpenRouter rejects the key, model, quota, or request.* Bard shows a safe
+  warning and pastes the preserved local transcript unchanged.
+- *The cloud response is rate-limited, malformed, empty, truncated, or
+  policy-blocked.* Bard never pastes a partial cloud result; it uses the
+  untouched local transcript.
+
+**Settings-wide states.** Each pane reads its values from the store on open. A
+pane whose values have not loaded renders its controls disabled rather than at a
+default that would be written back on the first interaction.
+
+**Settings-wide failures.**
 
 - *A shortcut the person records is already held by another application.*
   Registration fails, the row says so, and the previous binding stays in force.
   A binding that is stored but not registered is the worst outcome, because
   settings then disagrees with the machine.
-- *A model download is interrupted.* The partial file is not registered.
-  Resuming uses a range request; a checksum mismatch discards and re-fetches.
-- *A repository has no transcription files.* `No transcription models (.gguf or
-  ggml-*.bin) in this repository.`
 - *The export folder is gone.* Export fails with `Export failed` in the panel's
   toast rather than creating a folder the person did not ask for.
 
@@ -282,19 +393,28 @@ itself.
 |---|---|
 | Listening | `Listening…`, bars tracking the microphone |
 | Transcribing | `Transcribing…`, bars frozen |
+| Post-processing | `Finishing…`, bars frozen after local transcription has completed |
+| Local fallback | The cloud warning is reported outside the overlay; the preserved local transcript is pasted |
 | Hidden | Nothing. The window stays alive and empty between dictations |
 
-**Copy.** `Listening…` · `Transcribing…` · the `✕` is labelled `Cancel`.
+**Copy.** `Listening…` · `Transcribing…` · `Finishing…` · the `✕` is labelled
+`Cancel`.
 
 **Fails when.**
 
 - *No microphone.* `No microphone found.` and the overlay never appears.
 - *No model installed.* `Voice model not downloaded yet. Open Settings to
   install it.`
+- *The active model file disappears after the initial check.* `Voice model not
+  downloaded.` Bard reports the failure and does not substitute a different
+  model without the owner's choice.
 - *Nothing audible.* `Nothing heard.` The overlay closes and nothing is pasted.
   Pasting an empty transcript into a person's document is the failure this
   avoids.
 - *Transcription fails.* The engine's own message, shown once.
+- *Cloud post-processing fails or returns unusable text.* Bard emits a safe
+  warning after local transcription, uses the preserved local transcript, and
+  never pastes a partial cloud result.
 
 **Leaves to.** Itself hidden, and the transcript to its destination — see
 `Input & Commands §4`.
@@ -323,26 +443,4 @@ placeholder updated.
 
 ---
 
-## §7 The ask result
-
-**Purpose.** Show the answer to a prompt typed into the composer, attached to
-the prompt that produced it.
-
-**Entered from.** The composer, when the text is a prompt rather than a note.
-
-**Zones.** A card above the composer: the prompt, the answer, then a row of
-actions — copy, keep, dismiss.
-
-**States.** Busy, with the answer area showing progress · answered · dismissed.
-
-**Copy.** The actions are the only fixed strings; everything else is content.
-
-**Fails when.** *The answer cannot be produced.* The card shows the failure in
-place and keeps the prompt, so nothing typed is lost. **A prompt is never
-silently turned into a note.**
-
-**Leaves to.** The timeline, if kept. Otherwise nothing is written.
-
----
-
-*Surfaces · version 1.0*
+*Surfaces · version 1.1*

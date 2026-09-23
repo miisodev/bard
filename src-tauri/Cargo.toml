@@ -42,11 +42,13 @@ earshot = "1.2"
 # Note on features: default-features would have to stay off to reach Vulkan and
 # per-ISA CPU dispatch, but that makes transcribe-cpp-sys build ggml from
 # source, which does not currently come up on this machine (docs/BUILD.md).
-transcribe-cpp = "0.2"
+transcribe-cpp = "=0.2.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli", "stream"] }
+keyring = { version = "4.2", default-features = false, features = ["v1", "windows-native-keyring-store"] }
 sha2 = "0.10"
+zeroize = "1"
 futures-util = "0.3"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 log = "0.4"
 anyhow = "1"
 
@@ -55,4 +57,8 @@ panic = "abort"
 codegen-units = 1
 lto = "thin"
 opt-level = "s"
-strip = true
+# Keep release symbols/PDB line tables so a customer crash report can be
+# symbolized by the release operator. The panic hook still writes useful
+# evidence when the PDB is unavailable.
+debug = 1
+strip = "debuginfo"

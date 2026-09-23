@@ -1,5 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppState, CachedHfModel, HfFile, ModelInfo, ModelProgress, ModelStatus } from "./types";
+import type {
+  AppState,
+  CachedHfModel,
+  DetectedModel,
+  HfFile,
+  HfInstallResult,
+  ModelCompatibility,
+  ModelCompatibilityResult,
+  ModelInfo,
+  ModelProgress,
+  ModelStatus,
+  CrashReport,
+  PostprocessingSettings,
+  PostprocessingTestResponse,
+  SavePostprocessingInput,
+} from "./types";
 
 export const api = {
   getState: () => invoke<AppState>("get_state"),
@@ -51,21 +66,45 @@ export const api = {
   showPanel: () => invoke<void>("show_panel"),
   hidePanel: () => invoke<void>("hide_panel"),
   togglePanel: () => invoke<void>("toggle_panel"),
+
+  // Model inventory and lifecycle.
   getModels: () => invoke<ModelInfo[]>("get_models"),
   getModel: () => invoke<ModelStatus>("get_model"),
+  getDetectedModels: () => invoke<DetectedModel[]>("get_detected_models"),
+  checkModel: (localPath: string) =>
+    invoke<ModelCompatibility | ModelCompatibilityResult>("check_model", { localPath }),
+  activateDetectedModel: (id: string) =>
+    invoke<void>("activate_detected_model", { id }),
+  forgetDetectedModel: (id: string) =>
+    invoke<void>("forget_detected_model", { id }),
   setModel: (id: string) => invoke<void>("set_model", { id }),
   downloadModel: (id: string) => invoke<unknown>("download_model", { id }),
   downloadModelCancel: () => invoke<void>("download_model_cancel"),
   deleteModel: (id: string) => invoke<void>("delete_model", { id }),
-  getMicrophones: () => invoke<string[]>("get_microphones"),
-  setMicrophone: (name: string) => invoke<void>("set_microphone", { name }),
-  hfCachedModels: () => invoke<CachedHfModel[]>("hf_cached_models"),
+
+  // Hugging Face import.
   hfListRepo: (repo: string) => invoke<HfFile[]>("hf_list_repo", { repo }),
   hfInstall: (repo: string, file: string, size: number, sha256: string) =>
-    invoke<unknown>("hf_install", { repo, file, size, sha256 }),
+    invoke<HfInstallResult>("hf_install", { repo, file, size, sha256 }),
   hfUseCached: (repo: string, file: string, localPath: string, size: number) =>
     invoke<void>("hf_use_cached", { repo, file, localPath, size }),
+
+  // Legacy custom-model commands remain for surfaces outside the model manager.
+  hfCachedModels: () => invoke<CachedHfModel[]>("hf_cached_models"),
   removeCustomModel: (id: string) => invoke<void>("remove_custom_model", { id }),
+
+  // Optional cloud post-processing. The API key is accepted only by save and
+  // is never returned in application state or emitted in an event.
+  getPostprocessing: () =>
+    invoke<PostprocessingSettings>("get_postprocessing"),
+  savePostprocessing: (input: SavePostprocessingInput) =>
+    invoke<PostprocessingSettings | void>("save_postprocessing", { ...input }),
+  testPostprocessing: () =>
+    invoke<PostprocessingTestResponse>("test_postprocessing"),
+  getCrashReport: () => invoke<CrashReport | null>("get_crash_report"),
+
+  getMicrophones: () => invoke<string[]>("get_microphones"),
+  setMicrophone: (name: string) => invoke<void>("set_microphone", { name }),
   dictateStart: () => invoke<void>("dictate_start"),
   dictateStop: () => invoke<void>("dictate_stop"),
   dictateCancel: () => invoke<void>("dictate_cancel"),

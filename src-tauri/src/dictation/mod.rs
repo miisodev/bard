@@ -3,7 +3,9 @@ mod model;
 mod overlay;
 mod vad;
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -34,6 +36,22 @@ pub enum DictState {
 static STATE: Mutex<DictState> = Mutex::new(DictState::Idle);
 static PRESSED_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 static ESC_SHORTCUT: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
+static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static OPERATION_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+fn begin_operation() -> u64 {
+    OPERATION_CANCELLED.store(false, Ordering::SeqCst);
+    OPERATION_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn operation_cancelled(operation: u64) -> bool {
+    OPERATION_CANCELLED.load(Ordering::SeqCst)
+        || OPERATION_SEQUENCE.load(Ordering::SeqCst) != operation
+}
+
+fn cancel_operation() {
+    OPERATION_CANCELLED.store(true, Ordering::SeqCst);
+}
 
 pub fn init(app: AppHandle) {
     model::start_unload_watcher(app);
@@ -109,12 +127,57 @@ pub fn start(app: &AppHandle) {
     audio::start(app.clone());
 }
 
+async fn wait_for_operation_cancel(operation: u64) {
+    while !operation_cancelled(operation) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+fn postprocess_transcript(app: &AppHandle, local: String, operation: u64) -> String {
+    let config = crate::cloud::Config::from_setting_values(
+        crate::db::get_setting(app, crate::cloud::ENABLED_SETTING_KEY),
+        crate::db::get_setting(app, crate::cloud::MODEL_IDS_SETTING_KEY),
+    );
+    if !config.enabled || operation_cancelled(operation) {
+        return local;
+    }
+
+    overlay::show(app, "finishing");
+    let result: Option<crate::cloud::PostprocessResult<String>> = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime.block_on(async {
+            tokio::select! {
+                result = crate::cloud::postprocess(&local, &config, Duration::from_secs(20)) => Some(result),
+                _ = wait_for_operation_cancel(operation) => None,
+            }
+        }),
+        Err(_) => Some(Err(crate::cloud::Error::Provider(
+            crate::cloud::ProviderError::Transport {
+                kind: crate::cloud::TransportKind::Request,
+            },
+        ))),
+    };
+    let Some(result) = result else {
+        return local;
+    };
+    if operation_cancelled(operation) {
+        return local;
+    }
+    match result {
+        Ok(cleaned) => cleaned,
+        Err(error) => {
+            let _ = app.emit("dictation-cloud-warning", error.to_string());
+            local
+        }
+    }
+}
+
 pub fn stop(app: &AppHandle) {
     let mut state = STATE.lock().unwrap();
     if *state != DictState::Recording {
         return;
     }
     *state = DictState::Transcribing;
+    let operation = begin_operation();
     unregister_esc_cancel(app);
     let app = app.clone();
     std::thread::spawn(move || {
@@ -122,10 +185,29 @@ pub fn stop(app: &AppHandle) {
         if !samples.is_empty() && samples.len() < 16000 {
             samples.resize(20000, 0.0);
         }
+        if operation_cancelled(operation) {
+            overlay::hide(&app);
+            *STATE.lock().unwrap() = DictState::Idle;
+            let _ = app.emit("dictation-cancelled", ());
+            return;
+        }
         overlay::show(&app, "transcribing");
         let outcome = model::transcribe(&app, &samples).map(clean_text);
+        if operation_cancelled(operation) {
+            overlay::hide(&app);
+            *STATE.lock().unwrap() = DictState::Idle;
+            let _ = app.emit("dictation-cancelled", ());
+            return;
+        }
         match outcome {
             Ok(text) if !text.is_empty() => {
+                let text = postprocess_transcript(&app, text, operation);
+                if operation_cancelled(operation) {
+                    overlay::hide(&app);
+                    *STATE.lock().unwrap() = DictState::Idle;
+                    let _ = app.emit("dictation-cancelled", ());
+                    return;
+                }
                 let panel_focused = match app.get_webview_window("main") {
                     Some(win) => {
                         win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false)
@@ -155,12 +237,18 @@ pub fn stop(app: &AppHandle) {
 }
 
 pub fn cancel(app: &AppHandle) {
-    if *STATE.lock().unwrap() == DictState::Recording {
+    let state = *STATE.lock().unwrap();
+    if state == DictState::Recording {
         unregister_esc_cancel(app);
         audio::cancel();
+        cancel_operation();
         overlay::hide(app);
         *STATE.lock().unwrap() = DictState::Idle;
         let _ = app.emit("dictation-cancelled", ());
+    } else if state == DictState::Transcribing {
+        cancel_operation();
+        overlay::show(app, "cancelling");
+        let _ = app.emit("dictation-cancel-requested", ());
     }
 }
 

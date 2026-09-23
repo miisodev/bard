@@ -1,7 +1,10 @@
-﻿use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use base64::Engine;
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use zeroize::Zeroize;
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::db;
@@ -11,8 +14,39 @@ pub fn refresh(app: &AppHandle) {
 }
 
 #[tauri::command]
-pub fn hf_cached_models() -> Vec<crate::hf::CachedHfModel> {
-    crate::hf::cached_models()
+pub fn hf_cached_models(app: AppHandle) -> Vec<crate::hf::CachedHfModel> {
+    crate::hf::cached_models(&app)
+}
+
+#[tauri::command]
+pub fn get_detected_models(app: AppHandle) -> Vec<crate::hf::CachedHfModel> {
+    crate::hf::cached_models(&app)
+}
+
+#[tauri::command]
+pub fn check_model(
+    app: AppHandle,
+    local_path: String,
+) -> Result<crate::hf::CompatibilityResult, String> {
+    crate::hf::probe_local_model(&app, &local_path)
+}
+
+#[tauri::command]
+pub fn activate_detected_model(app: AppHandle, id: String) -> Result<(), String> {
+    crate::hf::activate_detected_model(&app, &id)
+}
+
+#[tauri::command]
+pub fn forget_detected_model(app: AppHandle, id: String) -> Result<(), String> {
+    if !crate::catalog::find(&id).is_some() && crate::db::custom_model_by_id(&app, &id).is_none() {
+        // An unregistered cache/app-directory candidate has no Bard-owned row;
+        // forgetting it simply removes the transient inventory entry.
+        refresh(&app);
+        return Ok(());
+    }
+    crate::dictation::delete_model(&app, &id)?;
+    refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -27,7 +61,7 @@ pub async fn hf_install(
     file: String,
     size: u64,
     sha256: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     crate::hf::install_custom_model(&app, &repo, &file, size, &sha256).await
 }
 
@@ -39,22 +73,172 @@ pub fn hf_use_cached(
     local_path: String,
     size: u64,
 ) -> Result<(), String> {
-    crate::hf::register_cached(&app, &repo, &file, &local_path, size)
+    let id = crate::hf::register_cached(&app, &repo, &file, &local_path, size)?;
+    crate::hf::activate_model(&app, &id)
 }
 
 #[tauri::command]
-pub fn remove_custom_model(app: AppHandle, id: String) {
-    if let Some(path) = db::delete_custom_model(&app, &id) {
-        if !path.starts_with(std::env::var("USERPROFILE").unwrap_or_default().as_str()) {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
+pub fn remove_custom_model(app: AppHandle, id: String) -> Result<(), String> {
+    crate::dictation::delete_model(&app, &id)?;
     refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn get_custom_models(app: AppHandle) -> Vec<db::CustomModel> {
     db::list_custom_models(&app)
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PostprocessingSettings {
+    pub enabled: bool,
+    pub model_id: String,
+    pub model_ids: Vec<String>,
+    pub model_name: Option<String>,
+    pub key_configured: bool,
+    pub status_message: Option<String>,
+}
+
+fn postprocessing_config(app: &AppHandle) -> crate::cloud::Config {
+    crate::cloud::Config::from_setting_values(
+        db::get_setting(app, crate::cloud::ENABLED_SETTING_KEY),
+        db::get_setting(app, crate::cloud::MODEL_IDS_SETTING_KEY),
+    )
+}
+
+fn postprocessing_settings(app: &AppHandle) -> Result<PostprocessingSettings, String> {
+    let config = postprocessing_config(app);
+    let (status, credential_error) = match crate::cloud::status(&config) {
+        Ok(status) => (status, false),
+        Err(crate::cloud::Error::CredentialStore { .. }) => (
+            crate::cloud::Status {
+                enabled: config.enabled,
+                has_api_key: false,
+                has_valid_model: config.has_valid_model(),
+                ready: false,
+                model_ids: config.model_ids.clone(),
+            },
+            true,
+        ),
+        Err(error) => return Err(error.to_string()),
+    };
+    let model_id = config.active_model_id().unwrap_or_default().to_string();
+    let status_message = if credential_error {
+        Some("Windows Credential Manager is unavailable; cloud processing is off.".into())
+    } else if !status.ready && config.enabled {
+        Some("Post-processing needs a saved key and model ID.".into())
+    } else {
+        None
+    };
+    Ok(PostprocessingSettings {
+        enabled: config.enabled && !credential_error,
+        model_id: model_id.clone(),
+        model_ids: config.model_ids.clone(),
+        model_name: (!model_id.is_empty()).then_some(model_id),
+        key_configured: status.has_api_key,
+        status_message,
+    })
+}
+
+#[tauri::command]
+pub fn get_postprocessing(app: AppHandle) -> Result<PostprocessingSettings, String> {
+    postprocessing_settings(&app)
+}
+
+#[tauri::command]
+pub fn save_postprocessing(
+    app: AppHandle,
+    enabled: bool,
+    model_id: Option<String>,
+    model_ids: Option<Vec<String>>,
+    mut api_key: Option<String>,
+    clear_key: Option<bool>,
+) -> Result<PostprocessingSettings, String> {
+    let clearing_key = clear_key.unwrap_or(false) || api_key.as_deref().is_some_and(str::is_empty);
+    let current = postprocessing_config(&app);
+    let ids = if clearing_key {
+        // Clearing a credential must remain possible even if a stale model
+        // setting is malformed; preserve the last known model list verbatim.
+        current.model_ids
+    } else {
+        let raw_models = model_ids
+            .filter(|ids| !ids.is_empty())
+            .map(|ids| ids.join(","))
+            .or(model_id)
+            .unwrap_or_default();
+        crate::cloud::parse_model_ids_checked(&raw_models).map_err(|error| error.to_string())?
+    };
+
+    let credential_result: Result<(), String> = if clearing_key {
+        crate::cloud::delete_api_key().map_err(|error| error.to_string())
+    } else if let Some(key) = api_key.as_deref().filter(|key| !key.trim().is_empty()) {
+        crate::cloud::set_api_key(key).map_err(|error| error.to_string())
+    } else {
+        Ok(())
+    };
+    if let Some(key) = api_key.as_mut() {
+        key.zeroize();
+    }
+    credential_result?;
+
+    let next_enabled = enabled
+        && !ids.is_empty()
+        && crate::cloud::has_api_key().map_err(|error| error.to_string())?;
+    let next_config = crate::cloud::Config {
+        enabled: next_enabled,
+        model_ids: ids,
+    };
+    db::set_settings_checked(
+        &app,
+        &[
+            (
+                crate::cloud::ENABLED_SETTING_KEY,
+                next_config.enabled_setting_value(),
+            ),
+            (
+                crate::cloud::MODEL_IDS_SETTING_KEY,
+                &next_config.model_ids_setting_value(),
+            ),
+        ],
+    )?;
+    postprocessing_settings(&app)
+}
+
+#[tauri::command]
+pub async fn test_postprocessing(app: AppHandle) -> Result<serde_json::Value, String> {
+    let config = postprocessing_config(&app);
+    let message = crate::cloud::test_connection(&config, Duration::from_secs(20))
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(serde_json::json!({ "ok": true, "message": message }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrashReport {
+    pub path: String,
+    pub contents: String,
+}
+
+#[tauri::command]
+pub fn get_crash_report() -> Result<Option<CrashReport>, String> {
+    let directory = std::env::var("LOCALAPPDATA")
+        .or_else(|_| std::env::var("APPDATA"))
+        .map(|base| {
+            std::path::Path::new(&base)
+                .join("com.miisodev.bard")
+                .join("logs")
+        })
+        .unwrap_or_else(|_| std::env::temp_dir().join("com.miisodev.bard").join("logs"));
+    crate::crash::read_latest_log(&directory)
+        .map(|latest| {
+            latest.map(|log| CrashReport {
+                path: log.path.to_string_lossy().to_string(),
+                contents: log.contents,
+            })
+        })
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -110,7 +294,11 @@ pub fn add_files(app: AppHandle, paths: Vec<String>) -> usize {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "avif"].contains(&ext.as_str()) {
+        if [
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "avif",
+        ]
+        .contains(&ext.as_str())
+        {
             let dest = unique_image_path(&images, &ext);
             if std::fs::copy(&p, &dest).is_ok() {
                 db::insert_item(&app, "", "image", Some(&dest.to_string_lossy()));
@@ -126,7 +314,12 @@ pub fn add_files(app: AppHandle, paths: Vec<String>) -> usize {
 }
 
 #[tauri::command]
-pub fn attach_image(app: AppHandle, item_id: i64, data_base64: String, ext: String) -> Result<i64, String> {
+pub fn attach_image(
+    app: AppHandle,
+    item_id: i64,
+    data_base64: String,
+    ext: String,
+) -> Result<i64, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data_base64)
         .map_err(|e| e.to_string())?;
@@ -217,7 +410,9 @@ pub fn set_export_dir(app: AppHandle, path: String) {
 
 #[tauri::command]
 pub fn get_export_dir(app: AppHandle) -> String {
-    db::get_setting(&app, "export_dir").filter(|d| !d.is_empty()).unwrap_or_else(dirs_documents)
+    db::get_setting(&app, "export_dir")
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(dirs_documents)
 }
 
 #[tauri::command]
@@ -412,7 +607,11 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_capture_double_shift(app: AppHandle, enabled: bool) {
-    db::set_setting(&app, "capture_double_shift", if enabled { "1" } else { "0" });
+    db::set_setting(
+        &app,
+        "capture_double_shift",
+        if enabled { "1" } else { "0" },
+    );
 }
 
 #[tauri::command]
@@ -446,9 +645,8 @@ pub fn get_model(app: AppHandle) -> crate::dictation::ModelStatus {
 }
 
 #[tauri::command]
-pub fn set_model(app: AppHandle, id: String) {
-    db::set_setting(&app, "model_id", &id);
-    refresh(&app);
+pub fn set_model(app: AppHandle, id: String) -> Result<(), String> {
+    crate::hf::activate_model(&app, &id)
 }
 
 #[tauri::command]
@@ -457,9 +655,10 @@ pub async fn download_model(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn delete_model(app: AppHandle, id: String) {
-    crate::dictation::delete_model(&app, &id);
+pub fn delete_model(app: AppHandle, id: String) -> Result<(), String> {
+    crate::dictation::delete_model(&app, &id)?;
     refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -484,7 +683,7 @@ pub fn dictate_cancel(app: AppHandle) {
 
 pub struct ImagesDir(pub PathBuf);
 
-fn unique_image_path(dir: &PathBuf, ext: &str) -> PathBuf {
+fn unique_image_path(dir: &Path, ext: &str) -> PathBuf {
     let now = db::now_ms();
     for i in 0..100 {
         let name = format!("{}-{}.{}", now, i, ext);
