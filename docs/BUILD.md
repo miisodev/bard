@@ -118,12 +118,16 @@ reports under `%LOCALAPPDATA%\\com.miisodev.bard\\logs` before `panic = "abort"`
 terminates the process; the Data pane exposes the latest report. A bounded,
 secret-free `lifecycle.log` sits beside those reports and records console
 interrupts, gesture outcomes, audio failure boundaries, model phases, and
-OpenRouter test boundaries. It never records transcript text, credentials, or
-provider response bodies.
+OpenRouter test boundaries. Transcript post-processing has a 45-second
+provider request timeout inside a 60-second cancellable deadline, so a long
+bounded take can finish without losing the local fallback. It never records
+transcript text, credentials, or provider response bodies.
 
 The raw-input coordinator is the only keyboard hook. Native window operations
 are queued onto the UI thread, the CPAL callback is data-only, and recording
-has bounded buffers plus a 10-minute cap. The same-key `Ctrl Ctrl` gesture has
+has bounded buffers plus a 20-minute cap. At the boundary Bard keeps the
+20-minute sample, stops the stream normally, and sends that bounded take to the
+local transcription path. The same-key `Ctrl Ctrl` gesture has
 a 50 ms activation grace and a 300 ms hold threshold; its deterministic tests
 are part of the normal Rust suite.
 

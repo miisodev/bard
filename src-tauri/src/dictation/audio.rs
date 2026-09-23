@@ -15,7 +15,8 @@ const TARGET_RATE: u32 = 16000;
 const CHUNK_OUT: usize = 256;
 const SILENCE_AUTO_STOP_MS: u64 = 1600;
 const MONITOR_INTERVAL: Duration = Duration::from_millis(50);
-const MAX_RECORDING_SAMPLES: usize = TARGET_RATE as usize * 60 * 10;
+const MAX_RECORDING_MINUTES: usize = 20;
+const MAX_RECORDING_SAMPLES: usize = TARGET_RATE as usize * 60 * MAX_RECORDING_MINUTES;
 const MAX_INPUT_BUFFER_SAMPLES: usize = 32_768;
 
 static STREAM_ERROR: AtomicBool = AtomicBool::new(false);
@@ -56,6 +57,7 @@ struct Shared {
     in_buf: Mutex<Vec<f32>>,
     monitor: Arc<MonitorState>,
     failed: AtomicBool,
+    limit_reached: AtomicBool,
 }
 
 static RECORDER: Mutex<Option<Recorder>> = Mutex::new(None);
@@ -107,8 +109,15 @@ fn mark_failed(shared: &Shared) {
     shared.failed.store(true, Ordering::Release);
 }
 
+fn append_bounded_samples(samples: &mut Vec<f32>, output: &[f32], limit: usize) -> (usize, bool) {
+    let remaining = limit.saturating_sub(samples.len());
+    let stored = output.len().min(remaining);
+    samples.extend_from_slice(&output[..stored]);
+    (stored, stored < output.len())
+}
+
 fn process_chunk(shared: &Shared, sample_rate: u32) {
-    if shared.failed.load(Ordering::Acquire) {
+    if shared.failed.load(Ordering::Acquire) || shared.limit_reached.load(Ordering::Acquire) {
         return;
     }
     if sample_rate == 0 {
@@ -154,18 +163,18 @@ fn process_chunk(shared: &Shared, sample_rate: u32) {
     }
     drop(resampler_guard);
 
-    {
+    let stored_len = {
         let mut samples = lock(&shared.samples);
-        if samples.len().saturating_add(output.len()) > MAX_RECORDING_SAMPLES {
-            mark_failed(shared);
-            return;
-        }
-        samples.extend_from_slice(&output);
+        append_bounded_samples(&mut samples, &output, MAX_RECORDING_SAMPLES).0
+    };
+    if stored_len < output.len() {
+        shared.limit_reached.store(true, Ordering::Release);
     }
+    let stored_output = &output[..stored_len];
 
     let (probability, silence_ms) = {
         let mut vad = lock(&shared.vad);
-        let probability = vad.feed(&output);
+        let probability = vad.feed(stored_output);
         (probability, vad.silence_ms)
     };
     let probability = if probability.is_finite() {
@@ -176,7 +185,7 @@ fn process_chunk(shared: &Shared, sample_rate: u32) {
     shared
         .monitor
         .level_bits
-        .store(level_of(&output).to_bits(), Ordering::Relaxed);
+        .store(level_of(stored_output).to_bits(), Ordering::Relaxed);
     shared
         .monitor
         .probability_bits
@@ -197,6 +206,11 @@ fn start_monitor(shared: Arc<Shared>, app: AppHandle) -> JoinHandle<()> {
 
             if shared.failed.load(Ordering::Acquire) || STREAM_ERROR.load(Ordering::Acquire) {
                 crate::crash::record_event("audio:stream-error");
+                crate::dictation::stop(&app);
+                break;
+            }
+            if shared.limit_reached.load(Ordering::Acquire) {
+                crate::crash::record_event("audio:limit-reached");
                 crate::dictation::stop(&app);
                 break;
             }
@@ -238,6 +252,7 @@ pub fn start(app: AppHandle) -> Result<(), String> {
         in_buf: Mutex::new(Vec::new()),
         monitor: monitor.clone(),
         failed: AtomicBool::new(false),
+        limit_reached: AtomicBool::new(false),
     });
 
     let stream = build_stream(
@@ -280,6 +295,9 @@ fn build_stream(
     shared: Arc<Shared>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError> {
     let push = move |mono: &[f32]| {
+        if shared.failed.load(Ordering::Acquire) || shared.limit_reached.load(Ordering::Acquire) {
+            return;
+        }
         {
             let mut input = lock(&shared.in_buf);
             if input.len().saturating_add(mono.len()) > MAX_INPUT_BUFFER_SAMPLES {
@@ -404,5 +422,39 @@ pub fn cancel() {
         if let Some(monitor) = recorder.monitor {
             let _ = monitor.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recording_limit_is_twenty_minutes() {
+        assert_eq!(MAX_RECORDING_MINUTES, 20);
+        assert_eq!(MAX_RECORDING_SAMPLES, TARGET_RATE as usize * 60 * 20);
+    }
+
+    #[test]
+    fn bounded_append_keeps_the_limit_and_reports_boundary() {
+        let mut samples = vec![1.0, 2.0, 3.0];
+        let (stored, limited) = append_bounded_samples(&mut samples, &[4.0, 5.0, 6.0], 4);
+        assert_eq!(stored, 1);
+        assert!(limited);
+        assert_eq!(samples, vec![1.0, 2.0, 3.0, 4.0]);
+
+        let (stored, limited) = append_bounded_samples(&mut samples, &[7.0], 4);
+        assert_eq!(stored, 0);
+        assert!(limited);
+        assert_eq!(samples.len(), 4);
+    }
+
+    #[test]
+    fn bounded_append_does_not_report_a_limit_before_it_is_reached() {
+        let mut samples = vec![1.0, 2.0];
+        let (stored, limited) = append_bounded_samples(&mut samples, &[3.0, 4.0], 4);
+        assert_eq!(stored, 2);
+        assert!(!limited);
+        assert_eq!(samples, vec![1.0, 2.0, 3.0, 4.0]);
     }
 }

@@ -10,6 +10,9 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+const POSTPROCESS_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+const POSTPROCESS_DEADLINE: Duration = Duration::from_secs(60);
+
 pub use model::{
     cancel_download, delete_model, download_model, model_ready, model_status, models, ModelInfo,
     ModelStatus,
@@ -168,8 +171,8 @@ async fn bounded_postprocess(
     config: &crate::cloud::Config,
 ) -> crate::cloud::PostprocessResult<String> {
     match tokio::time::timeout(
-        Duration::from_secs(20),
-        crate::cloud::postprocess(local, config, Duration::from_secs(15)),
+        POSTPROCESS_DEADLINE,
+        crate::cloud::postprocess(local, config, POSTPROCESS_REQUEST_TIMEOUT),
     )
     .await
     {

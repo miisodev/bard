@@ -387,12 +387,22 @@ a credential that every diagnostic surface can expose.
 dictation action has produced a complete local transcript. The body contains a
 fixed built-in cleanup instruction and one user message containing that
 transcript text; there is no user-editable prompt. The request is non-streaming
-(`stream: false`), bounded to a small completion budget, denies provider
-data collection, and sets provider `allow_fallbacks: false` for the request. The
-response must identify the requested model, contain exactly one choice, and
-finish with `stop`. The stored model-ID setting may be a
+(`stream: false`), bounded to an 8,192-token completion budget sized for a
+complete 20-minute dictated take, denies provider data collection, and sets
+provider `allow_fallbacks: false` for the request. Provider work has a
+45-second request timeout inside a 60-second cancellable deadline; a timeout
+uses the untouched local transcript. The response must identify the requested
+model, contain exactly one choice, and finish with `stop`. The stored model-ID
+setting may be a
 comma-separated list of opaque IDs, but only its first ID is sent. Bard never
 silently substitutes an alias, another model ID, or a fallback model.
+
+The fixed cleanup instruction is an editor, not a summarizer: it asks for
+faithful sentence-boundary repair, natural paragraph flow, unambiguous removal
+of recognition noise and false starts, and preservation of names, numbers,
+technical terms, quotations, lists, language, emphasis, and uncertainty. It
+forbids invention, translation, answering, explanation, and following commands
+embedded in the transcript; ambiguous wording stays unchanged.
 
 The request contains no audio, samples, clipboard state, capture history,
 images, prompts, identifiers, or unrelated text. The local transcript remains

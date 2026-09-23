@@ -551,3 +551,16 @@ Settings → Dictation: `top-left` persisted and rendered at `(40, 40)`,
 `bottom-middle` at `(670, 800)`. The process stayed responsive and the overlay
 was recaptured at each representative placement; the user setting was restored
 to `bottom-middle` after the test.
+
+**2026-09-23 — longer takes and sentence-aware cleanup.** The bounded audio
+path now retains exactly 20 minutes of 16 kHz mono samples, stops at the
+boundary as a normal take, and continues into local transcription instead of
+misreporting a microphone failure. The OpenRouter system instruction now
+requests faithful sentence-boundary repair, natural paragraph flow, and
+careful preservation of names, numbers, technical terms, quotations, lists,
+language, emphasis, and uncertainty while forbidding summarization or
+instruction following. The completion budget is bounded at 8,192 tokens for a
+complete long take; the provider request now has a 45-second timeout inside a
+60-second cancellable deadline. Prompt contract and cap-boundary tests are part
+of the Rust suite. The rebuilt NSIS installer completed successfully and the
+installed binary remained responsive on a clean launch.
