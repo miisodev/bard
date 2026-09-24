@@ -3,7 +3,6 @@
 **Status: NO-GO — intentionally unsigned**
 
 - Source commit: `9150e80b344230eb244ec30d23e0a33283ef1fa1`
-- Tag commit: `00997a2407f54952f8c1d8051e886aae80869a19`
 - Local tag: `rc-0.1.0-r2` (not pushed)
 - Product branch: `main` (not pushed; the signed-release decision is pending)
 - Build date: 2026-09-24
