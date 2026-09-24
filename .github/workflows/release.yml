@@ -63,16 +63,17 @@ jobs:
         env:
           UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           UPDATER_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          AUTH_PFX: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_BASE64 }}
-          AUTH_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_PASSWORD }}
+          SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
           RELEASE_TOKEN: ${{ secrets.BARD_RELEASES_TOKEN }}
         run: |
+          # Code-signing keys are hardware-bound (CA/B Forum, June 2023): CI can
+          # sign only through a cloud signer's command. A certificate held on a
+          # USB token signs on its own machine with scripts/build-release.ps1.
           if ([string]::IsNullOrWhiteSpace($env:UPDATER_KEY) -or
               [string]::IsNullOrWhiteSpace($env:UPDATER_PASSWORD) -or
-              [string]::IsNullOrWhiteSpace($env:AUTH_PFX) -or
-              [string]::IsNullOrWhiteSpace($env:AUTH_PASSWORD) -or
+              [string]::IsNullOrWhiteSpace($env:SIGN_COMMAND) -or
               [string]::IsNullOrWhiteSpace($env:RELEASE_TOKEN)) {
-            throw 'A release cannot be built without updater, Authenticode, and release-repository secrets.'
+            throw 'A release needs the updater key, a cloud signing command (WINDOWS_SIGN_COMMAND) and the release-repository token.'
           }
 
       - name: Build the signed-updater NSIS candidate
@@ -80,51 +81,18 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: bun run tauri build --bundles nsis
-
-      - name: Sign the executable and installer
-        shell: pwsh
-        env:
-          AUTH_PFX: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_BASE64 }}
-          AUTH_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_PASSWORD }}
+          SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+        # Tauri signs bard.exe, the installer and its uninstaller during the
+        # build, before it writes the updater signature over the final file.
         run: |
-          $cert = Join-Path $env:RUNNER_TEMP 'bard-code-signing.pfx'
-          [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($env:AUTH_PFX))
-          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
-            Where-Object { $_.FullName -match '\\x64\\' } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1 -ExpandProperty FullName
-          $stamp = 'https://timestamp.digicert.com'
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $artifacts = @(
-            'src-tauri\target\release\bard.exe',
-            "src-tauri\target\release\bundle\nsis\Bard_${version}_x64-setup.exe"
-          )
-          foreach ($artifact in $artifacts) {
-            & $signtool sign /fd SHA256 /tr $stamp /td SHA256 /f $cert /p $env:AUTH_PASSWORD $artifact
-            if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed for $artifact" }
-            & $signtool verify /pa /all $artifact
-            if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed for $artifact" }
-          }
-          # The certificate is kept until the MSIX package has been built and signed.
-
-      - name: Build signed MSIX package
-        shell: pwsh
-        env:
-          AUTH_PFX: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_BASE64 }}
-          AUTH_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_PASSWORD }}
-        run: |
-          $cert = Join-Path $env:RUNNER_TEMP 'bard-code-signing.pfx'
-          [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($env:AUTH_PFX))
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          .\scripts\build-msix.ps1 -Version $version -CertificatePath $cert -CertificatePassword $env:AUTH_PASSWORD -RequireSignature -SkipBinarySigning
-          Remove-Item -Force $cert
+          $config = @{ bundle = @{ windows = @{ signCommand = $env:SIGN_COMMAND } } } | ConvertTo-Json -Depth 5 -Compress
+          bun run tauri build --bundles nsis --config $config
 
       - name: Verify the release candidate
         shell: pwsh
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          .\scripts\verify-release.ps1 -Version $version -RequireSignature -RequireMsix
+          .\scripts\verify-release.ps1 -Version $version -RequireSignature
 
       - name: Stage immutable release assets
         shell: pwsh
@@ -138,9 +106,8 @@ jobs:
           $tagVersion = $env:TAG.TrimStart('v')
           if ($tagVersion -ne $version) { throw "Tag $env:TAG does not match package version $version" }
           $installer = "src-tauri\target\release\bundle\nsis\Bard_${version}_x64-setup.exe"
-          $msix = "src-tauri\target\release\bundle\msix\Bard_${version}_x64.msix"
           $sig = "$installer.sig"
-          Copy-Item $installer, $msix, $sig, 'src-tauri\target\release\bard.exe' -Destination $stage
+          Copy-Item $installer, $sig, 'src-tauri\target\release\bard.exe' -Destination $stage
           .\scripts\generate-release-metadata.ps1 -Version $version -OutputDir (Join-Path $stage 'metadata')
           git archive --format=zip --output (Join-Path $stage 'metadata' "Bard_${version}_source.zip") HEAD
           Copy-Item (Join-Path $stage 'metadata\*') $stage -Force
@@ -160,7 +127,7 @@ jobs:
           }
           $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $stage 'latest.json') -Encoding utf8
           $env:GH_TOKEN = $env:RELEASE_TOKEN
-          gh release create $env:TAG --repo miisodev/bard-releases --title "Bard $version" --notes "Signed Windows x64 NSIS and MSIX release. See https://miiso.dev/tools/bard." --target $env:TAG 2>$null
+          gh release create $env:TAG --repo miisodev/bard-releases --title "Bard $version" --notes "Signed Windows x64 installer. See https://miiso.dev/tools/bard." --target $env:TAG 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release upload $env:TAG --repo miisodev/bard-releases --clobber (Join-Path $stage '*')
           } else {

@@ -115,13 +115,13 @@ export default function LicenseCard({
         <div className="license-card-actions">
           <button type="button" className="btn" onClick={() => void refresh()} disabled={busy}>
             {busy ? <LoaderCircle className="spin" size={14} aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
-            Check again
+            Check
           </button>
-          <a className="btn" href="https://miiso.dev/tools/bard" target="_blank" rel="noreferrer">
-            Manage licence <ExternalLink size={14} aria-hidden="true" />
-          </a>
+          <button type="button" className="btn" onClick={() => void api.openLink("https://miiso.dev/tools/bard")}>
+            Manage <ExternalLink size={14} aria-hidden="true" />
+          </button>
           <button type="button" className="link-button" onClick={() => void release()} disabled={busy}>
-            Release this computer
+            Release this PC
           </button>
         </div>
       ) : (
@@ -158,6 +158,10 @@ export default function LicenseCard({
           <button type="button" className="btn primary" onClick={() => void activate()} disabled={busy || !key.trim()}>
             {busy ? <LoaderCircle className="spin" size={14} aria-hidden="true" /> : null}
             Activate
+          </button>
+          {/* A trial with no way to buy is a dead end. */}
+          <button type="button" className="btn" onClick={() => void api.openLink("https://miiso.dev/tools/bard")}>
+            Buy <ExternalLink size={14} aria-hidden="true" />
           </button>
         </div>
       )}

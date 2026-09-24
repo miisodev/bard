@@ -4,8 +4,8 @@ import type { PaneProps } from "../SettingsWindow";
 import { Button, Group, Note, Pane, Row } from "../ui";
 
 const BINDABLE: { key: "capture" | "panel"; label: string; hint: string }[] = [
-  { key: "capture", label: "Capture selection", hint: "Grab the selected text from any app." },
-  { key: "panel", label: "Toggle panel", hint: "Show or hide Bard." },
+  { key: "capture", label: "Capture", hint: "Grab the selected text from any app." },
+  { key: "panel", label: "Panel", hint: "Show or hide Bard." },
 ];
 
 const RECORD_SECONDS = 3;
@@ -98,78 +98,106 @@ export default function ShortcutsPane({ state }: PaneProps) {
     if (!mods.length && !/^F\d{1,2}$/.test(label)) return;
 
     const combo = `${mods.join("+")}${mods.length ? "+" : ""}${label}`;
+    save({ ...keybinds, [key]: combo });
+    stopRecording();
+    setRecording(null);
+  }
+
+  function save(next: Record<string, string>) {
     const previous = keybinds;
-    const next = { ...keybinds, [key]: combo };
     setKeybinds(next);
     setError(null);
     void api.setKeybinds(JSON.stringify(next)).catch((reason: unknown) => {
       setKeybinds(previous);
       setError(errorText(reason));
     });
-    stopRecording();
-    setRecording(null);
   }
 
   return (
-    <Pane title="Shortcuts" description="Global keys, active whatever you are using.">
-      <Group title="Rebindable">
-        {BINDABLE.map(({ key, label, hint }) => (
-          <Row key={key} label={label} hint={hint}>
-            <button
-              type="button"
-              className={`keys${recording === key ? " recording" : ""}`}
-              onClick={(e) => {
-                (e.currentTarget as HTMLButtonElement).focus();
-                startRecording(key);
-              }}
-              onKeyDown={(e) => {
-                if (recording !== key) return;
-                e.preventDefault();
-                e.stopPropagation();
-                finish(key, e);
-              }}
-            >
-              {recording === key
-                ? `Press keys… (${countdown})`
-                : (keybinds[key] ?? DEFAULT_KEYBINDS[key] ?? "—")}
-            </button>
-          </Row>
-        ))}
+    <Pane title="Shortcuts" description="Two taps of a modifier, in any app. Shift captures, Ctrl dictates.">
+      <Group title="Gestures">
+        <Row label="Capture" hint="Tap Left Shift twice to capture the current selection.">
+          <Keycaps keys={["Left Shift", "Left Shift"]} />
+        </Row>
+        <Row label="Panel" hint="Tap Right Shift twice to show or hide Bard.">
+          <Keycaps keys={["Right Shift", "Right Shift"]} />
+        </Row>
+        <Row
+          label="Dictate"
+          hint="Hold the same Ctrl key to talk, or tap it twice to start and twice to stop. Esc cancels."
+        >
+          <Keycaps keys={["Ctrl", "Ctrl"]} />
+        </Row>
       </Group>
 
-      <Group title="Fixed gestures">
-        <Row label="Left Shift × 2" hint="Capture the current selection." />
-        <Row label="Right Shift × 2" hint="Show or hide the panel." />
-        <Row
-          label="Ctrl × 2"
-          hint="Tap the same Control key twice to start dictation. Hold it for push-to-talk, or use a short tap and a second Ctrl+Ctrl to stop. Escape cancels."
-        />
+      <Group title="Chords" note="Optional. A chord takes its key combination away from every other app.">
+        {BINDABLE.map(({ key, label, hint }) => {
+          const combo = (keybinds[key] ?? "").trim();
+          return (
+            <Row key={key} label={label} hint={hint}>
+              <div className="chord-control">
+                <button
+                  type="button"
+                  className={`keys${recording === key ? " recording" : ""}${combo ? "" : " unset"}`}
+                  aria-label={combo ? `${label}: ${combo}. Record a new chord` : `Record a chord for ${label}`}
+                  onClick={(e) => {
+                    (e.currentTarget as HTMLButtonElement).focus();
+                    startRecording(key);
+                  }}
+                  onKeyDown={(e) => {
+                    if (recording !== key) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    finish(key, e);
+                  }}
+                >
+                  {recording === key ? (
+                    `Press keys · ${countdown}`
+                  ) : combo ? (
+                    combo.split("+").map((part, index) => <kbd key={`${part}-${index}`}>{part}</kbd>)
+                  ) : (
+                    "Record"
+                  )}
+                </button>
+                {combo && recording !== key ? (
+                  <button
+                    type="button"
+                    className="chord-clear"
+                    aria-label={`Clear the ${label.toLowerCase()} chord`}
+                    title="Clear"
+                    onClick={() => save({ ...keybinds, [key]: "" })}
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
+            </Row>
+          );
+        })}
       </Group>
 
       <Group>
-        <Row label="Reset shortcuts" hint="Puts every binding back to its default.">
-          <Button
-            onClick={() => {
-              const next = { ...DEFAULT_KEYBINDS };
-              setKeybinds(next);
-              setError(null);
-              void api.setKeybinds(JSON.stringify(next)).catch((reason: unknown) => {
-                setError(errorText(reason));
-              });
-            }}
-          >
-            Defaults
-          </Button>
+        <Row label="Reset" hint="Clears every chord. The gestures always stay.">
+          <Button onClick={() => save({ ...DEFAULT_KEYBINDS })}>Reset</Button>
         </Row>
       </Group>
 
       {error ? <Note tone="danger">{error}</Note> : null}
       <Note>
-        Click a shortcut and press the combination within {RECORD_SECONDS} seconds. A
-        shortcut needs at least one modifier, or a function key. Double-tap gestures are
-        deliberately fixed so they remain available in every application.
+        Click Record and press the combination within {RECORD_SECONDS} seconds. A chord needs at
+        least one modifier, or a function key.
       </Note>
     </Pane>
+  );
+}
+
+function Keycaps({ keys }: { keys: string[] }) {
+  return (
+    <span className="keys static" aria-label={keys.join(" then ")}>
+      {keys.map((key, index) => (
+        <kbd key={`${key}-${index}`}>{key}</kbd>
+      ))}
+    </span>
   );
 }
 

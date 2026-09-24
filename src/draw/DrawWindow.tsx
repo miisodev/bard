@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Redo2, Undo2, X } from "lucide-react";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
 import {
@@ -215,7 +216,19 @@ export default function DrawWindow() {
   }, [selected, saving]);
 
   return (
-    <div className="draw-root">
+    <div className="draw-root companion">
+      <header className="draw-head">
+        <p className="companion-title">Draw</p>
+      </header>
+      <button
+        type="button"
+        className="companion-close"
+        aria-label="Close"
+        title="Close"
+        onClick={() => void win.close()}
+      >
+        <X aria-hidden="true" strokeWidth={2} />
+      </button>
       <div className="draw-surface">
         <canvas
           ref={canvasRef}
@@ -285,13 +298,32 @@ export default function DrawWindow() {
 
         <div className="draw-spacer" />
 
-        <button className="draw-text-btn" onClick={undo} disabled={empty} title="Undo (Ctrl+Z)">
-          Undo
+        <div className="draw-group">
+          <button className="draw-tool" onClick={undo} disabled={empty} title="Undo · Ctrl+Z" aria-label="Undo">
+            <Undo2 size={16} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+          <button className="draw-tool" onClick={redo} title="Redo · Ctrl+Shift+Z" aria-label="Redo">
+            <Redo2 size={16} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="draw-sep" />
+
+        {/* Copy saves too: the drawing lands in the timeline either way. */}
+        <button
+          className="draw-text-btn"
+          onClick={() => void save(true)}
+          disabled={empty || saving}
+          title="Save to Bard and copy to the clipboard"
+        >
+          Copy
         </button>
-        <button className="draw-text-btn" onClick={() => void save(true)} disabled={empty || saving}>
-          Copy and Save
-        </button>
-        <button className="draw-primary" onClick={() => void save(false)} disabled={empty || saving}>
+        <button
+          className="draw-primary"
+          onClick={() => void save(false)}
+          disabled={empty || saving}
+          title="Save to Bard · Ctrl+Enter"
+        >
           Save
         </button>
       </div>

@@ -203,12 +203,12 @@ export default function Onboarding({
       ) : step === 2 ? (
         <>
           <h1>Make it yours</h1>
-          <p>Everyday actions stay close to the keyboard. You can change these later in Settings.</p>
+          <p>Two taps of a modifier do the everyday work, in any app. Chords are yours to add in Settings.</p>
           <div className="shortcut-list" aria-label="Bard keyboard shortcuts">
-            <div><kbd>Shift</kbd><kbd>Shift</kbd><span>Capture a selection</span></div>
-            <div><kbd>Ctrl</kbd><kbd>Ctrl</kbd><span>Push-to-talk dictation</span></div>
-            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd><span>Open the panel</span></div>
-            <div><kbd>Ctrl</kbd><kbd>,</kbd><span>Open Settings</span></div>
+            <div><kbd>Left Shift</kbd><kbd>Left Shift</kbd><span>Capture</span></div>
+            <div><kbd>Right Shift</kbd><kbd>Right Shift</kbd><span>Panel</span></div>
+            <div><kbd>Ctrl</kbd><kbd>Ctrl</kbd><span>Dictate — hold to talk</span></div>
+            <div><kbd>Ctrl</kbd><kbd>,</kbd><span>Settings</span></div>
           </div>
         </>
       ) : (

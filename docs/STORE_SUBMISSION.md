@@ -1,62 +1,62 @@
 # Bard Microsoft Store submission
 
-Bard's Microsoft Store channel is the **MSIX** package built from the same
-release commit as the direct NSIS/MSIX downloads.
+The Store channel is an **MSIX** package built from the same signed release as
+the direct NSIS installer. It is the only MSIX Bard ships; nothing is offered
+for sideloading.
 
 ## Package
 
-Build the package from a frozen release commit:
+Build the signed release first (`docs/RELEASE_RUNBOOK.md` §3), then:
 
 ```powershell
-bun run tauri build --bundles nsis
-.\scripts\build-msix.ps1 `
-  -Version 0.1.0 `
-  -PackageName "<exact Partner Center identity name>" `
-  -Publisher "CN=<exact signing certificate subject>" `
-  -CertificatePath "$HOME\.secrets\bard-code-signing.pfx" `
-  -RequireSignature
+.\scripts\build-msix.ps1 -Store `
+  -PackageName "<Package/Identity/Name>" `
+  -Publisher "<Package/Identity/Publisher>" `
+  -PublisherDisplayName "<publisher display name>"
 ```
 
-The package is a Windows desktop full-trust package containing `Bard.exe` and
-Store assets. It does not include the NSIS installer. The Windows SDK
-`makeappx.exe` validates the manifest while packing; the package must also pass
-Partner Center validation and the Windows App Certification Kit before release.
+All three values come from **Partner Center › Product identity** after the
+name is reserved. The Store rejects a package whose identity differs, so they
+are never guessed. The package is a Windows desktop full-trust MSIX containing
+the signed `bard.exe` and the Store assets, with a `windows.startupTask`
+extension (`BardStartup`) for login start. It is uploaded unsigned: Microsoft
+signs it after certification. The Windows SDK validates the manifest while
+packing; Partner Center and the Windows App Certification Kit validate it again.
 
-For the Store submission, Microsoft re-signs the MSIX package after
-certification. The direct-download copy still needs the public code-signing
-certificate; the Store copy and the direct copy are separate release assets.
-Store updates are handled by Microsoft. The current Tauri updater feed is for
-the direct NSIS channel; a directly sideloaded MSIX needs a new signed package
-until a separate MSIX update feed is configured.
+## What the Store copy does differently
+
+| Behaviour | Store copy | Direct copy |
+|---|---|---|
+| Updates | Delivered by the Store; the in-app updater stands down | Tauri updater, user-confirmed |
+| Login start | Startup task, switched in Settings › Apps › Startup | Run key, switched in Settings › General |
+| Explorer `Send to Bard` | Not registered | Registered by the installer |
+| Licence | Same 14-day trial and $20 annual licence, bought on miiso.dev | Same |
+
+The application reads its package identity at runtime and reports the Store
+channel in About.
 
 ## Partner Center checklist
 
-- Reserve the final product name and copy the exact identity name into the
-  package manifest.
-- Use `miiso.dev/privacy` as the privacy-policy URL.
-- Select the correct category and declare the paid $20/year licence and 14-day
-  trial if offered through the Store.
-- Supply at least one real Bard screenshot and the required Store logo assets;
-  do not use a development-only or unsigned screenshot.
-- Declare the Windows 10/11 system requirements and the WebView2/runtime
-  assumptions honestly.
-- Upload the validated MSIX package, not the NSIS installer, for the MSIX
-  submission path.
-- Complete the privacy, age-rating, pricing/availability, and submission-notes
-  sections before requesting certification.
-- Test the Store-installed package on a clean Windows account before release.
+- Reserve the product name; copy the identity values into the build command.
+- Privacy policy URL: `https://miiso.dev/privacy`.
+- Pricing: list Bard as free to install; the licence is purchased on miiso.dev.
+  Declare the in-app purchase path in the submission notes.
+- At least one real Bard screenshot and the required Store logo assets; never
+  a development-only capture.
+- System requirements: Windows 10 2004 (build 19041) or later, x64, WebView2
+  runtime.
+- Upload the MSIX package, never the NSIS installer.
+- Complete privacy, age rating, pricing/availability and submission notes
+  before requesting certification.
+- Test the Store-installed copy on a clean Windows account before release.
 
 ## Release relationship
 
-The Store listing and `/tools/bard` must describe the same version, price,
-trial, local-first boundary, privacy disclosures, and support contact. The
-release record must contain:
+The Store listing and `/tools/bard` describe the same version, price, trial,
+local-first boundary, privacy disclosures and support contact. The release
+record holds the source commit and tag, the installer and MSIX SHA-256 hashes,
+the package identity and version, the Partner Center certification receipt, and
+clean-machine install, launch and uninstall evidence.
 
-- source commit and tag;
-- NSIS and MSIX SHA-256 hashes;
-- the signed MSIX package identity and version;
-- Partner Center submission/certification receipt;
-- clean-machine install, launch, update, and uninstall evidence.
-
-Do not call the Store channel live until the listing is published and the
-production download variables point at the matching signed direct artifacts.
+The Store channel is live only when the listing is published and
+`NEXT_PUBLIC_BARD_STORE_URL` points at it.

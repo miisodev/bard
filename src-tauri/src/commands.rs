@@ -895,6 +895,9 @@ pub fn set_onboarding_completed(app: AppHandle, done: bool) {
 
 #[tauri::command]
 pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    if crate::packaging::is_packaged() {
+        return Err("Windows manages how the Store copy of Bard starts.".into());
+    }
     if enabled {
         app.autolaunch().enable().map_err(|e| e.to_string())?;
     } else {
@@ -902,6 +905,37 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     }
     db::set_setting(&app, "autostart_enabled", if enabled { "1" } else { "0" });
     Ok(())
+}
+
+/// Opens a miiso.dev page — purchase, licence management, terms, privacy — in
+/// the default browser. The webview has no opener of its own, so a plain link
+/// went nowhere; only Bard's own site is allowed through.
+#[tauri::command]
+pub fn open_link(url: String) -> Result<(), String> {
+    let allowed = url.starts_with("https://miiso.dev/")
+        && url.len() <= 256
+        && url
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/:.-_?=&#%".contains(c));
+    if !allowed {
+        return Err("Bard only opens pages on miiso.dev.".into());
+    }
+    std::process::Command::new("explorer.exe")
+        .arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open the browser: {error}"))
+}
+
+/// The Store copy's login start is its manifest's startup task, which Windows
+/// lists under Settings › Apps › Startup; that page is where it is switched.
+#[tauri::command]
+pub fn open_startup_settings() -> Result<(), String> {
+    std::process::Command::new("explorer.exe")
+        .arg("ms-settings:startupapps")
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open Windows Settings: {error}"))
 }
 
 #[tauri::command]

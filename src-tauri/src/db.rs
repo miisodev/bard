@@ -93,6 +93,8 @@ pub struct AppState {
     pub mic_ready: bool,
     pub active_item_id: Option<i64>,
     pub license: crate::license::LicenseStatus,
+    /// "direct" for the miiso.dev download, "store" for the Microsoft Store copy.
+    pub channel: String,
 }
 
 fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -667,6 +669,13 @@ pub fn add_note_to_image(app: &AppHandle, id: i64) -> Option<String> {
     path
 }
 
+/// Where captured images live. Resolved from the environment rather than from
+/// managed state: a window can ask for an image before setup() has run, and a
+/// read that raced it used to come back empty for good.
+pub fn images_root() -> Option<std::path::PathBuf> {
+    local_data_root().map(|root| root.join("images"))
+}
+
 fn local_data_root() -> Option<std::path::PathBuf> {
     std::env::var("LOCALAPPDATA")
         .ok()
@@ -1054,6 +1063,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
                 last_checked_at: None,
                 message: Some("Bard is still starting.".into()),
             },
+            channel: crate::packaging::channel().into(),
         };
     }
     AppState {
@@ -1072,12 +1082,94 @@ pub fn get_state(app: &AppHandle) -> AppState {
         mic_ready: crate::dictation::mic_ready(),
         active_item_id: active_item(app),
         license: crate::license::status(app),
+        channel: crate::packaging::channel().into(),
     }
+}
+
+/// Rewrites stored file paths that still point into the legacy roaming data
+/// folder. The startup migration moves the files; a row is rebased only once
+/// its file exists at the new location, so a file the migration could not move
+/// keeps the path it can still be read from.
+pub fn rebase_legacy_paths(conn: &Connection, legacy: &std::path::Path, local: &std::path::Path) {
+    let legacy_prefix = legacy.to_string_lossy().to_string();
+    let local_prefix = local.to_string_lossy().to_string();
+    for (table, column) in [
+        ("items", "image_path"),
+        ("attachments", "path"),
+        ("custom_models", "local_path"),
+    ] {
+        let Ok(mut statement) = conn.prepare(&format!(
+            "SELECT rowid, {column} FROM {table} WHERE {column} IS NOT NULL"
+        )) else {
+            continue;
+        };
+        let rows: Vec<(i64, String)> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map(|mapped| mapped.flatten().collect())
+            .unwrap_or_default();
+        for (rowid, stored) in rows {
+            let Some(rest) = strip_path_prefix(&stored, &legacy_prefix) else {
+                continue;
+            };
+            let candidate = format!("{local_prefix}{rest}");
+            if std::path::Path::new(&candidate).exists() {
+                let _ = conn.execute(
+                    &format!("UPDATE {table} SET {column} = ?1 WHERE rowid = ?2"),
+                    params![candidate, rowid],
+                );
+            }
+        }
+    }
+}
+
+/// Windows paths compare case-insensitively, and a prefix only counts when it
+/// ends on a path boundary — `...\bard` must not match `...\bard-other`.
+fn strip_path_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    if value.len() < prefix.len() || !value.is_char_boundary(prefix.len()) {
+        return None;
+    }
+    let (head, rest) = value.split_at(prefix.len());
+    if !head.eq_ignore_ascii_case(prefix) {
+        return None;
+    }
+    (rest.is_empty() || rest.starts_with('\\') || rest.starts_with('/')).then_some(rest)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_roaming_paths_are_rebased_once_the_file_has_moved() {
+        let root = std::env::temp_dir().join(format!("bard-rebase-test-{}", now_ms()));
+        let legacy = root.join("Roaming").join("com.miisodev.bard");
+        let local = root.join("Local").join("com.miisodev.bard");
+        std::fs::create_dir_all(local.join("images")).unwrap();
+        std::fs::write(local.join("images").join("moved.png"), b"png").unwrap();
+        let conn = init(&root.join("test.db")).unwrap();
+        let moved = legacy.join("images").join("moved.png");
+        let stuck = legacy.join("images").join("stuck.png");
+        for path in [&moved, &stuck] {
+            conn.execute(
+                "INSERT INTO items (content, kind, image_path, created_at, updated_at) VALUES ('', 'image', ?1, 0, 0)",
+                params![path.to_string_lossy().to_uppercase()],
+            )
+            .unwrap();
+        }
+        rebase_legacy_paths(&conn, &legacy, &local);
+        let paths: Vec<String> = conn
+            .prepare("SELECT image_path FROM items ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert!(paths[0].starts_with(&local.to_string_lossy().to_string()));
+        assert!(paths[0].ends_with("MOVED.PNG"));
+        assert_eq!(paths[1], stuck.to_string_lossy().to_uppercase());
+        assert!(strip_path_prefix(r"C:\a\bard-other\x", r"C:\a\bard").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn old_custom_model_rows_keep_historical_load_verification() {

@@ -368,8 +368,9 @@ on a roaming profile.
 ```sh
 bun install
 bun run tauri dev                     # dev server and app
-bun run tauri build --bundles nsis    # direct NSIS installer
-bun run build:msix                     # direct + Store MSIX package
+bun run tauri build --bundles nsis    # direct NSIS installer (unsigned, local)
+scripts/build-release.ps1             # signed direct release
+bun run build:msix                     # Microsoft Store MSIX package
 bun run build                         # typecheck, CSS audit, bundle
 ```
 
@@ -380,19 +381,30 @@ typecheck can see and both of which are silent at runtime — a duplicated
 selector is not an error, it is a rule that quietly wins.
 
 The Tauri bundle target is `nsis`; `scripts/build-msix.ps1` packages the same
-release binary as a Windows desktop full-trust MSIX. The generated custom NSIS
-installer carries the welcome, install-location, progress and finish-page
-contract in `Product & Business §7`; the MSIX manifest is validated by the
-Windows SDK and submitted separately to Partner Center. A release job fails
+signed release binary as a Windows desktop full-trust MSIX for the Store only,
+under the Identity Name and Publisher that Partner Center assigns, with a
+`windows.startupTask` extension for login start. The NSIS installer carries the
+standard welcome, install-location, progress and finish pages in
+`Product & Business §7`; the MSIX manifest is validated by the Windows SDK and
+submitted to Partner Center. At runtime the application reads its own package
+identity (`GetCurrentPackageFullName`): a packaged copy reports the Store
+channel, stands its updater down and leaves login start to the startup task.
+Tauri inserts exactly four installer hooks — `NSIS_HOOK_PREINSTALL`,
+`NSIS_HOOK_POSTINSTALL`, `NSIS_HOOK_PREUNINSTALL`, `NSIS_HOOK_POSTUNINSTALL` —
+and no hook raises a dialog, because the updater installs in passive mode. A release job fails
 when any MSI artifact is emitted. The NSIS installer registers the narrow
 Explorer verb below, preserves that registration across upgrades and removes it
 on uninstall. Installer failure, cancellation and rollback leave the previous
 installed version runnable.
 
 Authenticode signing follows [Tauri's Windows signing contract](https://v2.tauri.app/distribute/sign/windows/)
-for `bard.exe` and the NSIS installer, and uses the same publicly trusted
-publisher identity to sign the direct MSIX package. The updater artifact has its
-own required signature under the [Tauri updater contract](https://v2.tauri.app/plugin/updater/).
+and happens inside the build: a certificate thumbprint (token or store
+certificate) or a cloud signer's sign command is supplied at release time, so
+Tauri signs `bard.exe`, the installer and its uninstaller before it writes the
+updater signature over the final file. Signing after the build would ship an
+installer holding the unsigned binary and break the updater signature. The
+updater artifact has its own required signature under the
+[Tauri updater contract](https://v2.tauri.app/plugin/updater/).
 Signing private keys and passwords are release-operator secrets and never enter
 the repository, the webview or a diagnostic artefact. The public updater key and
 active/next licence verification keys may ship in the application.
@@ -416,7 +428,7 @@ listener are ready; a warm launch routes it to the running panel. The receiving
 command accepts no executable path, shell command, working directory or
 serialized file content. It verifies that each path resolves to an existing
 regular file accessible by the current user, then passes the paths to the same
-bounded attachment pipeline as **Attach Files…**. Duplicate paths in one
+bounded attachment pipeline as **Attach**. Duplicate paths in one
 handoff collapse to one item. A missing or inaccessible file produces a safe
 per-file failure and never blocks the valid files.
 

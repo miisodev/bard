@@ -1,16 +1,13 @@
 /*
   The settings window.
 
-  A sidebar and a scrolling pane, in a window with native chrome. Everything
-  here is built from the tokens and the primitives in ui.tsx — if a pane ever
-  needs a one-off rule, the primitive is missing.
+  A sidebar and a scrolling pane in a frameless companion (`.companion` in
+  styles.css). Everything here is built from the tokens and the primitives in
+  ui.tsx — if a pane ever needs a one-off rule, the primitive is missing.
 */
 
 .settings-root {
   display: flex;
-  height: 100vh;
-  background: var(--canvas);
-  color: var(--text);
 }
 
 /* ---------- sidebar ---------- */
@@ -23,6 +20,10 @@
   gap: var(--sp-1);
   padding: var(--sp-7) var(--sp-5);
   border-right: 1px solid var(--rule);
+}
+
+.settings-nav-title {
+  padding: var(--sp-1) var(--sp-5) var(--sp-5);
 }
 
 .settings-nav button {
@@ -44,6 +45,7 @@
 .settings-nav button.on {
   background: var(--accent);
   color: var(--text-on-accent);
+  font-weight: var(--fw-medium);
 }
 
 .settings-nav button:focus-visible {

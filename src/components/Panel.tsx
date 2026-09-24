@@ -471,8 +471,8 @@ export default function Panel({
           <button
             type="button"
             className="icon-btn header-action"
-            aria-label="Create drawing"
-            title="Create drawing"
+            aria-label="Draw"
+            title="Draw"
             onClick={() => void api.openDraw()}
           >
             <Paintbrush size={16} strokeWidth={1.8} />
@@ -480,8 +480,8 @@ export default function Panel({
           <button
             type="button"
             className="icon-btn header-action"
-            aria-label="Open Settings"
-            title="Open Settings"
+            aria-label="Settings"
+            title="Settings"
             onClick={() => void api.openSettings()}
           >
             <Settings2 size={16} strokeWidth={1.8} />
@@ -583,7 +583,7 @@ export default function Panel({
       {state.license.state === "restricted" ? (
         <div className="license-gate" role="status">
           <span>{state.license.message || "Activate Bard to continue capturing."}</span>
-          <button type="button" className="btn" onClick={() => void api.openSettings()}>Open Settings</button>
+          <button type="button" className="btn" onClick={() => void api.openSettings()}>Activate</button>
         </div>
       ) : null}
 
@@ -598,7 +598,7 @@ export default function Panel({
           <button
             type="button"
             className="composer-add"
-            aria-label="Attach or draw"
+            aria-label="Attach"
             disabled={!state.license.canUse}
             aria-haspopup="menu"
             onClick={(e) => {
@@ -688,8 +688,7 @@ export default function Panel({
           at={composerMenu}
           onClose={() => setComposerMenu(null)}
           entries={[
-            { label: "Attach Files…", onClick: () => fileInputRef.current?.click() },
-            { label: "Create Drawing…", onClick: () => void api.openDraw() },
+            { label: "Attach", onClick: () => fileInputRef.current?.click() },
           ]}
         />
       ) : null}
@@ -713,13 +712,13 @@ export default function Panel({
             <button className="icon-btn" aria-label="Close shortcuts" onClick={() => setShowShortcuts(false)}>×</button>
           </div>
           <div className="shortcut-list">
-            <div><kbd>Enter</kbd><span>Copy active or selected items</span></div>
-            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd><span>Copy as Markdown list</span></div>
-            <div><kbd>Ctrl</kbd><kbd>K</kbd><span>Switch section</span></div>
-            <div><kbd>Ctrl</kbd><kbd>,</kbd><span>Open Settings</span></div>
-            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd><span>Open Draw</span></div>
-            <div><kbd>Space</kbd><span>Toggle done</span></div>
-            <div><kbd>Esc</kbd><span>Close, clear, or hide</span></div>
+            <div><kbd>Enter</kbd><span>Copy</span></div>
+            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd><span>Copy as list</span></div>
+            <div><kbd>Ctrl</kbd><kbd>K</kbd><span>Sections</span></div>
+            <div><kbd>Ctrl</kbd><kbd>,</kbd><span>Settings</span></div>
+            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd><span>Draw</span></div>
+            <div><kbd>Space</kbd><span>Done</span></div>
+            <div><kbd>Esc</kbd><span>Close</span></div>
           </div>
         </div>
       ) : null}

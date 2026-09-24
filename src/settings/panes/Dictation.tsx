@@ -173,8 +173,8 @@ export default function DictationPane(_: PaneProps) {
       {!loading && error ? <Note tone="danger">{error}</Note> : null}
 
       <Note>
-        Audio capture and transcription stay on this device. If cloud post-processing is
-        enabled, only the finished transcript text is sent to the service you configure.
+        Audio capture and transcription stay on this device. If Refine is on, only the
+        finished transcript text is sent to the service you configure.
       </Note>
     </Pane>
   );
@@ -282,11 +282,11 @@ export function PostprocessingPane(_: PaneProps) {
       .map((value) => value.trim())
       .filter(Boolean);
     if (enabled && !normalizedModel) {
-      setError("Enter the exact OpenRouter model ID before enabling post-processing.");
+      setError("Enter the exact OpenRouter model ID before turning on Refine.");
       return;
     }
     if (enabled && !keyConfigured && !apiKey.trim()) {
-      setError("Add an OpenRouter API key before enabling post-processing.");
+      setError("Add an OpenRouter API key before turning on Refine.");
       return;
     }
 
@@ -311,7 +311,7 @@ export function PostprocessingPane(_: PaneProps) {
       setEnabled(next.enabled);
       setModelId(next.modelIds?.join(",") ?? next.modelId ?? "");
       setApiKey("");
-      setStatus({ tone: "success", message: "Post-processing settings saved." });
+      setStatus({ tone: "success", message: "Refine settings saved." });
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -386,7 +386,7 @@ export function PostprocessingPane(_: PaneProps) {
       setSettings(next);
       setEnabled(false);
       setApiKey("");
-      setStatus({ tone: "success", message: "API key cleared. Cloud post-processing is off." });
+      setStatus({ tone: "success", message: "API key cleared. Refine is off." });
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -398,8 +398,8 @@ export function PostprocessingPane(_: PaneProps) {
 
   return (
     <Pane
-      title="Post-processing"
-      description="Optional text cleanup after local transcription. Off by default."
+      title="Refine"
+      description="Optional cloud cleanup of finished transcripts. Off by default."
     >
       <Group
         title="OpenRouter"
@@ -408,14 +408,14 @@ export function PostprocessingPane(_: PaneProps) {
         <Row
           label={
             <span className="setting-label-with-tag">
-              Cloud post-processing
+              Refine transcripts
               <Tag tone={enabled ? "success" : "muted"}>{enabled ? "On" : "Off"}</Tag>
             </span>
           }
           hint="The local transcript is used unchanged whenever this is off or a request fails."
         >
           <Toggle
-            label="Cloud post-processing"
+            label="Refine transcripts"
             checked={enabled}
             disabled={controlsDisabled}
             onChange={(next) => {
@@ -501,7 +501,7 @@ export function PostprocessingPane(_: PaneProps) {
             onClick={() => void clearKey()}
             disabled={controlsDisabled || (!keyConfigured && !apiKey)}
             ariaBusy={clearing}
-            title="Clear the stored key and turn cloud post-processing off"
+            title="Clear the stored key and turn Refine off"
           >
             {clearing ? <LoaderCircle className="spinning" aria-hidden="true" /> : <Eraser aria-hidden="true" />}
             Clear key
@@ -519,13 +519,13 @@ export function PostprocessingPane(_: PaneProps) {
       {loading ? (
         <div className="loading-row" role="status">
           <LoaderCircle className="spinning" aria-hidden="true" />
-          Loading post-processing settings…
+          Loading Refine settings…
         </div>
       ) : error && !settings ? (
         <div className="error-empty" role="alert">
           <AlertCircle aria-hidden="true" />
           <div>
-            <strong>Post-processing settings could not be loaded.</strong>
+            <strong>Refine settings could not be loaded.</strong>
             <span>{error}</span>
           </div>
           <Button onClick={loadSettings}>
@@ -548,9 +548,8 @@ export function PostprocessingPane(_: PaneProps) {
       ) : null}
 
       <Note>
-        Audio and local transcription always stay on this machine. When cloud
-        post-processing is enabled, only the already-produced transcript text is sent to
-        OpenRouter. Bard has no account, sync, or telemetry.
+        Audio and local transcription always stay on this machine. When Refine is on,
+        only the already-produced transcript text is sent to OpenRouter. Bard has no account, sync, or telemetry.
       </Note>
     </Pane>
   );

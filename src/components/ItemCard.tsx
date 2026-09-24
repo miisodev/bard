@@ -4,12 +4,13 @@ import { api } from "../store";
 import type { Attachment, Item } from "../types";
 
 /*
-  A card is a checkbox and its text. That is the whole of it.
+  A card is a checkbox, its text, and a quiet Copy that surfaces only on the
+  card you are pointing at or working on.
 
   Copper puts no timestamp, no action row and no branding on a card: everything
-  a card can do is reachable from the keyboard or the context menu, which keeps
-  the list scannable at a glance and stops the chrome competing with the content.
-  Resist adding affordances here — the empty space is the design.
+  else a card can do is reachable from the keyboard or the context menu, which
+  keeps the list scannable at a glance and stops the chrome competing with the
+  content. Resist adding affordances here — the empty space is the design.
 */
 export default function ItemCard({
   item,
@@ -45,6 +46,7 @@ export default function ItemCard({
   onEditDone: () => void;
 }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageMissing, setImageMissing] = useState(false);
   const [draft, setDraft] = useState(item.content);
   const [thumbUrls, setThumbUrls] = useState<Map<number, string>>(new Map());
 
@@ -52,7 +54,10 @@ export default function ItemCard({
 
   useEffect(() => {
     if (item.kind !== "image") return;
-    void api.itemImageData(item.id).then(setImageUrl);
+    void api.itemImageData(item.id).then((url) => {
+      setImageUrl(url);
+      setImageMissing(!url);
+    });
   }, [item.id, item.kind]);
 
   useEffect(() => {
@@ -102,22 +107,6 @@ export default function ItemCard({
     >
       <button
         type="button"
-        className="item-copy"
-        aria-label={`Copy ${item.kind === "image" ? "image" : "text"}`}
-        title="Copy"
-        onClick={(e) => {
-          e.stopPropagation();
-          onCopyImage();
-        }}
-      >
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="5.25" y="5.25" width="7.25" height="7.25" rx="1.25" />
-          <path d="M3.25 10.75H3.5A1.5 1.5 0 0 1 3.5 8.25v-4.5A1.5 1.5 0 0 1 5 2.25h4.5A1.5 1.5 0 0 1 11 3.75v.25" />
-        </svg>
-      </button>
-
-      <button
-        type="button"
         className="check"
         role="checkbox"
         aria-checked={done}
@@ -141,7 +130,13 @@ export default function ItemCard({
       </button>
 
       <div className="item-main">
-        {item.kind === "image" && imageUrl ? (
+        {item.kind === "image" && !imageUrl ? (
+          // An image row must never render as an empty card: while it loads it
+          // holds its place, and a file that is gone says so.
+          <div className={imageMissing ? "item-missing" : "item-image-pending"}>
+            {imageMissing ? "Image unavailable" : null}
+          </div>
+        ) : item.kind === "image" && imageUrl ? (
           // Clicking the image copies it back to the clipboard, as Copper does.
           <img src={imageUrl} alt="" className="item-image" onClick={(e) => {
             e.stopPropagation();
@@ -195,6 +190,23 @@ export default function ItemCard({
           </div>
         ) : null}
       </div>
+
+      {/* In the card's own column, so text never runs underneath it. */}
+      <button
+        type="button"
+        className="item-copy"
+        aria-label={`Copy ${item.kind === "image" ? "image" : "text"}`}
+        title="Copy"
+        onClick={(e) => {
+          e.stopPropagation();
+          onCopyImage();
+        }}
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="5.5" y="5.5" width="8" height="8" rx="2" />
+          <path d="M10.5 3.5v-.25A1.75 1.75 0 0 0 8.75 1.5h-5.5A1.75 1.75 0 0 0 1.5 3.25v5.5A1.75 1.75 0 0 0 3.25 10.5h.25" />
+        </svg>
+      </button>
     </div>
   );
 }

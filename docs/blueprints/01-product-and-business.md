@@ -34,7 +34,7 @@ It is **one keyboard-first panel**, always a shortcut away, that holds captured
 text, images and drawings and transcribes speech on the machine with the three
 curated GGUF roles defined in `Technology §4` or another compatible local model.
 Audio capture and local transcription remain on-device. When the person
-explicitly enables Post-processing, only the already-produced transcript text
+turns on Refine, only the already-produced transcript text
 may be sent to the fixed OpenRouter endpoint through the first model ID they
 entered; audio and unrelated local data remain on the machine.
 
@@ -475,37 +475,44 @@ owned here and specified in `Technology §8`.
 
 ## §7 Distribution
 
-**miiso.dev and the Microsoft Store are the channels.** The product page sells
-the recurring annual licence and serves the direct Windows packages. The direct
-consumer download is a signed **NSIS** installer and a signed **MSIX** package.
-The Store submission is an MSIX package; Microsoft re-signs its Store copy after
-certification. No MSI package is published to consumers.
+**miiso.dev and the Microsoft Store are the channels, one package each.** The
+product page sells the recurring annual licence and serves one direct download:
+a signed **NSIS** installer. The Store carries the **MSIX** package, submitted
+under the Partner Center identity; Microsoft signs, distributes and updates that
+copy. There is no downloadable MSIX: a sideloaded package would carry a
+different identity from the Store copy, install beside it, and never receive an
+update. No MSI package is published to consumers.
 
-**The NSIS installer is the first-run product surface.** Its custom pages use
-the same name, typography, spacing and restrained language as bard: welcome,
-install location, progress, and a finish page that launches the application.
-The installer does not carry a separate visual system or a dense feature
-solicit. First-run onboarding owns the feature, shortcut and licence-key
-walkthrough in `Surfaces §2`.
+**The installer is brief; the app is the first-run surface.** The NSIS installer
+shows the standard pages — welcome, install location, progress, and a finish
+page that launches Bard — and asks nothing else. The Store copy has no installer
+at all, so first-run onboarding in the application owns the feature, shortcut
+and licence-key walkthrough for both channels (`Surfaces §2`).
 
 **The installer and every downloaded update are signed.** An unsigned Windows
 binary triggers SmartScreen, and a paid product that opens with a security
 warning has lost the argument before it starts. Authenticode signing and the
 updater's separate artifact signature are both Phase 1 requirements, not polish
-items. The signing requirements are anchored to
+items. A publicly trusted code-signing key lives in hardware — a USB token or a
+certificate authority's cloud signer — so the direct release is signed where
+that key is. Signing names the publisher; SmartScreen reputation still accrues
+with downloads. The signing requirements are anchored to
 [Tauri Windows signing](https://v2.tauri.app/distribute/sign/windows/) and the
 [updater](https://v2.tauri.app/plugin/updater/).
 
-**Updates are checked in-app and applied by the user.** A local trial or an
-unexpired signed lease is required to download an update. The application checks
+**Updates are checked in-app and applied by the user** in the direct copy. A
+local trial or an unexpired signed lease is required to download an update. The application checks
 a release feed, verifies its signature, surfaces an available version, and
 installs only after explicit confirmation. It never updates silently.
 
-**The Microsoft Store is a second supported distribution channel.** It reaches
-people who prefer Store installation and updates. Its MSIX package is submitted
-through Partner Center; Microsoft handles Store package signing after
-certification. The direct miiso.dev channel remains responsible for the signed
-NSIS and MSIX files, their hashes, and the authenticated delivery path.
+**The Microsoft Store is the second channel.** It reaches people who prefer
+Store installation and updates. Its MSIX package is submitted through Partner
+Center; Microsoft signs it after certification and delivers its updates, so the
+Store copy has no in-app updater. Windows starts it at login through the
+package's startup task, switched in Settings › Apps › Startup, and the Explorer
+`Send to Bard` verb belongs to the direct installer only. The direct miiso.dev
+channel remains responsible for the signed NSIS installer, its hashes and its
+update feed.
 Requirements are at
 [Microsoft Store policies](https://learn.microsoft.com/en-us/windows/apps/publish/store-policies).
 
@@ -562,8 +569,8 @@ its checksum policy promises.
 ## §9 The product page
 
 One product page on miiso.dev. It carries what the product does, what it costs,
-the system requirement, a purchase action, the Microsoft Store channel, and the
-signed direct NSIS/MSIX delivery path.
+the system requirement, a purchase action, the Microsoft Store listing, and the
+signed direct installer.
 
 **It answers four questions in this order**, because that is the order a visitor
 asks them: what is this, what does it look like, what does it cost, how do I get

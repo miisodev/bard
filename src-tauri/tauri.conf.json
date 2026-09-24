@@ -47,33 +47,38 @@
       },
       {
         "label": "draw",
-        "title": "Drawing",
+        "title": "Draw",
         "url": "draw.html",
-        "width": 760,
-        "height": 560,
-        "minWidth": 480,
-        "minHeight": 380,
-        "resizable": true,
+        "width": 720,
+        "height": 620,
+        "resizable": false,
         "visible": false,
-        "center": true,
-        "skipTaskbar": false
+        "center": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       },
       {
         "label": "settings",
-        "title": "Bard Settings",
+        "title": "Settings",
         "url": "settings.html",
-        "width": 760,
+        "width": 720,
         "height": 620,
-        "minWidth": 620,
-        "minHeight": 460,
-        "resizable": true,
+        "resizable": false,
         "visible": false,
-        "center": true,
-        "skipTaskbar": false
+        "center": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "devCsp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     }
   },
   "bundle": {

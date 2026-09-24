@@ -1,19 +1,17 @@
 param(
   [string]$Version = "0.1.0",
   [string]$BundleDir = "src-tauri\target\release\bundle\nsis",
-  [string]$MsixDir = "src-tauri\target\release\bundle\msix",
-  [switch]$RequireSignature,
-  [switch]$RequireMsix
+  [switch]$RequireSignature
 )
+# The direct release is the signed NSIS installer and its updater signature.
+# The Microsoft Store MSIX is not a public asset: Microsoft signs it after
+# certification, so it is validated by build-msix.ps1 and Partner Center.
 
 $ErrorActionPreference = "Stop"
 $installer = Join-Path $BundleDir "Bard_${Version}_x64-setup.exe"
 $signature = "$installer.sig"
 $binary = "src-tauri\target\release\bard.exe"
-$msix = Join-Path $MsixDir "Bard_${Version}_x64.msix"
-
 $required = @($installer, $signature, $binary)
-if ($RequireMsix) { $required += $msix }
 foreach ($path in $required) {
   if (-not (Test-Path -LiteralPath $path)) {
     throw "Missing release artifact: $path"
@@ -30,7 +28,6 @@ if ($sevenZip) {
 }
 
 $artifacts = @($binary, $installer, $signature)
-if (Test-Path -LiteralPath $msix) { $artifacts += $msix }
 $hashes = foreach ($path in $artifacts) {
   $item = Get-Item -LiteralPath $path
   [pscustomobject]@{
@@ -60,10 +57,6 @@ if ($RequireSignature) {
   if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed" }
   & $signtool verify /pa /all /v $binary
   if ($LASTEXITCODE -ne 0) { throw "Binary signature verification failed" }
-  if ($RequireMsix) {
-    & $signtool verify /pa /all /v $msix
-    if ($LASTEXITCODE -ne 0) { throw "MSIX package signature verification failed" }
-  }
 }
 
 if ((Get-Item -LiteralPath $signature).Length -lt 32) {

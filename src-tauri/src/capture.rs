@@ -16,9 +16,17 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutSt
 use crate::gesture::{GestureAction, GestureKey, GestureState};
 
 pub const SENTINEL: &str = "\u{200B}bard::capturing\u{200B}";
-const DEFAULT_CAPTURE: &str = "Ctrl+Shift+C";
-const DEFAULT_PANEL: &str = "Ctrl+Shift+Space";
-const KEYBINDS_VERSION: &str = "2";
+/// Chords start unassigned. The defaults are the fixed double-tap gestures —
+/// Shift × 2 captures, Ctrl × 2 dictates — which follow the product's modifier
+/// convention and take no key combination away from other applications. A
+/// chord is for someone who wants one, and they record it themselves.
+const DEFAULT_CAPTURE: &str = "";
+const DEFAULT_PANEL: &str = "";
+/// Written as defaults by keybinds version 2 and never chosen by a person.
+/// Version 3 releases them, so Ctrl+Shift+C reaches terminals and DevTools again.
+const LEGACY_DEFAULTS: [(&str, &str); 2] =
+    [("capture", "Ctrl+Shift+C"), ("panel", "Ctrl+Shift+Space")];
+const KEYBINDS_VERSION: &str = "3";
 static CAPTURING: AtomicBool = AtomicBool::new(false);
 static SHORTCUT_RECORDING: AtomicBool = AtomicBool::new(false);
 static SYNTHETIC_INPUT: AtomicBool = AtomicBool::new(false);
@@ -289,48 +297,83 @@ fn default_keybind_map() -> KeybindMap {
     .unwrap_or_default()
 }
 
+fn binding_text(map: &KeybindMap, key: &str) -> String {
+    map.get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// An empty binding is unassigned, not invalid.
+fn binding(map: &KeybindMap, key: &str, label: &str) -> Result<Option<Shortcut>, String> {
+    let value = binding_text(map, key);
+    if value.is_empty() {
+        return Ok(None);
+    }
+    parse_keybind(&value)
+        .map(Some)
+        .ok_or_else(|| format!("{label} needs a valid shortcut."))
+}
+
+fn assigned_bindings(map: &KeybindMap) -> Result<(Option<Shortcut>, Option<Shortcut>), String> {
+    let capture = binding(map, "capture", "Capture selection")?;
+    let panel = binding(map, "panel", "Toggle panel")?;
+    if let (Some(capture), Some(panel)) = (&capture, &panel) {
+        if capture.id() == panel.id() {
+            return Err("Capture and panel cannot use the same shortcut.".into());
+        }
+    }
+    Ok((capture, panel))
+}
+
 pub fn normalize_keybinds(raw: &str) -> Result<KeybindMap, String> {
-    let mut map = keybind_map(raw);
-    let capture = map
-        .get("capture")
-        .and_then(|value| value.as_str())
-        .and_then(parse_keybind)
-        .ok_or_else(|| "Capture selection needs a valid shortcut.".to_string())?;
-    let panel = map
-        .get("panel")
-        .and_then(|value| value.as_str())
-        .and_then(parse_keybind)
-        .ok_or_else(|| "Toggle panel needs a valid shortcut.".to_string())?;
-    if capture.id() == panel.id() {
-        return Err("Capture and panel cannot use the same shortcut.".into());
-    }
-    map.retain(|key, _| key == "capture" || key == "panel");
-    if map
-        .get("capture")
-        .and_then(|value| value.as_str())
-        .is_none()
-    {
-        map.insert("capture".into(), serde_json::json!(DEFAULT_CAPTURE));
-    }
-    if map.get("panel").and_then(|value| value.as_str()).is_none() {
-        map.insert("panel".into(), serde_json::json!(DEFAULT_PANEL));
-    }
-    Ok(map)
+    let map = keybind_map(raw);
+    assigned_bindings(&map)?;
+    let mut normalized = KeybindMap::new();
+    normalized.insert(
+        "capture".into(),
+        serde_json::json!(binding_text(&map, "capture")),
+    );
+    normalized.insert(
+        "panel".into(),
+        serde_json::json!(binding_text(&map, "panel")),
+    );
+    Ok(normalized)
 }
 
 fn normalized_or_default(raw: &str) -> KeybindMap {
     normalize_keybinds(raw).unwrap_or_else(|_| default_keybind_map())
 }
 
+fn release_legacy_defaults(raw: &str) -> String {
+    let mut map = keybind_map(raw);
+    for (key, legacy) in LEGACY_DEFAULTS {
+        let is_legacy = map
+            .get(key)
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case(legacy));
+        if is_legacy {
+            map.insert(key.into(), serde_json::json!(""));
+        }
+    }
+    serde_json::Value::Object(map).to_string()
+}
+
 pub fn repair_keybinds(app: &AppHandle) {
-    let raw = crate::db::get_setting(app, "keybinds").unwrap_or_default();
-    let normalized = normalized_or_default(&raw);
-    let normalized_value = serde_json::Value::Object(normalized);
-    let normalized_json = normalized_value.to_string();
-    if raw.is_empty() || raw == "{}" || raw != normalized_json {
+    let stored = crate::db::get_setting(app, "keybinds").unwrap_or_default();
+    let current_version =
+        crate::db::get_setting(app, "keybinds_version").as_deref() == Some(KEYBINDS_VERSION);
+    let source = if current_version {
+        stored.clone()
+    } else {
+        release_legacy_defaults(&stored)
+    };
+    let normalized_json = serde_json::Value::Object(normalized_or_default(&source)).to_string();
+    if stored != normalized_json {
         let _ = crate::db::set_setting_checked(app, "keybinds", &normalized_json);
     }
-    if crate::db::get_setting(app, "keybinds_version").as_deref() != Some(KEYBINDS_VERSION) {
+    if !current_version {
         let _ = crate::db::set_setting_checked(app, "keybinds_version", KEYBINDS_VERSION);
     }
 }
@@ -339,34 +382,25 @@ fn register_map(
     manager: &tauri_plugin_global_shortcut::GlobalShortcut<tauri::Wry>,
     map: &KeybindMap,
 ) -> Result<(), String> {
-    let capture = map
-        .get("capture")
-        .and_then(|value| value.as_str())
-        .and_then(parse_keybind)
-        .ok_or_else(|| "Capture selection needs a valid shortcut.".to_string())?;
-    let panel = map
-        .get("panel")
-        .and_then(|value| value.as_str())
-        .and_then(parse_keybind)
-        .ok_or_else(|| "Toggle panel needs a valid shortcut.".to_string())?;
-    if capture.id() == panel.id() {
-        return Err("Capture and panel cannot use the same shortcut.".into());
+    let (capture, panel) = assigned_bindings(map)?;
+    if let Some(capture) = capture {
+        manager
+            .on_shortcut(capture, |app, _shortcut, event| {
+                if !shortcut_recording() && event.state() == ShortcutState::Pressed {
+                    capture_selection(app);
+                }
+            })
+            .map_err(|error| format!("Could not register capture shortcut: {error}"))?;
     }
-
-    manager
-        .on_shortcut(capture, |app, _shortcut, event| {
-            if !shortcut_recording() && event.state() == ShortcutState::Pressed {
-                capture_selection(app);
-            }
-        })
-        .map_err(|error| format!("Could not register capture shortcut: {error}"))?;
-    manager
-        .on_shortcut(panel, |app, _shortcut, event| {
-            if !shortcut_recording() && event.state() == ShortcutState::Pressed {
-                crate::panel::toggle_now(app);
-            }
-        })
-        .map_err(|error| format!("Could not register panel shortcut: {error}"))?;
+    if let Some(panel) = panel {
+        manager
+            .on_shortcut(panel, |app, _shortcut, event| {
+                if !shortcut_recording() && event.state() == ShortcutState::Pressed {
+                    crate::panel::toggle_now(app);
+                }
+            })
+            .map_err(|error| format!("Could not register panel shortcut: {error}"))?;
+    }
     Ok(())
 }
 
@@ -568,6 +602,26 @@ mod tests {
         )
         .expect("map");
         assert!(!map.contains_key("dictate"));
+    }
+
+    #[test]
+    fn chords_default_to_unassigned() {
+        let map = normalize_keybinds("{}").expect("empty map");
+        assert_eq!(map.get("capture").and_then(|v| v.as_str()), Some(""));
+        assert_eq!(map.get("panel").and_then(|v| v.as_str()), Some(""));
+        assert!(shortcuts_in(&map).is_empty());
+    }
+
+    #[test]
+    fn legacy_defaults_are_released_but_chosen_chords_kept() {
+        let released =
+            release_legacy_defaults(r#"{"capture":"ctrl+shift+c","panel":"Ctrl+Alt+Space"}"#);
+        let map = normalize_keybinds(&released).expect("map");
+        assert_eq!(map.get("capture").and_then(|v| v.as_str()), Some(""));
+        assert_eq!(
+            map.get("panel").and_then(|v| v.as_str()),
+            Some("Ctrl+Alt+Space")
+        );
     }
 
     #[test]

@@ -1,13 +1,32 @@
+<#
+  build-msix.ps1 — package Bard for the Microsoft Store.
+
+  MSIX is the Store channel only. The direct download from miiso.dev is the
+  signed NSIS installer; there is no downloadable MSIX, because a sideloaded
+  copy would carry a different identity from the Store copy, install beside it,
+  and never receive updates.
+
+  Partner Center owns the package identity. Copy Package/Identity/Name and
+  Package/Identity/Publisher from Partner Center > Product identity; the Store
+  rejects a package whose identity differs, and re-signs the package itself
+  after certification, so no certificate is involved here.
+
+    # Store submission
+    .\scripts\build-msix.ps1 -Store -PackageName "<Identity Name>" -Publisher "CN=<Partner Center publisher ID>"
+
+    # Local manifest/package validation (not submittable)
+    bun run build:msix
+
+  Build the signed release first (scripts\build-release.ps1): the package
+  embeds that exact bard.exe.
+#>
 param(
   [string]$Version = "0.1.0",
-  [string]$PackageName = "com.miisodev.bard",
-  [string]$Publisher = "",
+  [string]$PackageName = "miisodev.Bard.Validation",
+  [string]$Publisher = "CN=Bard Validation",
+  [string]$PublisherDisplayName = "miiso.dev",
   [string]$OutputDir = "src-tauri\target\release\bundle\msix",
-  [string]$CertificatePath,
-  [string]$CertificatePassword = "",
-  [string]$TimestampUrl = "https://timestamp.digicert.com",
-  [switch]$RequireSignature,
-  [switch]$SkipBinarySigning
+  [switch]$Store
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,9 +38,12 @@ if ($versionParts.Count -ne 3 -or ($versionParts | Where-Object { $_ -notmatch '
 }
 $packageVersion = "$Version.0"
 if ($PackageName -notmatch '^[A-Za-z0-9.-]+$') { throw "PackageName contains unsupported characters." }
+if ($Store -and ($PackageName -eq "miisodev.Bard.Validation" -or $Publisher -eq "CN=Bard Validation")) {
+  throw "A Store package needs the Identity Name and Publisher from Partner Center > Product identity."
+}
 $outputPath = Join-Path $repoRoot $OutputDir
 $staging = Join-Path $repoRoot "src-tauri\target\msix-staging\$Version"
-$package = Join-Path $outputPath "Bard_${Version}_x64.msix"
+$package = Join-Path $outputPath "Bard_${Version}_x64_Store.msix"
 
 function Find-SdkTool([string]$Name) {
   $tool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter $Name -ErrorAction SilentlyContinue |
@@ -33,36 +55,12 @@ function Find-SdkTool([string]$Name) {
 }
 
 $makeAppx = Find-SdkTool "makeappx.exe"
-$signTool = Find-SdkTool "signtool.exe"
 
 if (-not (Test-Path -LiteralPath $binary)) {
-  throw "Missing release binary: $binary. Run the Tauri release build first."
+  throw "Missing release binary: $binary. Run the release build first."
 }
-if ($RequireSignature -and [string]::IsNullOrWhiteSpace($CertificatePath)) {
-  throw "A code-signing PFX is required with -RequireSignature. The package is never published unsigned."
-}
-if ($CertificatePath -and -not (Test-Path -LiteralPath $CertificatePath)) {
-  throw "Certificate not found: $CertificatePath"
-}
-
-if ($CertificatePath -and [string]::IsNullOrEmpty($CertificatePassword)) {
-  $secure = Read-Host "PFX password" -AsSecureString
-  $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-  try {
-    $CertificatePassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
-  } finally {
-    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
-  }
-}
-
-if ([string]::IsNullOrWhiteSpace($Publisher)) {
-  if ($CertificatePath) {
-    $securePassword = ConvertTo-SecureString $CertificatePassword -AsPlainText -Force
-    $certificateInfo = Get-PfxCertificate -FilePath $CertificatePath -Password $securePassword
-    $Publisher = $certificateInfo.Subject
-  } else {
-    $Publisher = "CN=Kevin Miiso Novo"
-  }
+if ($Store -and (Get-AuthenticodeSignature -FilePath $binary).Status -ne "Valid") {
+  throw "The Store package must embed the Authenticode-signed bard.exe from scripts\build-release.ps1."
 }
 
 if (Test-Path -LiteralPath $staging) {
@@ -79,17 +77,24 @@ foreach ($asset in @("StoreLogo.png", "Square44x44Logo.png", "Square150x150Logo.
   Copy-Item -LiteralPath $assetPath -Destination (Join-Path $staging "Assets\$asset")
 }
 
+# uap10 (packagedClassicApp, mediumIL) needs Windows 10 2004, build 19041.
+# The startup task is how a packaged app starts at login: Windows owns it and
+# lists it under Settings > Apps > Startup, and Bard's General pane opens that
+# page instead of writing a Run key the package could never expose.
 $escapedPublisher = [Security.SecurityElement]::Escape($Publisher)
+$escapedPublisherName = [Security.SecurityElement]::Escape($PublisherDisplayName)
 $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
-  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities">
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap10 desktop rescap">
   <Identity Name="$PackageName" Version="$packageVersion" Publisher="$escapedPublisher" ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>Bard</DisplayName>
-    <PublisherDisplayName>miiso.dev</PublisherDisplayName>
+    <PublisherDisplayName>$escapedPublisherName</PublisherDisplayName>
     <Description>Capture. Dictate. Keep. A local-first Windows workspace.</Description>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -97,7 +102,7 @@ $manifest = @"
     <Resource Language="en-us" />
   </Resources>
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
@@ -105,21 +110,16 @@ $manifest = @"
   <Applications>
     <Application Id="Bard" Executable="Bard.exe" EntryPoint="Windows.FullTrustApplication" uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
       <uap:VisualElements DisplayName="Bard" Description="Capture. Dictate. Keep." Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png" BackgroundColor="transparent" />
+      <Extensions>
+        <desktop:Extension Category="windows.startupTask" Executable="Bard.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="BardStartup" Enabled="true" DisplayName="Bard" />
+        </desktop:Extension>
+      </Extensions>
     </Application>
   </Applications>
 </Package>
 "@
 Set-Content -LiteralPath (Join-Path $staging "AppxManifest.xml") -Value $manifest -Encoding UTF8
-
-if ($CertificatePath -and -not $SkipBinarySigning) {
-  & $signTool sign /fd SHA256 /tr $TimestampUrl /td SHA256 /f $CertificatePath /p $CertificatePassword $binary
-  if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed for Bard.exe." }
-}
-if ($CertificatePath) {
-  & $signTool verify /pa /all $binary
-  if ($LASTEXITCODE -ne 0) { throw "Bard.exe signature verification failed." }
-  Copy-Item -LiteralPath $binary -Destination (Join-Path $staging "Bard.exe") -Force
-}
 
 if (Test-Path -LiteralPath $package) { Remove-Item -LiteralPath $package -Force }
 & $makeAppx pack /d $staging /p $package /l
@@ -130,18 +130,16 @@ if (Test-Path -LiteralPath $validationDir) { Remove-Item -LiteralPath $validatio
 if ($LASTEXITCODE -ne 0) { throw "MakeAppx could not unpack the MSIX package for validation." }
 Remove-Item -LiteralPath $validationDir -Recurse -Force
 
-if ($CertificatePath) {
-  & $signTool sign /fd SHA256 /tr $TimestampUrl /td SHA256 /f $CertificatePath /p $CertificatePassword $package
-  if ($LASTEXITCODE -ne 0) { throw "MSIX package signing failed." }
-  & $signTool verify /pa /all $package
-  if ($LASTEXITCODE -ne 0) { throw "MSIX package signature verification failed." }
-}
-
 $item = Get-Item -LiteralPath $package
 [pscustomobject]@{
   File = $item.FullName
   Bytes = $item.Length
   SHA256 = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
-  Signed = [bool]$CertificatePath
+  Identity = "$PackageName / $Publisher"
+  Submittable = [bool]$Store
 } | Format-List
-Write-Host "MSIX package created. It is ready for local validation; publication still requires the release signature gate." -ForegroundColor Green
+if ($Store) {
+  Write-Host "Store package created. Upload it in Partner Center; Microsoft signs it after certification." -ForegroundColor Green
+} else {
+  Write-Host "Validation package created. It carries a placeholder identity and is not submittable." -ForegroundColor Yellow
+}

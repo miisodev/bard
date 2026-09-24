@@ -13,7 +13,11 @@ pub fn position(win: &tauri::WebviewWindow) {
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-const COMPANION_GAP: i32 = 8;
+/// Logical pixels between the panel and a companion. Companions are frameless,
+/// so their outer rectangle is exactly what is drawn and this gap is what the
+/// eye sees — with a native frame, the invisible resize border added 7 px and
+/// dropped the companion's visible bottom edge short of the panel's.
+const COMPANION_GAP: f64 = 8.0;
 
 /// Place Settings or Draw as a companion to the panel. The companion follows
 /// the panel's top edge and physical height, choosing the side with the most
@@ -48,6 +52,7 @@ pub fn place_companion(app: &tauri::AppHandle, label: &str) {
     let work_right = work_x + work.size.width as i32;
     let work_bottom = work_y + work.size.height as i32;
 
+    let gap = (COMPANION_GAP * main.scale_factor().unwrap_or(1.0)).round() as i32;
     let target_width = companion_size.width.min(work.size.width);
     let target_height = main_size.height.min(work.size.height);
     let (frame_width, frame_height) = companion
@@ -63,11 +68,11 @@ pub fn place_companion(app: &tauri::AppHandle, label: &str) {
     let right_x = main_pos
         .x
         .saturating_add(main_size.width as i32)
-        .saturating_add(COMPANION_GAP);
+        .saturating_add(gap);
     let left_x = main_pos
         .x
         .saturating_sub(target_width as i32)
-        .saturating_sub(COMPANION_GAP);
+        .saturating_sub(gap);
     let right_fits = right_x.saturating_add(target_width as i32) <= work_right;
     let left_fits = left_x >= work_x;
     let right_space = (work_right - right_x).max(0);

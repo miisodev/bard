@@ -29,14 +29,25 @@ body {
   background: var(--accent-soft);
 }
 
+/* Overlay-style scrollbars: a slim thumb inset from the edge that appears only
+   while the pointer is over the scrolling surface, so a resting list shows
+   content and nothing else. */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar);
-  border-radius: 4px;
+  background-color: transparent;
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: var(--r-pill);
+  transition: background-color var(--t-base) var(--ease-out);
 }
-::-webkit-scrollbar-track {
+*:hover::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar);
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
@@ -228,8 +239,11 @@ body {
   box-shadow: var(--el-card), 0 0 0 2px var(--accent);
 }
 
+/* The keyboard cursor: a lifted surface and a soft accent hairline — present
+   enough to follow, quiet enough to sit beside a selection ring. */
 .item-card.active:not(.selected) {
-  box-shadow: var(--el-card), inset 2px 0 0 var(--accent);
+  background: var(--surface-hover);
+  box-shadow: var(--el-card), 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .item-card.active:not(.selected) .item-body {
@@ -276,13 +290,13 @@ body {
 }
 
 .item-copy {
-  position: absolute;
-  top: var(--sp-5);
-  right: var(--sp-5);
+  flex: none;
+  align-self: flex-start;
   display: grid;
   place-items: center;
   width: 26px;
   height: 26px;
+  margin: -4px -6px -4px calc(var(--sp-2) * -1);
   padding: 0;
   border: none;
   border-radius: var(--r-sm);
@@ -301,7 +315,7 @@ body {
   height: 15px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.35;
+  stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -383,6 +397,20 @@ body {
   color: inherit;
   border-radius: 3px;
   padding: 0 1px;
+}
+
+.item-image-pending {
+  height: 72px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.item-missing {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
 }
 
 .item-image {
@@ -678,14 +706,26 @@ body {
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  min-height: 30px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface-2);
   color: var(--text);
-  font-size: 12.5px;
-  padding: 6px 12px;
-  cursor: pointer;
   font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 1.2;
+  padding: var(--sp-3) var(--sp-6);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
 }
 
 .btn:hover {
@@ -697,7 +737,7 @@ body {
 .btn.primary {
   background: var(--accent);
   border-color: transparent;
-  color: white;
+  color: var(--text-on-accent);
 }
 
 .btn.primary:hover {
@@ -1437,16 +1477,23 @@ mark {
   color: var(--text-2);
 }
 
+/* A recorded chord reads as keycaps, not as code: each key its own cap. */
 .keys {
-  min-width: 132px;
-  padding: var(--sp-4) var(--sp-5);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-width: 96px;
+  min-height: 30px;
+  padding: var(--sp-2) var(--sp-3);
   border: none;
-  border-radius: var(--r-control);
-  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  background: transparent;
   box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text);
-  font-family: var(--font-mono);
+  color: var(--text-2);
+  font-family: inherit;
   font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
   cursor: pointer;
   transition: box-shadow var(--t-fast) var(--ease-out),
               color var(--t-fast) var(--ease-out);
@@ -1479,10 +1526,14 @@ mark {
 .license-card {
   display: grid;
   gap: var(--sp-5);
-  padding: var(--sp-6);
-  border: 1px solid var(--border);
+  padding: var(--sp-7);
   border-radius: var(--r-card);
   background: var(--surface);
+  box-shadow: var(--el-card);
+}
+
+.pane > .license-card {
+  margin-bottom: var(--sp-9);
 }
 
 .license-card.compact {
@@ -1600,9 +1651,21 @@ mark {
   padding-right: 32px;
 }
 
+/* The reveal control lives inside the field, as a ghost — not a second field. */
 .license-input-wrap .icon-btn {
   position: absolute;
-  right: 4px;
+  right: 3px;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+}
+
+.license-input-wrap .icon-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .license-gate {
@@ -1627,4 +1690,123 @@ mark {
 
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
+}
+
+.keys kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 var(--sp-3);
+  border-radius: 6px;
+  background: var(--surface-2);
+  box-shadow: inset 0 -1px 0 var(--border-strong), inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+}
+
+/* ---------- companions ---------- */
+
+/*
+  Settings and Draw are part of the panel, not separate applications: the same
+  frameless surface, radius and hairline, docked flush beside the panel at its
+  exact height. A title row in the panel's own small-caps voice names the
+  surface; a quiet close sits opposite it, and Esc does the same.
+*/
+.companion {
+  position: relative;
+  height: 100vh;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  overflow: hidden;
+  color: var(--text);
+}
+
+.companion-title {
+  margin: 0;
+  font-family: var(--font-small);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-caption);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.companion-close {
+  position: absolute;
+  top: var(--sp-5);
+  right: var(--sp-5);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
+}
+
+.companion-close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.companion-close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.companion-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.keys.static {
+  cursor: default;
+  box-shadow: none;
+  min-width: 0;
+  padding: 0;
+}
+
+.keys.unset {
+  color: var(--text-3);
+}
+
+.chord-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.chord-clear {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-md);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chord-clear:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.chord-clear:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }

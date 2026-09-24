@@ -23,12 +23,16 @@ alternatives, never the only route.
 
 ## §1 Global shortcuts
 
-Two ordinary OS bindings are active whatever application has focus.
+The double-tap gestures below are the defaults, and they follow one convention:
+Shift captures, Ctrl dictates. Two ordinary OS chords can be added on top; each
+starts **unassigned**, because a registered chord is taken from every other
+application — the old `Ctrl+Shift+C` default silenced copy in Windows Terminal
+and VS Code's terminal, and DevTools' inspect.
 
 | Action | Default | Rebindable |
 |---|---|---|
-| Capture selection | `Ctrl+Shift+C` | Yes |
-| Toggle panel | `Ctrl+Shift+Space` | Yes |
+| Capture | Unassigned | Yes |
+| Panel | Unassigned | Yes |
 
 **Three gestures are fixed and cannot be rebound:**
 
@@ -112,7 +116,7 @@ a cold instance starts once, initializes storage and consumes the same
 handoff. The command never recurses into folders, launches a separate elevated
 process, or accepts a shell command from the selected path.
 
-Files enter the same bounded importer as **Attach Files…**. Duplicate paths in
+Files enter the same bounded importer as **Attach**. Duplicate paths in
 one handoff collapse, ordinary attachments become `manual` retained items, and
 supported images can stand alone. Every rejected path has its own safe failure;
 one unreadable file does not discard valid files. The registration mechanism is

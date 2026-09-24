@@ -1,25 +1,23 @@
-!macro NSIS_HOOK_PREINSTALL
-  ; Tauri 2's current-user NSIS installer registers under Uninstall\Bard.
-  ; The old identifier key never existed on a clean install, which made the
-  ; upgrade prompt silently unreachable.
-  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Bard" "DisplayName"
-  StrCmp $0 "" bard_no_previous_install
-  MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "An existing installation of Bard was detected.$\r$\n$\r$\nClick Yes to repair or upgrade it — your clipboard history and settings are preserved.$\r$\nClick No to cancel." IDYES bard_proceed
-  Abort
-  bard_proceed:
-  bard_no_previous_install:
-!macroend
+; Tauri 2 inserts exactly four hook macros into its generated installer.nsi:
+; NSIS_HOOK_PREINSTALL, NSIS_HOOK_POSTINSTALL, NSIS_HOOK_PREUNINSTALL and
+; NSIS_HOOK_POSTUNINSTALL. A macro under any other name compiles cleanly and
+; never runs — electron-builder's customInstall/customUnInstall did exactly
+; that here, and the Explorer verb they defined was never registered.
+; Confirm against src-tauri/target/release/nsis/x64/installer.nsi.
+;
+; No hook raises a dialog. The updater installs in passive mode, and a prompt
+; in the install section would stop every update on a modal; Tauri's own
+; reinstall page already covers an interactive install over an existing one.
 
-!macro customInstall
-  ; A deliberately small shell integration: Bard appears as a familiar
-  ; "Send to Bard" verb without installing a privileged Explorer extension.
-  ; The application owns the actual file intake and validation.
+!macro NSIS_HOOK_POSTINSTALL
+  ; A deliberately small shell integration: a familiar "Send to Bard" verb
+  ; without a privileged Explorer extension. The application owns the actual
+  ; file intake and validation. Windows 11 lists it under "Show more options".
   WriteRegStr HKCU "Software\Classes\*\shell\BardSend" "MUIVerb" "Send to Bard"
-  WriteRegStr HKCU "Software\Classes\*\shell\BardSend" "Icon" "$INSTDIR\Bard.exe,0"
-  WriteRegStr HKCU "Software\Classes\*\shell\BardSend\command" "" '"$INSTDIR\Bard.exe" "%1"'
+  WriteRegStr HKCU "Software\Classes\*\shell\BardSend" "Icon" "$INSTDIR\${MAINBINARYNAME}.exe,0"
+  WriteRegStr HKCU "Software\Classes\*\shell\BardSend\command" "" '"$INSTDIR\${MAINBINARYNAME}.exe" "%1"'
 !macroend
 
-!macro customUnInstall
-  DeleteRegKey HKCU "Software\Classes\*\shell\BardSend\command"
+!macro NSIS_HOOK_POSTUNINSTALL
   DeleteRegKey HKCU "Software\Classes\*\shell\BardSend"
 !macroend

@@ -36,6 +36,8 @@
     "allow-set-shortcut-recording",
     "allow-set-onboarding-completed",
     "allow-set-autostart",
+    "allow-open-startup-settings",
+    "allow-open-link",
     "allow-set-capture-double-shift",
     "allow-capture-now",
     "allow-save-window-geometry",

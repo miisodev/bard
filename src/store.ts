@@ -66,6 +66,8 @@ export const api = {
   setOnboardingCompleted: (done: boolean) =>
     invoke<void>("set_onboarding_completed", { done }),
   setAutostart: (enabled: boolean) => invoke<unknown>("set_autostart", { enabled }),
+  openStartupSettings: () => invoke<void>("open_startup_settings"),
+  openLink: (url: string) => invoke<void>("open_link", { url }),
   setCaptureDoubleShift: (enabled: boolean) =>
     invoke<void>("set_capture_double_shift", { enabled }),
   setSoundOnCapture: (enabled: boolean) =>
@@ -141,9 +143,10 @@ export const api = {
   dictateCancel: () => invoke<void>("dictate_cancel"),
 };
 
+/** Chords start unassigned: the double-tap gestures are the defaults. */
 export const DEFAULT_KEYBINDS: Record<string, string> = {
-  capture: "Ctrl+Shift+C",
-  panel: "Ctrl+Shift+Space",
+  capture: "",
+  panel: "",
 };
 
 let shortcutRecording = false;

@@ -93,7 +93,7 @@ off selected files and shows the panel.
 **Overflow menu** (`⋯`), in order: **Favorites only** (a toggle) ·
 **Clear completed** · **Export to Markdown**.
 
-**Composer menu** (`⊕`): **Attach Files…**. Drawing is a persistent header
+**Composer menu** (`⊕`): **Attach**. Drawing is a persistent header
 action, so it does not appear as a second route in this menu.
 
 **Item context menu**, opened by right-click, `Shift+F10`, or the Menu key on
@@ -193,7 +193,7 @@ takes focus.
 **Zones.** A frameless companion window (`Technology §2`): a compact title row
 with **Settings** and a close icon, then a sidebar of eight items on the left
 and the active pane on the right. The sidebar order is `General` · `Capture` ·
-`Dictation` · `Models` · `Shortcuts` · `Data` · `About` · `Post-processing`.
+`Dictation` · `Models` · `Refine` · `Shortcuts` · `Data` · `About`.
 Each pane is a title, a one-line description, then groups. A group is one card
 with hairlines between its rows; explanatory notes sit above the card. At narrow
 widths the sidebar becomes labelled icons with tooltips; pane content scrolls
@@ -229,7 +229,7 @@ verifies the exact command rather than trusting the stored preference.
 
 **Input** → Microphone, a select. Hint: `The system default is used unless you
 pick one.` The pane states that audio and local transcription stay on the
-device; if Post-processing is enabled, only the already-produced transcript
+device; if Refine is on, only the already-produced transcript
 text is sent to OpenRouter after local transcription.
 
 **Overlay position** → two independent segmented controls: Vertical (`Top` or
@@ -312,14 +312,16 @@ discovery is list-based.
 
 ### 3.5 Shortcuts
 
-`Shortcuts` · `Global keys, active whatever you are using.`
+`Shortcuts` · `Two taps of a modifier, in any app. Shift captures, Ctrl dictates.`
 
-Two rebindable rows — **Capture selection** and **Toggle panel** — are recorded
-by pressing the combination. A **Fixed gestures** group lists same-key
-`Left Shift × 2`, `Right Shift × 2`, and `Ctrl × 2`; the Control gesture starts
-or stops dictation and cannot be rebound. A **Reset shortcuts** row puts every
-normal binding back. A footer action **Shortcut guide** opens the read-only
-sheet in `Surfaces §7`.
+A **Gestures** group comes first, because the gestures are the defaults: rows
+**Capture**, **Panel** and **Dictate**, each showing its keys as keycaps
+(`Left Shift` `Left Shift`, `Right Shift` `Right Shift`, `Ctrl` `Ctrl`). They
+cannot be rebound. A **Chords** group follows, noted `Optional. A chord takes
+its key combination away from every other app.`: rows **Capture** and **Panel**,
+each unassigned by default and showing **Record** until a chord is recorded,
+then the chord as keycaps with a quiet clear control. A **Reset** row clears
+every chord; the gestures always stay.
 
 ### 3.6 Data
 
@@ -370,20 +372,19 @@ clears the old paid session only after the new activation succeeds. No action
 reveals a stored credential through the webview.
 
 - `Local by default` — `Audio capture, speech recognition, captures, and history stay on this computer. Bard has no account, sync, or telemetry.`
-- `Optional cloud post-processing` — `If you explicitly enable Post-processing, Bard sends only the finished transcript text to OpenRouter. Audio, captures, history, and unrelated items are not sent. Bard falls back to the untouched local transcript whenever cloud processing is off or fails.`
+- `Refine, only if you turn it on` — `Bard then sends the finished transcript text — and nothing else — to OpenRouter. Audio, captures, history, and unrelated items are never sent, and the untouched local transcript is used whenever Refine is off or fails.`
 
 **There is no credits list and no third-party licence roll.** bard ships no
 code from either reference product, and a paid product does not open its About
 pane with other people's names. The obligations it does carry are stated in
 `Product & Business §8`.
 
-### 3.8 Post-processing
+### 3.8 Refine
 
-`Post-processing` · `Optional text cleanup after local transcription. Off by
-default.`
+`Refine` · `Optional cloud cleanup of finished transcripts. Off by default.`
 
 The privacy note reads: `Audio and local transcription always stay on this
-machine. When cloud post-processing is enabled, only the already-produced
+machine. When Refine is on, only the already-produced
 transcript text is sent to OpenRouter.` A lower note adds: `Bard has no
 account, sync, or telemetry.`
 
@@ -522,7 +523,7 @@ begins after it closes, as specified in `Technology §1`.
 |---|---|
 | Listening | `Listening`, bars tracking the microphone |
 | Transcribing | `Transcribing`, bars frozen |
-| Post-processing | `Finishing`, bars frozen after local transcription has completed |
+| Refine | `Finishing`, bars frozen after local transcription has completed |
 | Local fallback | The cloud warning is reported outside the overlay; the preserved local transcript is pasted |
 | Hidden | Nothing. The window stays alive and empty between dictations |
 

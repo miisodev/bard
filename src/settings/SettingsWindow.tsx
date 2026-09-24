@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { AlertCircle, LoaderCircle, RotateCcw } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { AlertCircle, LoaderCircle, RotateCcw, X } from "lucide-react";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
 import type { AppState, ModelProgress } from "../types";
@@ -14,13 +15,14 @@ import DataPane from "./panes/Data";
 import AboutPane from "./panes/About";
 
 /*
-  Settings is its own window.
+  Settings is a companion of the panel.
 
   It used to be a sheet inside a 380px panel, which was already cramped at nine
-  settings — and bard owes the surface of two apps, so it is heading for many
-  times that. The sections are ordered the way the product is used rather than
-  the way it is built: what the app does at rest, then each of its two halves,
-  models, optional post-processing, then keys, data and provenance.
+  settings — and Bard owes the surface of two apps. It now docks beside the
+  panel as a frameless surface of the same material, at the panel's height.
+  The sections are ordered the way the product is used rather than the way it
+  is built: what the app does at rest, then each of its two halves, models,
+  optional cloud refinement, then keys, data and provenance.
 */
 
 const SECTIONS = [
@@ -28,7 +30,7 @@ const SECTIONS = [
   { id: "capture", label: "Capture" },
   { id: "dictation", label: "Dictation" },
   { id: "models", label: "Models" },
-  { id: "postprocessing", label: "Post-processing" },
+  { id: "postprocessing", label: "Refine" },
   { id: "shortcuts", label: "Shortcuts" },
   { id: "data", label: "Data" },
   { id: "about", label: "About" },
@@ -138,9 +140,32 @@ export default function SettingsWindow() {
     void loadState();
   }, [loadState]);
 
+  // Esc closes the companion, exactly as it dismisses the panel. A control
+  // that owns Escape — the shortcut recorder — consumes it before it gets here.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) void getCurrentWindow().close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const close = (
+    <button
+      type="button"
+      className="companion-close"
+      aria-label="Close"
+      title="Close"
+      onClick={() => void getCurrentWindow().close()}
+    >
+      <X aria-hidden="true" strokeWidth={2} />
+    </button>
+  );
+
   if (!state) {
     return (
-      <div className="settings-root">
+      <div className="settings-root companion">
+        {close}
         <main className="settings-load-state">
           <div className="settings-load-content">
             {loadError ? (
@@ -185,8 +210,10 @@ export default function SettingsWindow() {
   };
 
   return (
-    <div className="settings-root">
+    <div className="settings-root companion">
+      {close}
       <nav className="settings-nav" aria-label="Settings sections">
+        <p className="companion-title settings-nav-title">Settings</p>
         {SECTIONS.map((item) => (
           <button
             key={item.id}

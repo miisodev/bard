@@ -5,6 +5,7 @@
   "windows": ["settings"],
   "permissions": [
     "core:event:allow-listen",
+    "core:window:allow-close",
     "core:event:allow-unlisten",
     "dialog:allow-open",
     "updater:default",
@@ -14,6 +15,8 @@
     "allow-set-keybinds",
     "allow-set-shortcut-recording",
     "allow-set-autostart",
+    "allow-open-startup-settings",
+    "allow-open-link",
     "allow-set-capture-double-shift",
     "allow-get-models",
     "allow-get-model",

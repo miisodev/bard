@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RefreshCw, Download, X } from "lucide-react";
+import { RefreshCw, Download } from "lucide-react";
 import type { PaneProps } from "../SettingsWindow";
 import LicenseCard from "../../components/LicenseCard";
 import { api } from "../../store";
@@ -10,6 +10,7 @@ export default function AboutPane({ state, refresh }: PaneProps) {
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<{ version: string; notes: string | null; publishedAt: string | null } | null>(null);
   const [installing, setInstalling] = useState(false);
+  const store = state.channel === "store";
 
   const checkForUpdate = async () => {
     if (checking) return;
@@ -43,46 +44,47 @@ export default function AboutPane({ state, refresh }: PaneProps) {
   return (
     <Pane title="About">
       <Group>
-        <Row label="bard" hint="Capture. Dictate. Keep." />
-        <Row label="Version" hint={state.appVersion} />
+        <Row label="Bard" hint="Capture. Dictate. Keep." />
+        <Row label="Version" hint={store ? `${state.appVersion} · Microsoft Store` : state.appVersion} />
       </Group>
 
       <LicenseCard status={state.license} onStatus={refresh} />
 
       <Group title="Updates">
-        <Row label="Bard updates" hint="Updates are checked only when you ask. Nothing installs silently.">
-          <Button onClick={() => void checkForUpdate()} disabled={checking}>
-            <RefreshCw size={14} aria-hidden="true" />
-            {checking ? "Checking…" : "Check for updates"}
-          </Button>
-        </Row>
-        {updateMessage ? <Note>{updateMessage}</Note> : null}
+        {store ? (
+          <Row label="Updates" hint="The Microsoft Store keeps Bard up to date." />
+        ) : (
+          <Row label="Updates" hint="Checked only when you ask. Nothing installs silently.">
+            <Button onClick={() => void checkForUpdate()} disabled={checking}>
+              <RefreshCw size={14} aria-hidden="true" className={checking ? "spin" : undefined} />
+              {checking ? "Checking" : "Check"}
+            </Button>
+          </Row>
+        )}
         {availableUpdate ? (
           <div className="update-confirm" role="alertdialog" aria-label="Confirm Bard update">
             <div>
               <strong>Install Bard {availableUpdate.version}?</strong>
-              <p>Bard will close while it installs. Your local captures and settings stay in place.</p>
+              <p>Bard closes while it installs. Your captures and settings stay in place.</p>
             </div>
             <div className="row-actions">
-              <Button onClick={() => setAvailableUpdate(null)} aria-label="Cancel update">
-                <X size={14} aria-hidden="true" />
-                Cancel
-              </Button>
-              <Button onClick={() => void installUpdate()} disabled={installing}>
+              <Button onClick={() => setAvailableUpdate(null)}>Cancel</Button>
+              <Button variant="primary" onClick={() => void installUpdate()} disabled={installing}>
                 <Download size={14} aria-hidden="true" />
-                {installing ? "Installing…" : "Install and restart"}
+                {installing ? "Installing" : "Install"}
               </Button>
             </div>
           </div>
         ) : null}
       </Group>
+      {updateMessage ? <Note>{updateMessage}</Note> : null}
 
       <Group title="Legal">
-        <Row label="Terms & licence" hint="Annual term, three activations, offline lease and renewal terms.">
-          <a className="btn" href="https://miiso.dev/terms" target="_blank" rel="noreferrer">Read terms</a>
+        <Row label="Terms" hint="Annual term, three activations, offline lease and renewal.">
+          <Button onClick={() => void api.openLink("https://miiso.dev/terms")}>Read</Button>
         </Row>
-        <Row label="Privacy" hint="Local-data, activation and optional OpenRouter disclosures.">
-          <a className="btn" href="https://miiso.dev/privacy" target="_blank" rel="noreferrer">Read privacy</a>
+        <Row label="Privacy" hint="Local data, activation and the optional OpenRouter disclosures.">
+          <Button onClick={() => void api.openLink("https://miiso.dev/privacy")}>Read</Button>
         </Row>
       </Group>
 
@@ -92,8 +94,8 @@ export default function AboutPane({ state, refresh }: PaneProps) {
           hint="Audio capture, speech recognition, captures, and history stay on this computer. Purchasing uses miiso.dev; Bard has no sync service or telemetry."
         />
         <Row
-          label="Optional cloud post-processing"
-          hint="If you explicitly enable Post-processing, Bard sends only the finished transcript text to OpenRouter. Audio, captures, history, and unrelated items are not sent. Bard falls back to the untouched local transcript whenever cloud processing is off or fails."
+          label="Refine, only if you turn it on"
+          hint="Bard then sends the finished transcript text — and nothing else — to OpenRouter. Audio, captures, history, and unrelated items are never sent, and the untouched local transcript is used whenever Refine is off or fails."
         />
       </Group>
     </Pane>

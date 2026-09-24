@@ -24,6 +24,8 @@ const COMMANDS: &[&str] = &[
     "set_shortcut_recording",
     "set_onboarding_completed",
     "set_autostart",
+    "open_startup_settings",
+    "open_link",
     "set_capture_double_shift",
     "capture_now",
     "save_window_geometry",

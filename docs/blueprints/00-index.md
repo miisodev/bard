@@ -119,4 +119,4 @@ nothing to announce it.
 
 ---
 
-*Library version 1.2 · five documents*
+*Library version 1.3 · five documents*

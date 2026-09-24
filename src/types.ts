@@ -151,6 +151,8 @@ export interface AppState {
   micReady: boolean;
   activeItemId: number | null;
   license: LicenseStatus;
+  /** "direct" for the miiso.dev download, "store" for the Microsoft Store copy. */
+  channel: "direct" | "store";
 }
 
 export interface LicenseStatus {

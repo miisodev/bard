@@ -3,8 +3,8 @@
 ```sh
 bun install
 bun run tauri dev      # dev server + app
-bun run tauri build    # release + NSIS installer
-bun run build:msix     # package the release binary as MSIX
+bun run tauri build    # release + NSIS installer (unsigned, local)
+bun run build:msix     # Store MSIX validation package
 bun run build          # tsc + css-audit + vite — the frontend gate
 ```
 
@@ -131,19 +131,21 @@ are part of the normal Rust suite.
 
 ## Release gate
 
-The public consumer targets are a Microsoft Store **MSIX** and a direct
-current-user **NSIS + MSIX** download. Before a release is published:
+The public consumer targets are a direct current-user **NSIS** installer from
+miiso.dev and a Microsoft Store **MSIX**. Before a release is published:
 
 1. Freeze and tag one clean commit.
-2. Set the Tauri updater private key/password in the release environment.
-3. Sign `bard.exe`, the NSIS installer, and the MSIX package with the same
-   publicly trusted Authenticode publisher identity and a trusted timestamp.
-4. Generate the Tauri `.sig`, `SHA256SUMS`, and a release manifest.
-5. Upload only the signed packages, update signature, hashes, and notices to
-   the release-only repository; submit the MSIX package through Partner Center.
-6. Run `scripts/verify-release.ps1 -RequireSignature -RequireMsix` and the
-   clean-VM NSIS/MSIX install matrix. An unsigned artifact is a private test
-   build, never a paid release.
+2. Build with `scripts/build-release.ps1 -CertificateThumbprint <thumbprint>`
+   (or `-SignCommand` for a cloud signer). Tauri signs `bard.exe`, the
+   installer and its uninstaller inside the build, then writes the updater
+   `.sig` over the signed installer; the script finishes with
+   `scripts/verify-release.ps1 -RequireSignature`.
+3. Build the Store package with `scripts/build-msix.ps1 -Store` and the Partner
+   Center identity; submit it through Partner Center, which signs it.
+4. Generate `SHA256SUMS` and the release manifest, upload the signed installer,
+   updater signature, hashes and notices to the release-only repository.
+5. Run the clean-VM install matrix for both channels. An unsigned artifact is a
+   private test build, never a paid release.
 
 `BARD_LICENSE_SERVER` may point at a local mock during development; use
 `node scripts/mock-license-server.mjs` with

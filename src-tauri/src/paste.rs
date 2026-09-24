@@ -2,7 +2,7 @@ use std::path::Path;
 
 use base64::Engine;
 use image::GenericImageView;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
@@ -40,7 +40,8 @@ pub fn set_image(app: &AppHandle, path: &str) -> Result<(), String> {
 }
 
 pub fn image_data(app: &AppHandle, path: &str) -> Option<String> {
-    let root = app.try_state::<crate::commands::ImagesDir>()?.0.clone();
+    let _ = app;
+    let root = crate::db::images_root()?;
     let candidate = Path::new(path);
     if !crate::hf::path_is_within(&root, candidate) {
         return None;

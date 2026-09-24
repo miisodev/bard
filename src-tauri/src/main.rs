@@ -12,6 +12,7 @@ mod guardian;
 mod hf;
 mod license;
 mod monitor;
+mod packaging;
 mod panel;
 mod paste;
 mod tray;
@@ -63,8 +64,15 @@ fn move_legacy_contents(
         let from = entry.path();
         let to = destination.join(entry.file_name());
         if to.exists() {
-            // Never overwrite a newer local file. A remaining roaming file is
-            // evidence, not permission to destroy one side of the user's data.
+            // A folder present on both sides — `images` and `models` are
+            // created locally at startup — is merged file by file; skipping it
+            // whole stranded every image and model in the roaming profile.
+            // A file present on both sides keeps the local copy: a remaining
+            // roaming file is evidence, not permission to destroy one side of
+            // the user's data.
+            if from.is_dir() && to.is_dir() {
+                move_legacy_contents(&from, &to)?;
+            }
             continue;
         }
         if std::fs::rename(&from, &to).is_err() {
@@ -103,8 +111,17 @@ fn migrate_roaming_data(destination: &std::path::Path) -> std::io::Result<()> {
 
 fn open_database() -> Option<rusqlite::Connection> {
     let dir = local_data_dir()?;
-    migrate_roaming_data(&dir).ok()?;
-    db::init(&dir.join("bard.db")).ok()
+    // A file the migration cannot move stays where it is and keeps working
+    // from there; it is never a reason to start without a database.
+    if let Err(error) = migrate_roaming_data(&dir) {
+        eprintln!("Bard could not finish moving roaming data: {error}");
+    }
+    std::fs::create_dir_all(&dir).ok()?;
+    let connection = db::init(&dir.join("bard.db")).ok()?;
+    if let Some(legacy) = legacy_roaming_dir() {
+        db::rebase_legacy_paths(&connection, &legacy, &dir);
+    }
+    Some(connection)
 }
 
 fn usable_paths(args: &[String]) -> Vec<String> {
@@ -206,20 +223,17 @@ fn main() {
             // target\debug\bard.exe — a build that only works while the Vite
             // dev server happens to be up. Development must not rewrite what
             // the machine launches at login.
+            //
+            // The Store copy is started at login by its manifest's startup
+            // task, which Windows owns; a Run-key entry from inside a package
+            // would only land in the package's private registry.
             if !cfg!(debug_assertions)
+                && !packaging::is_packaged()
                 && db::get_setting(&handle, "autostart_enabled") == Some("1".into())
             {
                 let _ = handle.autolaunch().enable();
             }
 
-            let stored_keybinds = db::get_setting(&handle, "keybinds").unwrap_or_default();
-            if stored_keybinds.is_empty() || stored_keybinds == "{}" {
-                db::set_setting(
-                    &handle,
-                    "keybinds",
-                    "{\"capture\":\"Ctrl+Shift+C\",\"panel\":\"Ctrl+Shift+Space\"}",
-                );
-            }
             capture::repair_keybinds(&handle);
             db::cleanup_origin(&handle, "clipboard");
             db::cleanup_origin(&handle, "dictation");
@@ -236,7 +250,8 @@ fn main() {
             // launching it and being shown nothing reads as a failure to
             // start — so the panel appears unless Windows launched us at
             // login, which is the one case where staying quiet is the point.
-            let launched_at_login = std::env::args().any(|a| a == AUTOSTART_FLAG);
+            let launched_at_login = std::env::args().any(|a| a == AUTOSTART_FLAG)
+                || (packaging::is_packaged() && packaging::launched_near_logon());
             if !launched_at_login && !launched_with_paths {
                 panel::show_now(&handle);
             }
@@ -249,10 +264,19 @@ fn main() {
             // made settings and the canvas unreachable once either had been
             // closed.
             if matches!(window.label(), "settings" | "draw") {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.hide();
-                    panel::focus_panel(window.app_handle());
+                match event {
+                    WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                        panel::focus_panel(window.app_handle());
+                    }
+                    // A companion is part of the panel, so leaving Bard from a
+                    // companion dismisses the whole composition, exactly as
+                    // leaving it from the panel does.
+                    WindowEvent::Focused(focused) => {
+                        panel::on_focus_change(window.app_handle(), *focused);
+                    }
+                    _ => {}
                 }
                 return;
             }
@@ -305,6 +329,8 @@ fn main() {
             commands::set_shortcut_recording,
             commands::set_onboarding_completed,
             commands::set_autostart,
+            commands::open_startup_settings,
+            commands::open_link,
             commands::set_capture_double_shift,
             commands::capture_now,
             commands::save_window_geometry,

@@ -21,7 +21,14 @@ fn info(update: &tauri_plugin_updater::Update) -> UpdateInfo {
     }
 }
 
+/// The Store copy is updated by the Microsoft Store; installing the direct
+/// channel's NSIS package from inside it would leave a second, unpackaged Bard.
+const STORE_UPDATES: &str = "Bard updates through the Microsoft Store.";
+
 pub async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
+    if crate::packaging::is_packaged() {
+        return Err(STORE_UPDATES.into());
+    }
     let updater = app
         .updater_builder()
         .build()
@@ -34,6 +41,9 @@ pub async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
 }
 
 pub async fn install(app: &AppHandle) -> Result<(), String> {
+    if crate::packaging::is_packaged() {
+        return Err(STORE_UPDATES.into());
+    }
     let updater = app
         .updater_builder()
         .build()

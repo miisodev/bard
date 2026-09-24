@@ -1,17 +1,14 @@
 param(
   [string]$Version = "0.1.0",
   [string]$BundleDir = "src-tauri\target\release\bundle\nsis",
-  [string]$MsixDir = "src-tauri\target\release\bundle\msix",
   [string]$OutputDir = "release-metadata"
 )
 $ErrorActionPreference = "Stop"
 New-Item -ItemType Directory -Force $OutputDir | Out-Null
 $installer = Join-Path $BundleDir "Bard_${Version}_x64-setup.exe"
-$msix = Join-Path $MsixDir "Bard_${Version}_x64.msix"
 $binary = "src-tauri\target\release\bard.exe"
 $signature = "$installer.sig"
 $artifactPaths = @($binary, $installer, $signature)
-if (Test-Path -LiteralPath $msix) { $artifactPaths += $msix }
 $artifacts = $artifactPaths | ForEach-Object {
   $item = Get-Item -LiteralPath $_
   [ordered]@{
@@ -31,7 +28,7 @@ $provenance = [ordered]@{
   artifacts = $artifacts
   signing = [ordered]@{
     authenticode = [ordered]@{ required = $true; status = "must be verified by release workflow" }
-    msix = [ordered]@{ required = $true; status = "must be verified by release workflow" }
+    microsoft_store = [ordered]@{ public_asset = $false; status = "MSIX submitted through Partner Center; Microsoft signs it after certification" }
     tauri_updater = [ordered]@{ required = $true; envelope = $signature }
   }
 }

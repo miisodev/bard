@@ -60,14 +60,15 @@ installer can bootstrap it when a clean machine needs it).
 ```sh
 bun install
 bun run tauri dev      # develop
-bun run tauri build    # release + NSIS installer + updater signature
-bun run build:msix     # package the same release binary as MSIX
+bun run tauri build    # local NSIS installer + updater signature (unsigned)
+bun run build:msix     # Store MSIX validation package
 ```
 
-The MSIX command produces an unsigned local validation package by default. For a
-public direct download, sign the executable, NSIS installer, and MSIX package
-with a publicly trusted code-signing PFX. Microsoft Store submission can use the
-MSIX package; Microsoft re-signs the Store copy after certification.
+Bard ships as a signed NSIS installer from miiso.dev and as an MSIX package
+through the Microsoft Store — no downloadable MSIX. The signed direct release is
+built with `scripts/build-release.ps1`, which signs inside the Tauri build using
+a hardware-held certificate; the Store package takes its identity from Partner
+Center and is signed by Microsoft. See `docs/RELEASE_RUNBOOK.md`.
 
 The three model roles are pinned to the hash-verified
 `https://github.com/miisodev/bard-models` release `models-v2`:
