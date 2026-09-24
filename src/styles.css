@@ -1006,6 +1006,10 @@ body {
   display: flex;
   align-items: center;
   gap: 7px;
+  /* Fixed, so the × sits where the click guard hit-tests it
+     (CLOSE_* in dictation/overlay.rs); the label ellipsizes instead. */
+  width: 212px;
+  box-sizing: border-box;
   height: 34px;
   padding: 0 11px;
   border: 0;
@@ -1040,7 +1044,8 @@ body {
 }
 
 .overlay-label {
-  max-width: 158px;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }

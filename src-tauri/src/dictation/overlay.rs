@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -90,6 +90,12 @@ pub fn reposition(app: &AppHandle) {
   one way out, and a finished take puts the pill away itself after pasting.
   Once the take is over and the pill is only reporting (an error, or
   "Cancelling"), a click anywhere puts it away and goes through as normal.
+
+  Clicks on the pill itself never reach its webview either. A click into a
+  WebView2 moves focus into it, and focus moved into a window that must not
+  take focus lands on another of Bard's windows instead — measured: the hidden
+  panel, which is where the transcript was then pasted. So the guard hit-tests
+  the × itself and acts on it directly.
 */
 
 const HIDDEN: u8 = 0;
@@ -98,6 +104,14 @@ const STALE: u8 = 2;
 
 const LISTENING: u8 = 1;
 const WORKING: u8 = 2;
+
+/// The × hit area in CSS pixels within the 260 × 60 overlay window: the
+/// right end of the 212 px pill (`.overlay-pill` in styles.css), generous on
+/// purpose. The two must move together.
+const CLOSE_LEFT: f64 = 192.0;
+const CLOSE_RIGHT: f64 = 240.0;
+const CLOSE_TOP: f64 = 10.0;
+const CLOSE_BOTTOM: f64 = 50.0;
 
 /// How long a report stays up when nobody dismisses it.
 const REPORT_LINGER: Duration = Duration::from_millis(3200);
@@ -123,11 +137,14 @@ static RECT: [AtomicI32; 4] = [
 /// Buttons whose press was held back, so their release is held back too and
 /// no application ever sees half a click.
 static HELD_BUTTONS: AtomicU8 = AtomicU8::new(0);
+/// The overlay's scale factor × 1000, for the × hit test.
+static SCALE_MILLI: AtomicU32 = AtomicU32::new(1000);
 static SIGNALS: OnceLock<Sender<Signal>> = OnceLock::new();
 
 enum Signal {
     Nudge,
     Dismiss,
+    Cancel,
 }
 
 /// Show a live phase of the take: "listening", "transcribing", "finishing"
@@ -227,6 +244,7 @@ pub fn start_guard(app: &AppHandle) {
                     let _ = worker_app.emit("dictation-overlay-nudge", ());
                 }
                 Signal::Dismiss => dismiss(&worker_app),
+                Signal::Cancel => super::cancel(&worker_app),
             }
         }
     });
@@ -252,6 +270,8 @@ fn remember_rect(win: &tauri::WebviewWindow) {
     RECT[1].store(position.y, Ordering::SeqCst);
     RECT[2].store(position.x + size.width as i32, Ordering::SeqCst);
     RECT[3].store(position.y + size.height as i32, Ordering::SeqCst);
+    let scale = win.scale_factor().unwrap_or(1.0).clamp(0.5, 8.0);
+    SCALE_MILLI.store((scale * 1000.0).round() as u32, Ordering::SeqCst);
 }
 
 fn inside_overlay(x: i32, y: i32) -> bool {
@@ -259,6 +279,13 @@ fn inside_overlay(x: i32, y: i32) -> bool {
         && y >= RECT[1].load(Ordering::SeqCst)
         && x < RECT[2].load(Ordering::SeqCst)
         && y < RECT[3].load(Ordering::SeqCst)
+}
+
+fn on_close(x: i32, y: i32) -> bool {
+    let scale = SCALE_MILLI.load(Ordering::SeqCst) as f64 / 1000.0;
+    let css_x = (x - RECT[0].load(Ordering::SeqCst)) as f64 / scale;
+    let css_y = (y - RECT[1].load(Ordering::SeqCst)) as f64 / scale;
+    (CLOSE_LEFT..CLOSE_RIGHT).contains(&css_x) && (CLOSE_TOP..CLOSE_BOTTOM).contains(&css_y)
 }
 
 fn holding_clicks() -> bool {
@@ -275,11 +302,23 @@ enum Verdict {
     Pass,
     Hold,
     HoldAndNudge,
+    HoldAndCancel,
+    HoldAndDismiss,
     PassAndDismiss,
 }
 
+/// Where a button event landed, as the guard sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Target {
+    Elsewhere,
+    Pill,
+    Close,
+}
+
 /// What to do with one button event. Pure, so the whole policy is tested.
-fn judge(holding: bool, stale: bool, inside: bool, pressed: bool, press_was_held: bool) -> Verdict {
+/// `mode` is what the pill shows; `holding` is whether a live take may still
+/// hold clicks elsewhere (false once the watchdog has run out).
+fn judge(mode: u8, holding: bool, target: Target, pressed: bool, press_was_held: bool) -> Verdict {
     if !pressed {
         return if press_was_held {
             Verdict::Hold
@@ -287,25 +326,31 @@ fn judge(holding: bool, stale: bool, inside: bool, pressed: bool, press_was_held
             Verdict::Pass
         };
     }
-    if inside {
-        return Verdict::Pass;
-    }
-    if holding {
-        Verdict::HoldAndNudge
-    } else if stale {
-        Verdict::PassAndDismiss
-    } else {
-        Verdict::Pass
+    match (mode, target) {
+        (HIDDEN, _) => Verdict::Pass,
+        (ACTIVE, Target::Close) => Verdict::HoldAndCancel,
+        (ACTIVE, Target::Pill) => Verdict::HoldAndNudge,
+        (ACTIVE, Target::Elsewhere) if holding => Verdict::HoldAndNudge,
+        (ACTIVE, Target::Elsewhere) => Verdict::Pass,
+        (_, Target::Elsewhere) => Verdict::PassAndDismiss,
+        (_, _) => Verdict::HoldAndDismiss,
     }
 }
 
 /// Called by the hook for every mouse button event; true swallows it.
 fn on_button(button: u8, pressed: bool, x: i32, y: i32) -> bool {
     let press_was_held = HELD_BUTTONS.load(Ordering::SeqCst) & button != 0;
+    let target = if !inside_overlay(x, y) {
+        Target::Elsewhere
+    } else if on_close(x, y) {
+        Target::Close
+    } else {
+        Target::Pill
+    };
     let verdict = judge(
+        MODE.load(Ordering::SeqCst),
         holding_clicks(),
-        MODE.load(Ordering::SeqCst) == STALE,
-        inside_overlay(x, y),
+        target,
         pressed,
         press_was_held,
     );
@@ -314,17 +359,22 @@ fn on_button(button: u8, pressed: bool, x: i32, y: i32) -> bool {
             let _ = sender.send(signal);
         }
     };
+    let hold = |signal: Option<Signal>| {
+        HELD_BUTTONS.fetch_or(button, Ordering::SeqCst);
+        if let Some(signal) = signal {
+            let _ = SIGNALS.get().map(|sender| sender.send(signal));
+        }
+        true
+    };
     match verdict {
         Verdict::Pass => false,
         Verdict::Hold => {
             HELD_BUTTONS.fetch_and(!button, Ordering::SeqCst);
             true
         }
-        Verdict::HoldAndNudge => {
-            HELD_BUTTONS.fetch_or(button, Ordering::SeqCst);
-            signal(Signal::Nudge);
-            true
-        }
+        Verdict::HoldAndNudge => hold(Some(Signal::Nudge)),
+        Verdict::HoldAndCancel => hold(Some(Signal::Cancel)),
+        Verdict::HoldAndDismiss => hold(Some(Signal::Dismiss)),
         Verdict::PassAndDismiss => {
             signal(Signal::Dismiss);
             false
@@ -541,28 +591,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_live_take_holds_clicks_elsewhere_and_a_report_lets_them_through() {
-        // Live: a press elsewhere is held and nudges; its release is held too.
+    fn a_live_take_holds_every_click_and_only_the_close_button_ends_it() {
+        use Target::*;
+        // Elsewhere: held, and the × flashes. Its release is held too.
         assert_eq!(
-            judge(true, false, false, true, false),
+            judge(ACTIVE, true, Elsewhere, true, false),
             Verdict::HoldAndNudge
         );
-        assert_eq!(judge(true, false, false, false, true), Verdict::Hold);
-        // The × itself is always reachable.
-        assert_eq!(judge(true, false, true, true, false), Verdict::Pass);
-        // A release whose press went through is never swallowed, even if the
-        // take began in between — no application sees half a click.
-        assert_eq!(judge(true, false, false, false, false), Verdict::Pass);
-        // A report: the click goes through and puts the pill away.
+        assert_eq!(judge(ACTIVE, true, Elsewhere, false, true), Verdict::Hold);
+        // On the pill: held — the webview never takes a click, or focus.
         assert_eq!(
-            judge(false, true, false, true, false),
+            judge(ACTIVE, true, Pill, true, false),
+            Verdict::HoldAndNudge
+        );
+        // On the ×: the take is cancelled.
+        assert_eq!(
+            judge(ACTIVE, true, Close, true, false),
+            Verdict::HoldAndCancel
+        );
+        // A stalled take stops holding clicks elsewhere, but its × still works.
+        assert_eq!(judge(ACTIVE, false, Elsewhere, true, false), Verdict::Pass);
+        assert_eq!(
+            judge(ACTIVE, false, Close, true, false),
+            Verdict::HoldAndCancel
+        );
+        // A release whose press went through is never swallowed.
+        assert_eq!(judge(ACTIVE, true, Elsewhere, false, false), Verdict::Pass);
+    }
+
+    #[test]
+    fn a_report_is_put_away_by_any_click_and_a_hidden_pill_touches_nothing() {
+        use Target::*;
+        assert_eq!(
+            judge(STALE, false, Elsewhere, true, false),
             Verdict::PassAndDismiss
         );
-        assert_eq!(judge(false, true, true, true, false), Verdict::Pass);
-        // Hidden: nothing is touched.
-        assert_eq!(judge(false, false, false, true, false), Verdict::Pass);
+        assert_eq!(
+            judge(STALE, false, Pill, true, false),
+            Verdict::HoldAndDismiss
+        );
+        assert_eq!(
+            judge(STALE, false, Close, true, false),
+            Verdict::HoldAndDismiss
+        );
+        assert_eq!(judge(HIDDEN, false, Close, true, false), Verdict::Pass);
+        assert_eq!(judge(HIDDEN, false, Elsewhere, true, false), Verdict::Pass);
         // A press held while live keeps its release held after the take ends.
-        assert_eq!(judge(false, false, false, false, true), Verdict::Hold);
+        assert_eq!(judge(HIDDEN, false, Elsewhere, false, true), Verdict::Hold);
     }
 
     #[test]
