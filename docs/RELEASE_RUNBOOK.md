@@ -157,6 +157,9 @@ certificate, a missing MSIX, or a failed updater verification is a hard stop.
 
 5. Replace the Polar downloadable benefit with the exact signed NSIS and MSIX
    files, or configure equivalent authenticated delivery for both formats.
+   The Store copy updates through Microsoft; the current Tauri updater feed
+   serves direct NSIS updates, while a directly sideloaded MSIX receives a new
+   signed package until an MSIX update feed is configured.
 
 6. Create the Microsoft Store submission from the same MSIX package. Follow
    `docs/STORE_SUBMISSION.md` for the Partner Center checklist. The Store

@@ -60,7 +60,7 @@ installer can bootstrap it when a clean machine needs it).
 ```sh
 bun install
 bun run tauri dev      # develop
-bun run tauri build    # release + signed NSIS installer
+bun run tauri build    # release + NSIS installer + updater signature
 bun run build:msix     # package the same release binary as MSIX
 ```
 

@@ -25,6 +25,9 @@ Partner Center validation and the Windows App Certification Kit before release.
 For the Store submission, Microsoft re-signs the MSIX package after
 certification. The direct-download copy still needs the public code-signing
 certificate; the Store copy and the direct copy are separate release assets.
+Store updates are handled by Microsoft. The current Tauri updater feed is for
+the direct NSIS channel; a directly sideloaded MSIX needs a new signed package
+until a separate MSIX update feed is configured.
 
 ## Partner Center checklist
 
