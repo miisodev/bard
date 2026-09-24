@@ -692,3 +692,23 @@ included). Verified in the installed build: canvas sheet, Dark page with light
 ink, custom wells, fullscreen edge to edge, Esc out of fullscreen, Match theme.
 Not verified here: gestures by physical key — injected Alt taps put Windows'
 menu mode on the focused window and are not a fair test.
+
+**2026-09-24 — toggles, a modal overlay, sort, and the first public build.**
+The header's Draw and Settings buttons toggle their window and read as pressed
+while it is out. Closing Draw from fullscreen used to bring it back as a
+monitor-wide, panel-high strip: placement measured the companion's current
+width, which was still the monitor's; companions now leave fullscreen before
+hiding and place at their declared 720 px. Draw's chrome takes the panel's
+custom background; the page keeps its own. Clear completed moved to the header
+and the overflow became Sort (newest, oldest, favourites first, completed last),
+which the paste slots follow. The dictation overlay broke its own blueprint —
+"it never takes focus" — because Tauri's show() activates every time after the
+first; it is now shown without activation, is modal while live (clicks
+elsewhere held, × flashes red), reports why a take ended, and a late
+"Cancelling" can no longer strand the pill. Testing found one more: a click on
+the pill moved focus into its webview, and Windows handed it to the hidden
+panel, where the transcript would have been pasted; the click guard now handles
+pill clicks itself. Verified in the installed build: both toggles, fullscreen
+close and reopen at 720 × 620, Draw chrome on a custom background, overlay
+focus kept in Notepad through a held click. Physically confirmed by Miiso:
+Alt × 2 gestures.

@@ -11,8 +11,11 @@
   rejects a package whose identity differs, and re-signs the package itself
   after certification, so no certificate is involved here.
 
-    # Store submission
-    .\scripts\build-msix.ps1 -Store -PackageName "<Identity Name>" -Publisher "CN=<Partner Center publisher ID>"
+    # Store submission (Partner Center > Product identity; the display name
+    # must be one of the names reserved for the product)
+    .\scripts\build-msix.ps1 -Store -PackageName "miisodev.BardCaptureDictation" `
+      -Publisher "CN=61F791B1-D87E-4C90-9617-536200345DA6" -PublisherDisplayName "miisodev" `
+      -DisplayName "Bard: Capture & Dictation"
 
     # Local manifest/package validation (not submittable)
     bun run build:msix
@@ -25,6 +28,9 @@ param(
   [string]$PackageName = "miisodev.Bard.Validation",
   [string]$Publisher = "CN=Bard Validation",
   [string]$PublisherDisplayName = "miiso.dev",
+  # The package's display name, which the Store matches against the reserved
+  # names. The tile and the Start menu keep the app's own name, Bard.
+  [string]$DisplayName = "Bard",
   [string]$OutputDir = "src-tauri\target\release\bundle\msix",
   [switch]$Store
 )
@@ -86,6 +92,7 @@ foreach ($asset in @("StoreLogo.png", "Square44x44Logo.png", "Square150x150Logo.
 # page instead of writing a Run key the package could never expose.
 $escapedPublisher = [Security.SecurityElement]::Escape($Publisher)
 $escapedPublisherName = [Security.SecurityElement]::Escape($PublisherDisplayName)
+$escapedDisplayName = [Security.SecurityElement]::Escape($DisplayName)
 $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -96,7 +103,7 @@ $manifest = @"
   IgnorableNamespaces="uap10 desktop rescap">
   <Identity Name="$PackageName" Version="$packageVersion" Publisher="$escapedPublisher" ProcessorArchitecture="x64" />
   <Properties>
-    <DisplayName>Bard</DisplayName>
+    <DisplayName>$escapedDisplayName</DisplayName>
     <PublisherDisplayName>$escapedPublisherName</PublisherDisplayName>
     <Description>Capture. Dictate. Keep. A local-first Windows workspace.</Description>
     <Logo>Assets\StoreLogo.png</Logo>
@@ -108,7 +115,9 @@ $manifest = @"
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
   <Capabilities>
+    <Capability Name="internetClient" />
     <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="microphone" />
   </Capabilities>
   <Applications>
     <Application Id="Bard" Executable="Bard.exe" EntryPoint="Windows.FullTrustApplication" uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">

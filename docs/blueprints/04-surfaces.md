@@ -45,13 +45,16 @@ off selected files and shows the panel.
 **Zones**, top to bottom, inside the frameless panel window (`Technology §2`):
 
 1. **Header** — a search pill spanning the available width, then persistent
-   `Paintbrush` **Draw** and `Settings` icon buttons, then `⋯` **More**. Draw and
-   Settings remain visible without hover; each toggles its companion. The
-   header is also the drag handle: pressing anywhere in it that is not a
-   control moves the window. There is no title, wordmark or window control row.
+   `Paintbrush` **Draw** and `Settings` icon buttons, `ListChecks` **Clear
+   completed**, and `ArrowUpDown` **Sort**. Draw and Settings remain visible
+   without hover; each toggles its companion and reads as pressed while that
+   window is out. Clear completed is dimmed while nothing is done. The header
+   is also the drag handle: pressing anywhere in it that is not a control
+   moves the window. There is no title, wordmark or window control row.
 2. **Resize layer** — eight invisible handles inset at the window's edges and
    corners, above the content and below the header's controls.
-3. **Timeline** — the scrolling body. Items newest-first, grouped by section.
+3. **Timeline** — the scrolling body. Items in the chosen order — newest
+   first unless Sort says otherwise — grouped by section.
    A group header is a letterspaced name and a hairline; clicking it makes that
    section active. Each row is an item card (`Design System §4`) with exactly
    one active card, a ring around every selected card and one visible Copy
@@ -90,8 +93,11 @@ off selected files and shows the panel.
 - Restricted trial: `Your 14-day trial has ended. Activate Bard to keep creating.`
 - Restricted lease: `We couldn't verify this licence. Connect to the internet or activate a valid key.`
 
-**Overflow menu** (`⋯`), in order: **Favorites only** (a toggle) ·
-**Clear completed** · **Export to Markdown**.
+**Sort menu** (`⇅`), one choice: **Newest first** · **Oldest first** ·
+**Favorites first** · **Completed last**. Newest first is the default and the
+tiebreak inside the others; the choice persists, and `Right Shift` `Right
+Shift` + `1`–`3` pastes by the same order, so item 1 is always the one at the
+top. Export to Markdown lives in Settings › Data.
 
 **Composer menu** (`⊕`): **Attach**. Drawing is a persistent header
 action, so it does not appear as a second route in this menu.
@@ -479,6 +485,9 @@ Rectangle, Ellipse and Text; the ink swatch, four hues and a custom colour
 well; three widths; Undo, Redo, **Copy** and **Save**. Icon buttons have
 one-word tooltips and shortcut hints.
 
+**The window.** Draw's chrome wears the theme and the panel's background like
+every other window; the page is the one surface with a colour of its own.
+
 **The page.** It follows the theme — white in Light, the dark card surface in
 Dark — until someone chooses. The **Canvas** chip opens a small sheet with
 **Light**, **Dark** and a **Custom** colour well, plus **Match theme** once a
@@ -489,7 +498,9 @@ and **Copy** export the page in its colour.
 **Keys.** `F11` and the fullscreen button toggle native fullscreen while Draw
 has focus; F11 is never taken from another app. Fullscreen runs edge to edge
 without the companion's radius. `Esc` closes the Canvas sheet, then clears a
-selection, then leaves fullscreen, then closes Draw — one step per press. On its
+selection, then leaves fullscreen, then closes Draw — one step per press.
+Closing from fullscreen leaves fullscreen first, so Draw always comes back at
+its own size. On its
 own, Draw moves by its title row, like Settings.
 
 **States.** Empty canvas · drawing · committed · copy confirmation · save
@@ -533,7 +544,22 @@ motion replaces both with a static glyph and state word.
 **It never takes focus.** Focus during dictation belongs to whatever the person
 is typing into; an overlay that steals it would paste the transcript into
 itself. The start cue finishes before the microphone opens and the stop cue
-begins after it closes, as specified in `Technology §1`.
+begins after it closes, as specified in `Technology §1`. The pill appears where
+it is placed and stays there for the whole take.
+
+**Modal while live.** While Bard listens, transcribes or refines, a click
+anywhere else is held back — focus stays where the words will land — and the
+`✕` flashes red: it is the one way out. A click on the pill itself never
+reaches its webview. The take ends by the `✕`, by the dictation gesture, by
+`Esc` while listening, or by pasting, after which the pill puts itself away.
+If transcribing or refining ever stalled for 90 seconds, clicks elsewhere go
+through again; the `✕` still works.
+
+**Reports.** A take that ends without text leaves a short report in the pill
+for about three seconds: `Nothing heard` · `No microphone found` ·
+`No voice model yet` · `Microphone unavailable` · `Recording failed` ·
+`Transcription failed` · `Couldn't paste`. A click anywhere puts a report away
+and goes through as normal.
 
 **States.**
 
@@ -551,13 +577,13 @@ Right.
 
 **Fails when.**
 
-- *No microphone.* `No microphone found.` and the overlay never appears.
+- *No microphone.* The pill reports `No microphone found`; nothing records.
 - *No model installed.* `Voice model not downloaded yet. Open Settings to
   install it.`
 - *The active model file disappears after the initial check.* `Voice model not
   downloaded.` Bard reports the failure and does not substitute a different
   model without the owner's choice.
-- *Nothing audible.* `Nothing heard.` The overlay closes and nothing is pasted.
+- *Nothing audible.* The pill reports `Nothing heard` and nothing is pasted.
   Pasting an empty transcript into a person's document is the failure this
   avoids.
 - *Transcription fails.* The engine's own message, shown once.
