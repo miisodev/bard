@@ -20,29 +20,44 @@
 
     .\scripts\build-release.ps1 -SignCommand "<signer> sign ... %1"
 
+  Until a certificate is bought, the direct download ships unsigned, by
+  decision (2026-09-24): Windows shows its SmartScreen prompt on first run and
+  the installer is otherwise identical. That build is asked for by name, so an
+  unsigned release is never the result of a forgotten parameter:
+
+    .\scripts\build-release.ps1 -Unsigned
+
   The updater key comes from TAURI_SIGNING_PRIVATE_KEY(_PASSWORD), or from
-  $HOME\.tauri\bard-updater.key and bard-updater-password.txt.
+  $HOME\.tauri\bard-updater.key and bard-updater-password.txt. The updater
+  signature is independent of Authenticode and is made either way.
 #>
 param(
   [string]$Version = "0.1.0",
   [string]$CertificateThumbprint,
   [string]$SignCommand,
-  [string]$TimestampUrl = "http://timestamp.digicert.com"
+  [string]$TimestampUrl = "http://timestamp.digicert.com",
+  [switch]$Unsigned
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
 
-if ([string]::IsNullOrWhiteSpace($CertificateThumbprint) -and [string]::IsNullOrWhiteSpace($SignCommand)) {
-  throw "Pass -CertificateThumbprint (token or store certificate) or -SignCommand (cloud signer)."
+$signing = -not ([string]::IsNullOrWhiteSpace($CertificateThumbprint) -and [string]::IsNullOrWhiteSpace($SignCommand))
+if (-not $signing -and -not $Unsigned) {
+  throw "Pass -CertificateThumbprint (token or store certificate), -SignCommand (cloud signer), or -Unsigned."
+}
+if ($signing -and $Unsigned) {
+  throw "-Unsigned cannot be combined with a certificate or a sign command."
 }
 if (git status --porcelain) {
   throw "The worktree is dirty. A release is built from a committed tree only."
 }
 
 $windows = [ordered]@{ digestAlgorithm = "sha256"; timestampUrl = $TimestampUrl; tsp = $true }
-if ($CertificateThumbprint) {
+if ($Unsigned) {
+  Write-Warning "Building an unsigned direct release. Windows SmartScreen prompts on first run."
+} elseif ($CertificateThumbprint) {
   $thumbprint = ($CertificateThumbprint -replace '\s', '').ToUpperInvariant()
   $certificate = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
     Where-Object { $_.Thumbprint -eq $thumbprint } |
@@ -66,9 +81,15 @@ if ([string]::IsNullOrEmpty($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
 }
 $env:BARD_NO_GUARDIAN = "1"
 
-bun run tauri build --bundles nsis --config $config
-if ($LASTEXITCODE -ne 0) { throw "The signed release build failed." }
+if ($Unsigned) {
+  bun run tauri build --bundles nsis
+} else {
+  bun run tauri build --bundles nsis --config $config
+}
+if ($LASTEXITCODE -ne 0) { throw "The release build failed." }
 
-& (Join-Path $PSScriptRoot "verify-release.ps1") -Version $Version -RequireSignature
+$verify = @{ Version = $Version }
+if (-not $Unsigned) { $verify.RequireSignature = $true }
+& (Join-Path $PSScriptRoot "verify-release.ps1") @verify
 if ($LASTEXITCODE -ne 0) { throw "Release verification failed." }
-Write-Host "Signed release built and verified." -ForegroundColor Green
+Write-Host "Release built and verified$(if ($Unsigned) { ' (unsigned)' } else { ' (signed)' })." -ForegroundColor Green

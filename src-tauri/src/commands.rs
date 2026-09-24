@@ -693,7 +693,12 @@ pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
         "settings"
     };
     if let Some(other_window) = app.get_webview_window(other) {
-        let _ = other_window.hide();
+        if other_window.is_visible().unwrap_or(false) {
+            crate::panel::hide_companion(app, &other_window);
+        }
+    }
+    if win.is_fullscreen().unwrap_or(false) {
+        let _ = win.set_fullscreen(false);
     }
     let _ = win.unminimize();
     let _ = win.show();
@@ -709,6 +714,43 @@ pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
     let _ = win.set_always_on_top(docked);
     let _ = win.set_skip_taskbar(docked);
     let _ = win.set_focus();
+    crate::panel::companions_changed(app);
+}
+
+/// The panel's Draw and Settings buttons are toggles: the second click puts
+/// the companion away again, and focus returns to the panel.
+#[tauri::command]
+pub fn toggle_companion(app: AppHandle, label: String) -> Result<(), String> {
+    use tauri::Manager;
+    if !matches!(label.as_str(), "draw" | "settings") {
+        return Err("Bard has no such window.".into());
+    }
+    let Some(win) = app.get_webview_window(&label) else {
+        return Ok(());
+    };
+    if win.is_visible().unwrap_or(false) && !win.is_minimized().unwrap_or(false) {
+        crate::panel::hide_companion(&app, &win);
+        crate::panel::focus_panel(&app);
+        return Ok(());
+    }
+    if label == "draw" {
+        if let Err(error) = crate::license::require(&app) {
+            license_blocked(&app, error);
+            return Ok(());
+        }
+    }
+    show_secondary(&app, &label, false);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_sort(app: AppHandle, order: String) -> Result<(), String> {
+    if !db::SORT_ORDERS.contains(&order.as_str()) {
+        return Err("Bard has no such order.".into());
+    }
+    db::set_setting_checked(&app, "sort_order", &order)?;
+    refresh(&app);
+    Ok(())
 }
 
 fn hide_panel_for_secondary(app: &AppHandle) {
@@ -724,7 +766,7 @@ fn toggle_secondary_alone(app: &AppHandle, label: &str) {
         return;
     };
     if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
-        let _ = win.hide();
+        crate::panel::hide_companion(app, &win);
         return;
     }
     // Tray/button entry points keep the side-by-side composition. Gesture
@@ -837,7 +879,7 @@ pub fn paste_item(app: &AppHandle, slot: u8) -> Result<(), String> {
     if !(1..=3).contains(&slot) {
         return Err("Bard only exposes item slots 1 through 3.".into());
     }
-    let items = db::list_items(app);
+    let items = db::timeline(app);
     let Some(item) = items.get(slot as usize - 1) else {
         return Err(format!("Bard has no item {slot} to paste."));
     };

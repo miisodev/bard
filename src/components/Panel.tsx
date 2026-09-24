@@ -1,10 +1,11 @@
-import { MoreHorizontal, Paintbrush, Search, Settings2 } from "lucide-react";
+import { ArrowUpDown, ListChecks, Paintbrush, Search, Settings2 } from "lucide-react";
 import { playCue } from "../audio";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DictationState } from "../App";
 import { api } from "../store";
-import type { AppState, Item, Section } from "../types";
+import type { AppState, Item, Section, SortOrder } from "../types";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
 import ItemCard from "./ItemCard";
 import Menu from "./Menu";
@@ -47,7 +48,6 @@ export default function Panel({
   onActiveItemChange?: (id: number | null) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [onlyFavorites, setOnlyFavorites] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [anchorId, setAnchorId] = useState<number | null>(null);
   const [composer, setComposer] = useState("");
@@ -64,6 +64,8 @@ export default function Panel({
   } | null>(null);
   const [soundOnCapture, setSoundOnCapture] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
+  // Which companions are out, so their header buttons read as pressed.
+  const [companions, setCompanions] = useState({ draw: false, settings: false });
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -73,6 +75,13 @@ export default function Panel({
   useEffect(() => {
     void api.getState().then(onState);
     void api.getSoundOnCapture().then(setSoundOnCapture);
+  }, []);
+
+  useEffect(() => {
+    const pending = listen<{ draw: boolean; settings: boolean }>("companions", (event) =>
+      setCompanions(event.payload),
+    );
+    return () => void pending.then((unlisten) => unlisten());
   }, []);
 
   useEffect(() => {
@@ -141,7 +150,7 @@ export default function Panel({
         }
         return;
       }
-      const flat = flatFiltered(state, query, onlyFavorites);
+      const flat = flatFiltered(state, query);
       const idx = (id: number) => flat.indexOf(id);
       const sel = [...selectedIds].sort((a, b) => idx(a) - idx(b));
       const activeInFlat = activeItemId !== null && idx(activeItemId) >= 0 ? activeItemId : null;
@@ -237,7 +246,6 @@ export default function Panel({
   }, [
     state,
     query,
-    onlyFavorites,
     activeItemId,
     selectedIds,
     anchorId,
@@ -374,7 +382,7 @@ export default function Panel({
       return;
     }
     if (e.shiftKey && anchorId !== null) {
-      const flat = flatFiltered(state, query, onlyFavorites);
+      const flat = flatFiltered(state, query);
       const a = flat.indexOf(anchorId);
       const b = flat.indexOf(item.id);
       if (a >= 0 && b >= 0) {
@@ -436,7 +444,7 @@ export default function Panel({
     setMenu(null);
   };
 
-  const grouped = groupBySection(state, query, onlyFavorites);
+  const grouped = groupBySection(state, query);
   const activeSectionName =
     state.sections.find((s) => s.id === state.activeSectionId)?.name ?? null;
   const doneCount = state.items.filter((i) => i.done !== 0).length;
@@ -457,34 +465,51 @@ export default function Panel({
           />
         </div>
         <div className="header-actions" role="group" aria-label="Bard tools">
+          {/* Draw and Settings are toggles: a second click puts the window
+              away again, and each reads as pressed while its window is out. */}
           <button
             type="button"
-            className="icon-btn header-action"
+            className={`icon-btn header-action${companions.draw ? " active" : ""}`}
             aria-label="Draw"
+            aria-pressed={companions.draw}
             title="Draw"
-            onClick={() => void api.openDraw()}
+            onClick={() => void api.toggleCompanion("draw")}
           >
             <Paintbrush size={16} strokeWidth={1.8} />
           </button>
           <button
             type="button"
-            className="icon-btn header-action"
+            className={`icon-btn header-action${companions.settings ? " active" : ""}`}
             aria-label="Settings"
+            aria-pressed={companions.settings}
             title="Settings"
-            onClick={() => void api.openSettings()}
+            onClick={() => void api.toggleCompanion("settings")}
           >
             <Settings2 size={16} strokeWidth={1.8} />
           </button>
           <button
             type="button"
+            className="icon-btn header-action"
+            aria-label={doneCount > 0 ? `Clear ${doneCount} completed` : "Clear completed"}
+            title={doneCount > 0 ? `Clear completed (${doneCount})` : "Clear completed"}
+            disabled={doneCount === 0}
+            onClick={() => {
+              void api.clearCompleted().then(refresh);
+              setToast(`Cleared ${doneCount} completed`);
+            }}
+          >
+            <ListChecks size={16} strokeWidth={1.8} />
+          </button>
+          <button
+            type="button"
             className={`icon-btn header-action${showOverflow ? " active" : ""}`}
-            aria-label="More"
-            title="More"
+            aria-label="Sort"
+            title="Sort"
             aria-haspopup="menu"
             aria-expanded={showOverflow}
             onClick={() => setShowOverflow((v) => !v)}
           >
-            <MoreHorizontal size={16} strokeWidth={2} />
+            <ArrowUpDown size={16} strokeWidth={1.8} />
           </button>
         </div>
       </header>
@@ -638,36 +663,15 @@ export default function Panel({
 
       {showOverflow ? (
         <Menu
+          label="Sort"
           onClose={() => setShowOverflow(false)}
-          entries={[
-            {
-              label: "Favorites only",
-              checked: onlyFavorites,
-              trailing: onlyFavorites ? "✓" : undefined,
-              onClick: () => setOnlyFavorites(!onlyFavorites),
-            },
-            {
-              label: "Clear completed",
-              disabled: doneCount === 0,
-              trailing: doneCount > 0 ? doneCount : undefined,
-              onClick: () => {
-                void api.clearCompleted().then(refresh);
-                setToast(`Cleared ${doneCount} completed`);
-              },
-            },
-            {
-              label: "Export to Markdown",
-              separated: true,
-              onClick: () => {
-                void api.exportMarkdown().then((p) => setToast(p ? "Exported" : "Export failed"));
-              },
-            },
-            {
-              label: "Settings",
-              separated: true,
-              onClick: () => void api.openSettings(),
-            },
-          ]}
+          entries={SORT_ORDERS.map(([order, label]) => ({
+            label,
+            radio: true,
+            checked: state.sort === order,
+            trailing: state.sort === order ? "✓" : undefined,
+            onClick: () => void api.setSort(order).then(refresh),
+          }))}
         />
       ) : null}
 
@@ -730,14 +734,21 @@ export default function Panel({
   );
 }
 
-function flatFiltered(state: AppState, query: string, onlyFavorites: boolean): number[] {
-  return filterItems(state, query, onlyFavorites).map((i) => i.id);
+/** The timeline's orders, in the menu's order. Newest first is the default. */
+const SORT_ORDERS: [SortOrder, string][] = [
+  ["newest", "Newest first"],
+  ["oldest", "Oldest first"],
+  ["favorites", "Favorites first"],
+  ["completed", "Completed last"],
+];
+
+function flatFiltered(state: AppState, query: string): number[] {
+  return filterItems(state, query).map((i) => i.id);
 }
 
-function filterItems(state: AppState, query: string, onlyFavorites: boolean): Item[] {
+function filterItems(state: AppState, query: string): Item[] {
   const q = query.trim().toLowerCase();
   return state.items.filter((it) => {
-    if (onlyFavorites && !it.favorite) return false;
     if (!q) return true;
     if (it.kind === "image") return false;
     return it.content.toLowerCase().includes(q);
@@ -746,10 +757,9 @@ function filterItems(state: AppState, query: string, onlyFavorites: boolean): It
 
 function groupBySection(
   state: AppState,
-  query: string,
-  onlyFavorites: boolean
+  query: string
 ): { section: Section | null; items: Item[] }[] {
-  const items = filterItems(state, query, onlyFavorites);
+  const items = filterItems(state, query);
   const sections = [...state.sections];
   const active = state.activeSectionId;
   if (active !== null) {

@@ -18,6 +18,8 @@
     "allow-add-image",
     "allow-open-draw",
     "allow-open-settings",
+    "allow-toggle-companion",
+    "allow-set-sort",
     "allow-delete-item",
     "allow-set-favorite",
     "allow-set-done",

@@ -5,6 +5,8 @@ const COMMANDS: &[&str] = &[
     "add_image",
     "open_draw",
     "open_settings",
+    "toggle_companion",
+    "set_sort",
     "delete_item",
     "set_favorite",
     "set_done",

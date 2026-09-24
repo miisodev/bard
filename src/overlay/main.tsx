@@ -6,10 +6,18 @@ import { createRoot } from "react-dom/client";
 import { useTheme } from "../useTheme";
 import "../styles.css";
 
+type Phase = "listening" | "transcribing" | "finishing" | "cancelling";
+
+/*
+  The pill shows a live take or a short report of why one ended. Rust decides
+  when it is on screen; this only draws what it is told. While a take is live
+  a click elsewhere is held back and the × flashes red — it is the way out.
+*/
 function Overlay() {
   useTheme();
-  const [state, setState] = useState<"listening" | "transcribing" | "finishing" | "cancelling" | "error" | "idle" | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase | null>(null);
+  const [report, setReport] = useState<string | null>(null);
+  const [nudge, setNudge] = useState(0);
   const [levels, setLevels] = useState<number[]>(new Array(12).fill(0.08));
 
   useEffect(() => {
@@ -20,26 +28,27 @@ function Overlay() {
     };
     subscribe(
       listen("dictation-overlay", (e) => {
-        const next = e.payload as "listening" | "transcribing" | "finishing" | "cancelling" | "idle";
-        if (alive) {
-          setError(null);
-          setState(next === "idle" ? null : next);
-        }
+        if (!alive) return;
+        const next = e.payload as Phase | "idle";
+        setReport(null);
+        // A new take, or none: the × starts calm again.
+        if (next === "idle" || next === "listening") setNudge(0);
+        setPhase(next === "idle" ? null : next);
       }),
     );
-    subscribe(listen("dictation-result", () => {
-      if (!alive) return;
-      setError(null);
-      setState(null);
-    }));
-    subscribe(listen("dictation-error", (event) => {
-      if (!alive) return;
-      setError(typeof event.payload === "string" ? event.payload : "Dictation failed");
-      setState("error");
-      window.setTimeout(() => {
-        if (alive) setState(null);
-      }, 5000);
-    }));
+    subscribe(
+      listen("dictation-overlay-report", (e) => {
+        if (!alive) return;
+        setPhase(null);
+        setNudge(0);
+        setReport(typeof e.payload === "string" ? e.payload : "Dictation failed");
+      }),
+    );
+    subscribe(
+      listen("dictation-overlay-nudge", () => {
+        if (alive) setNudge((n) => n + 1);
+      }),
+    );
     subscribe(
       listen("mic-level", (e) => {
         const [level] = e.payload as [number, number];
@@ -52,31 +61,35 @@ function Overlay() {
     };
   }, []);
 
-  if (!state) return null;
-  const label =
-    state === "listening"
+  if (!phase && !report) return null;
+  const label = report
+    ? report
+    : phase === "listening"
       ? "Listening"
-      : state === "finishing"
+      : phase === "finishing"
         ? "Finishing"
-        : state === "cancelling"
+        : phase === "cancelling"
           ? "Cancelling"
-          : state === "error"
-            ? error || "Dictation failed"
-            : "Transcribing";
+          : "Transcribing";
+  const live = phase !== null && phase !== "cancelling";
   return (
     <div className="overlay-stage">
       <div className="overlay-pill" role="status" aria-live="polite" aria-label={label}>
-        <span className="dot" data-state={state} />
-        <span>{label}</span>
-        <span className="bars" aria-hidden="true">
-          {levels.map((l, i) => (
-            <i key={i} style={{ transform: `scaleY(${Math.max(0.3, Math.min(1, l))})` }} />
-          ))}
-        </span>
+        <span className="dot" data-state={report ? "report" : phase} />
+        <span className="overlay-label">{label}</span>
+        {report ? null : (
+          <span className="bars" aria-hidden="true">
+            {levels.map((l, i) => (
+              <i key={i} style={{ transform: `scaleY(${Math.max(0.3, Math.min(1, l))})` }} />
+            ))}
+          </span>
+        )}
         <button
-          className="overlay-x"
-          title="Cancel"
-          aria-label="Cancel dictation"
+          // Re-keyed on every nudge so the flash restarts on each held click.
+          key={live ? `x${nudge}` : "x"}
+          className={`overlay-x${live && nudge > 0 ? " nudge" : ""}`}
+          title={live ? "Cancel" : "Dismiss"}
+          aria-label={live ? "Cancel dictation" : "Dismiss"}
           onClick={() => void invoke("dictate_cancel")}
         >
           <X aria-hidden="true" />

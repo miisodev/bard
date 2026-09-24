@@ -196,6 +196,16 @@ body {
   color: var(--on-canvas);
 }
 
+.header-action:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.header-action:disabled:hover {
+  background: transparent;
+  color: var(--on-canvas-2);
+}
+
 /* ---------- timeline ---------- */
 
 .timeline {
@@ -1024,6 +1034,17 @@ body {
   opacity: 0.55;
 }
 
+.overlay-pill .dot[data-state="report"] {
+  animation: none;
+  background: var(--danger);
+}
+
+.overlay-label {
+  max-width: 158px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .overlay-pill .bars {
   display: flex;
   gap: 2px;
@@ -1070,6 +1091,48 @@ body {
 .overlay-x:hover {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+/* A click elsewhere during a live take is held back; the × answers it — the
+   way out, lit red for a beat. */
+.overlay-x.nudge {
+  animation: overlay-nudge 900ms var(--ease-out) both;
+}
+
+@keyframes overlay-nudge {
+  0% {
+    background: var(--danger);
+    color: #ffffff;
+    transform: scale(1.18);
+  }
+  18%,
+  55% {
+    background: var(--danger);
+    color: #ffffff;
+    transform: scale(1);
+  }
+  100% {
+    background: transparent;
+    color: var(--text-3);
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay-x.nudge {
+    animation-name: overlay-nudge-still;
+  }
+  @keyframes overlay-nudge-still {
+    0%,
+    60% {
+      background: var(--danger);
+      color: #ffffff;
+    }
+    100% {
+      background: transparent;
+      color: var(--text-3);
+    }
+  }
 }
 
 @keyframes fade-in {

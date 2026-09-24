@@ -97,6 +97,8 @@ pub struct AppState {
     /// "theme", "light", "dark" or "custom"; the custom colour is `background_color`.
     pub background: String,
     pub background_color: String,
+    /// The timeline's order: one of `SORT_ORDERS`.
+    pub sort: String,
 }
 
 fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -1067,11 +1069,12 @@ pub fn get_state(app: &AppHandle) -> AppState {
             channel: crate::packaging::channel().into(),
             background: "theme".into(),
             background_color: String::new(),
+            sort: SORT_ORDERS[0].into(),
         };
     }
     AppState {
         sections: list_sections(app),
-        items: list_items(app),
+        items: timeline(app),
         attachments: list_all_attachments(app),
         active_section_id: get_active_section(app),
         theme: get_setting(app, "theme").unwrap_or_else(|| "system".into()),
@@ -1087,7 +1090,36 @@ pub fn get_state(app: &AppHandle) -> AppState {
         channel: crate::packaging::channel().into(),
         background: get_setting(app, "background").unwrap_or_else(|| "theme".into()),
         background_color: get_setting(app, "background_color").unwrap_or_default(),
+        sort: sort_order(app),
     }
+}
+
+/// The orders the timeline can take. Newest first is the default and the
+/// tiebreak inside the others, so a favourite or an unfinished item keeps its
+/// place in time among its peers.
+pub const SORT_ORDERS: [&str; 4] = ["newest", "oldest", "favorites", "completed"];
+
+pub fn sort_order(app: &AppHandle) -> String {
+    get_setting(app, "sort_order")
+        .filter(|order| SORT_ORDERS.contains(&order.as_str()))
+        .unwrap_or_else(|| SORT_ORDERS[0].into())
+}
+
+pub fn sort_items(items: &mut [Item], order: &str) {
+    match order {
+        "oldest" => items.sort_by_key(|item| item.id),
+        "favorites" => items.sort_by(|a, b| b.favorite.cmp(&a.favorite).then(b.id.cmp(&a.id))),
+        "completed" => items.sort_by(|a, b| a.done.cmp(&b.done).then(b.id.cmp(&a.id))),
+        _ => items.sort_by_key(|item| std::cmp::Reverse(item.id)),
+    }
+}
+
+/// The items in the order the panel shows them. Right Shift × 2 + a number
+/// pastes by this order too, so "item 1" is always the one at the top.
+pub fn timeline(app: &AppHandle) -> Vec<Item> {
+    let mut items = list_items(app);
+    sort_items(&mut items, &sort_order(app));
+    items
 }
 
 /// Rewrites stored file paths that still point into the legacy roaming data
@@ -1142,6 +1174,38 @@ fn strip_path_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn item(id: i64, favorite: i64, done: i64) -> Item {
+        Item {
+            id,
+            section_id: None,
+            content: String::new(),
+            kind: "text".into(),
+            image_path: None,
+            origin: "manual".into(),
+            favorite,
+            done,
+            created_at: id,
+            updated_at: id,
+        }
+    }
+
+    #[test]
+    fn every_sort_order_keeps_time_as_the_tiebreak() {
+        let ids = |items: &[Item]| items.iter().map(|i| i.id).collect::<Vec<_>>();
+        let base = vec![item(1, 1, 1), item(2, 0, 0), item(3, 1, 0), item(4, 0, 1)];
+        let mut items = base.clone();
+        sort_items(&mut items, "newest");
+        assert_eq!(ids(&items), [4, 3, 2, 1]);
+        sort_items(&mut items, "oldest");
+        assert_eq!(ids(&items), [1, 2, 3, 4]);
+        sort_items(&mut items, "favorites");
+        assert_eq!(ids(&items), [3, 1, 4, 2]);
+        sort_items(&mut items, "completed");
+        assert_eq!(ids(&items), [3, 2, 4, 1]);
+        sort_items(&mut items, "anything else");
+        assert_eq!(ids(&items), [4, 3, 2, 1]);
+    }
 
     #[test]
     fn legacy_roaming_paths_are_rebased_once_the_file_has_moved() {

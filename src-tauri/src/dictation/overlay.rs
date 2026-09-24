@@ -1,3 +1,8 @@
+use std::sync::atomic::{AtomicI32, AtomicU64, AtomicU8, Ordering};
+use std::sync::mpsc::{self, Sender};
+use std::sync::OnceLock;
+use std::time::Duration;
+
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const POSITION_SETTING_KEY: &str = "dictation_overlay_position";
@@ -73,37 +78,400 @@ pub fn reposition(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = task_app.get_webview_window("overlay") {
             position(&task_app, &win);
+            remember_rect(&win);
         }
     });
 }
 
-/// The recording overlay is a native Tauri window. It is reached from the raw
-/// keyboard listener, the audio callback, and the transcription worker, none of
-/// which are the Windows UI thread. Queue every window operation explicitly;
-/// calling `show()`/`hide()` directly from those threads can deadlock the
-/// WebView and make the whole process appear crashed.
+/*
+  The overlay is modal while a take is live. It never takes focus — the words
+  land wherever you were typing — and while it listens, transcribes or refines,
+  a click anywhere else is held back and its × flashes instead: the × is the
+  one way out, and a finished take puts the pill away itself after pasting.
+  Once the take is over and the pill is only reporting (an error, or
+  "Cancelling"), a click anywhere puts it away and goes through as normal.
+*/
+
+const HIDDEN: u8 = 0;
+const ACTIVE: u8 = 1;
+const STALE: u8 = 2;
+
+const LISTENING: u8 = 1;
+const WORKING: u8 = 2;
+
+/// How long a report stays up when nobody dismisses it.
+const REPORT_LINGER: Duration = Duration::from_millis(3200);
+/// A watchdog on the modal hold. Listening ends by your own hand — Ctrl, Esc
+/// or the × — but transcribing and refining end on their own, and if either
+/// ever stalled, clicks must not stay held behind it. Refining alone is
+/// bounded at 60 s.
+const WORKING_HOLD_LIMIT_MS: u64 = 90_000;
+
+static MODE: AtomicU8 = AtomicU8::new(HIDDEN);
+static PHASE: AtomicU8 = AtomicU8::new(0);
+static PHASE_STARTED_MS: AtomicU64 = AtomicU64::new(0);
+/// Bumped by every show and hide. A queued update carries the value it was
+/// issued with and gives way to anything issued after it, so a late
+/// "Cancelling" can no longer bring the pill back after the take has ended.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+static RECT: [AtomicI32; 4] = [
+    AtomicI32::new(0),
+    AtomicI32::new(0),
+    AtomicI32::new(0),
+    AtomicI32::new(0),
+];
+/// Buttons whose press was held back, so their release is held back too and
+/// no application ever sees half a click.
+static HELD_BUTTONS: AtomicU8 = AtomicU8::new(0);
+static SIGNALS: OnceLock<Sender<Signal>> = OnceLock::new();
+
+enum Signal {
+    Nudge,
+    Dismiss,
+}
+
+/// Show a live phase of the take: "listening", "transcribing", "finishing"
+/// or "cancelling".
 pub fn show(app: &AppHandle, state: &str) {
-    let app = app.clone();
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let mode = if state == "cancelling" { STALE } else { ACTIVE };
+    let phase = if state == "listening" {
+        LISTENING
+    } else {
+        WORKING
+    };
     let state = state.to_owned();
     let task_app = app.clone();
     let _ = app.run_on_main_thread(move || {
-        if let Some(win) = task_app.get_webview_window("overlay") {
-            position(&task_app, &win);
-            let _ = win.show();
-            let _ = task_app.emit("dictation-overlay", state);
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        let Some(win) = task_app.get_webview_window("overlay") else {
+            return;
+        };
+        present(&task_app, &win);
+        if PHASE.swap(phase, Ordering::SeqCst) != phase {
+            PHASE_STARTED_MS.store(crate::db::now_ms() as u64, Ordering::SeqCst);
+        }
+        MODE.store(mode, Ordering::SeqCst);
+        let _ = task_app.emit("dictation-overlay", state);
+    });
+}
+
+/// Report why a take ended without text. The report puts itself away after a
+/// few seconds, or at the first click anywhere.
+pub fn show_report(app: &AppHandle, message: &str) {
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    MODE.store(HIDDEN, Ordering::SeqCst);
+    let message = message.to_owned();
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        let Some(win) = task_app.get_webview_window("overlay") else {
+            return;
+        };
+        present(&task_app, &win);
+        PHASE.store(0, Ordering::SeqCst);
+        MODE.store(STALE, Ordering::SeqCst);
+        let _ = task_app.emit("dictation-overlay-report", message);
+    });
+    let timer_app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(REPORT_LINGER);
+        if GENERATION.load(Ordering::SeqCst) == generation {
+            hide(&timer_app);
         }
     });
 }
 
 pub fn hide(app: &AppHandle) {
-    let app = app.clone();
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    // Release the hold at once rather than when the main thread gets to it.
+    MODE.store(HIDDEN, Ordering::SeqCst);
+    PHASE.store(0, Ordering::SeqCst);
     let task_app = app.clone();
     let _ = app.run_on_main_thread(move || {
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
         if let Some(win) = task_app.get_webview_window("overlay") {
-            let _ = win.hide();
+            native::hide(&win);
         }
         let _ = task_app.emit("dictation-overlay", "idle");
     });
+}
+
+/// The × on a report, or a click elsewhere: put a finished pill away. A live
+/// take is only ever ended by cancelling it.
+pub fn dismiss(app: &AppHandle) {
+    if MODE.load(Ordering::SeqCst) != ACTIVE {
+        hide(app);
+    }
+}
+
+/// Start the click guard: one low-level mouse hook on its own thread, and a
+/// worker that turns its verdicts into overlay updates. The hook itself only
+/// reads atomics and posts a signal, so it never keeps the pointer waiting.
+pub fn start_guard(app: &AppHandle) {
+    let (sender, receiver) = mpsc::channel::<Signal>();
+    if SIGNALS.set(sender).is_err() {
+        return;
+    }
+    let worker_app = app.clone();
+    std::thread::spawn(move || {
+        for signal in receiver {
+            match signal {
+                Signal::Nudge => {
+                    let _ = worker_app.emit("dictation-overlay-nudge", ());
+                }
+                Signal::Dismiss => dismiss(&worker_app),
+            }
+        }
+    });
+    native::run_mouse_hook();
+}
+
+fn present(app: &AppHandle, win: &tauri::WebviewWindow) {
+    // Placed when it appears and left there for the whole take: a pill that
+    // followed the pointer to another monitor between phases read as the
+    // take itself moving away.
+    if !native::is_visible(win) {
+        position(app, win);
+    }
+    remember_rect(win);
+    native::show_without_focus(win);
+}
+
+fn remember_rect(win: &tauri::WebviewWindow) {
+    let (Ok(position), Ok(size)) = (win.outer_position(), win.outer_size()) else {
+        return;
+    };
+    RECT[0].store(position.x, Ordering::SeqCst);
+    RECT[1].store(position.y, Ordering::SeqCst);
+    RECT[2].store(position.x + size.width as i32, Ordering::SeqCst);
+    RECT[3].store(position.y + size.height as i32, Ordering::SeqCst);
+}
+
+fn inside_overlay(x: i32, y: i32) -> bool {
+    x >= RECT[0].load(Ordering::SeqCst)
+        && y >= RECT[1].load(Ordering::SeqCst)
+        && x < RECT[2].load(Ordering::SeqCst)
+        && y < RECT[3].load(Ordering::SeqCst)
+}
+
+fn holding_clicks() -> bool {
+    if MODE.load(Ordering::SeqCst) != ACTIVE {
+        return false;
+    }
+    PHASE.load(Ordering::SeqCst) == LISTENING
+        || (crate::db::now_ms() as u64).saturating_sub(PHASE_STARTED_MS.load(Ordering::SeqCst))
+            < WORKING_HOLD_LIMIT_MS
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Verdict {
+    Pass,
+    Hold,
+    HoldAndNudge,
+    PassAndDismiss,
+}
+
+/// What to do with one button event. Pure, so the whole policy is tested.
+fn judge(holding: bool, stale: bool, inside: bool, pressed: bool, press_was_held: bool) -> Verdict {
+    if !pressed {
+        return if press_was_held {
+            Verdict::Hold
+        } else {
+            Verdict::Pass
+        };
+    }
+    if inside {
+        return Verdict::Pass;
+    }
+    if holding {
+        Verdict::HoldAndNudge
+    } else if stale {
+        Verdict::PassAndDismiss
+    } else {
+        Verdict::Pass
+    }
+}
+
+/// Called by the hook for every mouse button event; true swallows it.
+fn on_button(button: u8, pressed: bool, x: i32, y: i32) -> bool {
+    let press_was_held = HELD_BUTTONS.load(Ordering::SeqCst) & button != 0;
+    let verdict = judge(
+        holding_clicks(),
+        MODE.load(Ordering::SeqCst) == STALE,
+        inside_overlay(x, y),
+        pressed,
+        press_was_held,
+    );
+    let signal = |signal: Signal| {
+        if let Some(sender) = SIGNALS.get() {
+            let _ = sender.send(signal);
+        }
+    };
+    match verdict {
+        Verdict::Pass => false,
+        Verdict::Hold => {
+            HELD_BUTTONS.fetch_and(!button, Ordering::SeqCst);
+            true
+        }
+        Verdict::HoldAndNudge => {
+            HELD_BUTTONS.fetch_or(button, Ordering::SeqCst);
+            signal(Signal::Nudge);
+            true
+        }
+        Verdict::PassAndDismiss => {
+            signal(Signal::Dismiss);
+            false
+        }
+    }
+}
+
+#[cfg(windows)]
+mod native {
+    #[repr(C)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    #[repr(C)]
+    struct MouseHookInfo {
+        pt: Point,
+        mouse_data: u32,
+        flags: u32,
+        time: u32,
+        extra_info: usize,
+    }
+
+    #[repr(C)]
+    struct Message {
+        hwnd: isize,
+        message: u32,
+        wparam: usize,
+        lparam: isize,
+        time: u32,
+        pt: Point,
+        private: u32,
+    }
+
+    const WH_MOUSE_LL: i32 = 14;
+    const HC_ACTION: i32 = 0;
+    const SW_HIDE: i32 = 0;
+    const HWND_TOPMOST: isize = -1;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_SHOWWINDOW: u32 = 0x0040;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn ShowWindow(hwnd: isize, command: i32) -> i32;
+        fn IsWindowVisible(hwnd: isize) -> i32;
+        fn SetWindowPos(
+            hwnd: isize,
+            insert_after: isize,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+            flags: u32,
+        ) -> i32;
+        fn SetWindowsHookExW(
+            id: i32,
+            hook: unsafe extern "system" fn(i32, usize, isize) -> isize,
+            module: isize,
+            thread: u32,
+        ) -> isize;
+        fn CallNextHookEx(hook: isize, code: i32, wparam: usize, lparam: isize) -> isize;
+        fn GetMessageW(message: *mut Message, hwnd: isize, first: u32, last: u32) -> i32;
+    }
+
+    fn handle(win: &tauri::WebviewWindow) -> Option<isize> {
+        win.hwnd().ok().map(|hwnd| hwnd.0 as isize)
+    }
+
+    pub fn is_visible(win: &tauri::WebviewWindow) -> bool {
+        handle(win).is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd) } != 0)
+    }
+
+    /// Shown and raised above other topmost windows without being activated.
+    /// Tauri's show() activates on every call after the first, which took
+    /// focus from the field the words were meant for. Visibility stays out of
+    /// Tauri's hands entirely, so its record never disagrees with the window.
+    pub fn show_without_focus(win: &tauri::WebviewWindow) {
+        if let Some(hwnd) = handle(win) {
+            unsafe {
+                SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                );
+            }
+        }
+    }
+
+    pub fn hide(win: &tauri::WebviewWindow) {
+        if let Some(hwnd) = handle(win) {
+            unsafe {
+                ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+    }
+
+    unsafe extern "system" fn mouse_hook(code: i32, wparam: usize, lparam: isize) -> isize {
+        if code == HC_ACTION && lparam != 0 {
+            let message = wparam as u32;
+            let button = match message {
+                0x0201 | 0x0202 => Some((1, message == 0x0201)),
+                0x0204 | 0x0205 => Some((2, message == 0x0204)),
+                0x0207 | 0x0208 => Some((4, message == 0x0207)),
+                0x020B | 0x020C => Some((8, message == 0x020B)),
+                _ => None,
+            };
+            if let Some((button, pressed)) = button {
+                let info = &*(lparam as *const MouseHookInfo);
+                if super::on_button(button, pressed, info.pt.x, info.pt.y) {
+                    return 1;
+                }
+            }
+        }
+        CallNextHookEx(0, code, wparam, lparam)
+    }
+
+    pub fn run_mouse_hook() {
+        std::thread::spawn(|| unsafe {
+            if SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, 0, 0) == 0 {
+                log::warn!("the dictation click guard could not start");
+                return;
+            }
+            let mut message = std::mem::zeroed::<Message>();
+            while GetMessageW(&mut message, 0, 0, 0) > 0 {}
+        });
+    }
+}
+
+#[cfg(not(windows))]
+mod native {
+    pub fn is_visible(win: &tauri::WebviewWindow) -> bool {
+        win.is_visible().unwrap_or(false)
+    }
+    pub fn show_without_focus(win: &tauri::WebviewWindow) {
+        let _ = win.show();
+    }
+    pub fn hide(win: &tauri::WebviewWindow) {
+        let _ = win.hide();
+    }
+    pub fn run_mouse_hook() {}
 }
 
 fn position(app: &AppHandle, win: &tauri::WebviewWindow) {
@@ -171,6 +539,31 @@ fn position_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_live_take_holds_clicks_elsewhere_and_a_report_lets_them_through() {
+        // Live: a press elsewhere is held and nudges; its release is held too.
+        assert_eq!(
+            judge(true, false, false, true, false),
+            Verdict::HoldAndNudge
+        );
+        assert_eq!(judge(true, false, false, false, true), Verdict::Hold);
+        // The × itself is always reachable.
+        assert_eq!(judge(true, false, true, true, false), Verdict::Pass);
+        // A release whose press went through is never swallowed, even if the
+        // take began in between — no application sees half a click.
+        assert_eq!(judge(true, false, false, false, false), Verdict::Pass);
+        // A report: the click goes through and puts the pill away.
+        assert_eq!(
+            judge(false, true, false, true, false),
+            Verdict::PassAndDismiss
+        );
+        assert_eq!(judge(false, true, true, true, false), Verdict::Pass);
+        // Hidden: nothing is touched.
+        assert_eq!(judge(false, false, false, true, false), Verdict::Pass);
+        // A press held while live keeps its release held after the take ends.
+        assert_eq!(judge(false, false, false, false, true), Verdict::Hold);
+    }
 
     #[test]
     fn accepts_exactly_six_positions() {

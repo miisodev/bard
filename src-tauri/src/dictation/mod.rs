@@ -72,6 +72,7 @@ fn clear_owner() {
 }
 
 pub fn init(app: AppHandle) {
+    overlay::start_guard(&app);
     model::start_unload_watcher(app);
 }
 
@@ -141,11 +142,13 @@ pub fn start(app: &AppHandle) -> bool {
                 "dictation-error",
                 "Voice model not downloaded yet. Open Settings to install it.",
             );
+            overlay::show_report(app, "No voice model yet");
             return false;
         }
         if !audio::mic_ready() {
             clear_owner();
             let _ = app.emit("dictation-error", "No microphone found.");
+            overlay::show_report(app, "No microphone found");
             return false;
         }
         *state = DictState::Recording;
@@ -155,7 +158,7 @@ pub fn start(app: &AppHandle) -> bool {
     overlay::show(app, "listening");
     if let Err(error) = audio::start(app.clone()) {
         crate::crash::record_event("dictation:audio-start-failed");
-        overlay::hide(app);
+        overlay::show_report(app, "Microphone unavailable");
         *state_lock() = DictState::Idle;
         clear_owner();
         let _ = app.emit("dictation-error", error);
@@ -241,14 +244,14 @@ pub fn stop(app: &AppHandle) {
     std::thread::spawn(move || {
         let recording = audio::stop();
         if let Some(error) = recording.error {
-            overlay::hide(&app);
+            overlay::show_report(&app, "Recording failed");
             *state_lock() = DictState::Idle;
             let _ = app.emit("dictation-error", error);
             return;
         }
         let mut samples = recording.samples;
         if samples.is_empty() || !recording.speech_detected {
-            overlay::hide(&app);
+            overlay::show_report(&app, "Nothing heard");
             *state_lock() = DictState::Idle;
             let _ = app.emit("dictation-error", "Nothing heard.");
             return;
@@ -291,7 +294,10 @@ pub fn stop(app: &AppHandle) {
                     crate::paste::set_text(&app, &text).map(|()| true)
                 };
                 if let Err(error) = write_result {
+                    overlay::show_report(&app, "Couldn't paste");
                     let _ = app.emit("dictation-error", error);
+                    *state_lock() = DictState::Idle;
+                    return;
                 } else {
                     let item_id =
                         crate::db::insert_item_with_origin(&app, &text, "text", None, "dictation");
@@ -306,10 +312,16 @@ pub fn stop(app: &AppHandle) {
                 }
             }
             Ok(_) => {
+                overlay::show_report(&app, "Nothing heard");
+                *state_lock() = DictState::Idle;
                 let _ = app.emit("dictation-error", "Nothing heard.");
+                return;
             }
             Err(e) => {
+                overlay::show_report(&app, "Transcription failed");
+                *state_lock() = DictState::Idle;
                 let _ = app.emit("dictation-error", e);
+                return;
             }
         }
         overlay::hide(&app);
@@ -331,6 +343,9 @@ pub fn cancel(app: &AppHandle) {
         cancel_operation();
         overlay::show(app, "cancelling");
         let _ = app.emit("dictation-cancel-requested", ());
+    } else {
+        // Nothing is running: the × on a report puts the pill away.
+        overlay::dismiss(app);
     }
 }
 

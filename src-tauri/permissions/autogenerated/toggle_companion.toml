@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-toggle-companion"
+description = "Enables the toggle_companion command without any pre-configured scope."
+commands.allow = ["toggle_companion"]
+
+[[permission]]
+identifier = "deny-toggle-companion"
+description = "Denies the toggle_companion command without any pre-configured scope."
+commands.deny = ["toggle_companion"]

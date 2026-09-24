@@ -265,7 +265,11 @@ fn main() {
                 match event {
                     WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
-                        let _ = window.hide();
+                        if let Some(companion) =
+                            window.app_handle().get_webview_window(window.label())
+                        {
+                            panel::hide_companion(window.app_handle(), &companion);
+                        }
                         panel::focus_panel(window.app_handle());
                     }
                     // Docked beside the open panel, a companion is part of the
@@ -316,6 +320,8 @@ fn main() {
             commands::add_image,
             commands::open_draw,
             commands::open_settings,
+            commands::toggle_companion,
+            commands::set_sort,
             commands::delete_item,
             commands::set_favorite,
             commands::set_done,

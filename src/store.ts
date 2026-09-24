@@ -17,6 +17,7 @@ import type {
   PostprocessingTestResponse,
   SavePostprocessingInput,
   LicenseStatus,
+  SortOrder,
   UpdateInfo,
 } from "./types";
 
@@ -26,6 +27,8 @@ export const api = {
   addItem: (content: string) => invoke<void>("add_item", { content }),
   openDraw: () => invoke<void>("open_draw"),
   openSettings: () => invoke<void>("open_settings"),
+  toggleCompanion: (label: "draw" | "settings") => invoke<void>("toggle_companion", { label }),
+  setSort: (order: SortOrder) => invoke<void>("set_sort", { order }),
   addImage: (dataBase64: string, ext: string) =>
     invoke<number>("add_image", { dataBase64, ext }),
   deleteItem: (id: number) => invoke<void>("delete_item", { id }),

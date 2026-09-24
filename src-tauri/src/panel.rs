@@ -19,6 +19,37 @@ pub fn position(win: &tauri::WebviewWindow) {
 /// dropped the companion's visible bottom edge short of the panel's.
 const COMPANION_GAP: f64 = 8.0;
 
+/// A companion's width in logical pixels, as declared in tauri.conf.json.
+/// Placement uses this rather than the window's current width: a companion
+/// hidden while fullscreen used to come back at the monitor's width and the
+/// panel's height — a letterbox strip rather than a window.
+const COMPANION_WIDTH: f64 = 720.0;
+
+/// Put a companion away. Fullscreen is left first, so the next open starts
+/// from the companion's own geometry instead of the monitor's.
+pub fn hide_companion(app: &AppHandle, win: &tauri::WebviewWindow) {
+    if win.is_fullscreen().unwrap_or(false) {
+        let _ = win.set_fullscreen(false);
+    }
+    let _ = win.hide();
+    companions_changed(app);
+}
+
+/// Tell the panel which companions are open, so its Draw and Settings
+/// buttons show as pressed while their window is out.
+pub fn companions_changed(app: &AppHandle) {
+    let open = |label: &str| {
+        app.get_webview_window(label)
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false)
+    };
+    let _ = app.emit_to(
+        "main",
+        "companions",
+        serde_json::json!({ "draw": open("draw"), "settings": open("settings") }),
+    );
+}
+
 /// Place Settings or Draw as a companion to the panel. The companion follows
 /// the panel's top edge and physical height, choosing the side with the most
 /// usable work area instead of blindly centring a second document window.
@@ -52,8 +83,9 @@ pub fn place_companion(app: &tauri::AppHandle, label: &str) {
     let work_right = work_x + work.size.width as i32;
     let work_bottom = work_y + work.size.height as i32;
 
-    let gap = (COMPANION_GAP * main.scale_factor().unwrap_or(1.0)).round() as i32;
-    let target_width = companion_size.width.min(work.size.width);
+    let scale = main.scale_factor().unwrap_or(1.0);
+    let gap = (COMPANION_GAP * scale).round() as i32;
+    let target_width = ((COMPANION_WIDTH * scale).round() as u32).min(work.size.width);
     let target_height = main_size.height.min(work.size.height);
     let (frame_width, frame_height) = companion
         .inner_size()
@@ -104,11 +136,12 @@ pub fn place_companion(app: &tauri::AppHandle, label: &str) {
 
 pub fn reposition_companions(app: &tauri::AppHandle) {
     for label in ["settings", "draw"] {
-        if app
-            .get_webview_window(label)
-            .and_then(|window| window.is_visible().ok())
-            .unwrap_or(false)
-        {
+        let Some(window) = app.get_webview_window(label) else {
+            continue;
+        };
+        // A fullscreen Draw owns its monitor; moving the panel must not pull
+        // it back into a companion's frame.
+        if window.is_visible().unwrap_or(false) && !window.is_fullscreen().unwrap_or(false) {
             place_companion(app, label);
         }
     }
@@ -238,6 +271,7 @@ fn show_now_inner(app: &tauri::AppHandle) {
     reposition_companions(app);
     let _ = win.set_focus();
     let _ = app.emit("panel-shown", ());
+    companions_changed(app);
 }
 
 pub fn hide_now(app: &tauri::AppHandle) {
@@ -253,7 +287,9 @@ fn hide_now_inner(app: &tauri::AppHandle) {
     save_geometry(app, &win);
     for label in ["settings", "draw"] {
         if let Some(companion) = app.get_webview_window(label) {
-            let _ = companion.hide();
+            if companion.is_visible().unwrap_or(false) {
+                hide_companion(app, &companion);
+            }
         }
     }
     let _ = win.hide();

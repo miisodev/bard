@@ -135,6 +135,9 @@ export type OverlayVertical = "top" | "bottom";
 export type OverlayHorizontal = "left" | "middle" | "right";
 export type OverlayPosition = `${OverlayVertical}-${OverlayHorizontal}`;
 
+/** The timeline's order; newest first is the default. */
+export type SortOrder = "newest" | "oldest" | "favorites" | "completed";
+
 export interface AppState {
   sections: Section[];
   items: Item[];
@@ -155,6 +158,7 @@ export interface AppState {
   /** "theme" follows Light/Dark; "light", "dark" and "custom" are chosen. */
   background: "theme" | "light" | "dark" | "custom";
   backgroundColor: string;
+  sort: SortOrder;
 }
 
 export interface LicenseStatus {

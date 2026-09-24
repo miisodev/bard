@@ -43,9 +43,9 @@ const TOOLS: { tool: Tool; label: string; icon: JSX.Element }[] = [
   width, and which shape is selected.
 */
 export default function DrawWindow() {
-  // Draw takes the theme but not the panel's custom background: its page has a
-  // background of its own, chosen in the header.
-  const appearance = useTheme({ background: false });
+  // Draw's window wears the theme and the panel's background like every other
+  // window; its page is the one surface with a colour of its own.
+  const appearance = useTheme();
   const [canvasPreview, setCanvasPreview] = useState<string | null>(null);
   const page = canvasPreview ?? (appearance ? drawCanvasFor(appearance) : DRAW_CANVAS.light);
   const ink = inkFor(page);

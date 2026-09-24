@@ -9,6 +9,8 @@ export interface MenuEntry {
   /** Draw a divider above this entry. */
   separated?: boolean;
   checked?: boolean;
+  /** One of a set of mutually exclusive choices, such as a sort order. */
+  radio?: boolean;
 }
 
 /*
@@ -25,11 +27,13 @@ export default function Menu({
   onClose,
   anchor = "top-right",
   at,
+  label = "Bard actions",
 }: {
   entries: MenuEntry[];
   onClose: () => void;
   anchor?: "top-right" | "point";
   at?: { x: number; y: number };
+  label?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -69,7 +73,7 @@ export default function Menu({
         ref={ref}
         className={`popover-menu${anchor === "point" ? " at-point" : ""}`}
         role="menu"
-        aria-label="Bard actions"
+        aria-label={label}
         style={style}
       >
         {entries.map((e, i) => (
@@ -77,7 +81,9 @@ export default function Menu({
             {e.separated && i > 0 ? <div className="menu-sep" /> : null}
             <button
               type="button"
-              role={e.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+              role={
+                e.checked === undefined ? "menuitem" : e.radio ? "menuitemradio" : "menuitemcheckbox"
+              }
               aria-checked={e.checked}
               disabled={e.disabled}
               onClick={() => {

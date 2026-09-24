@@ -99,9 +99,8 @@ export function inkFor(hex: string): string {
 }
 
 /**
- * Paint a window. `background: false` keeps the theme's own canvas: Draw
- * takes the theme but not the panel's custom background, because its page
- * has a background of its own.
+ * Paint a window. `background: false` keeps the theme's own canvas, for a
+ * surface that must not take the chosen background.
  */
 export function applyAppearance(appearance: Appearance, options: { background?: boolean } = {}) {
   const root = document.documentElement;
