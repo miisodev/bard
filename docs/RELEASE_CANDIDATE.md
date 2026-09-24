@@ -2,16 +2,16 @@
 
 **Status: NO-GO — intentionally unsigned**
 
-- Source commit: `4249b10588283ac521af7e1bbf858fc9fbdb8883`
-- Local tag: `rc-0.1.0` (not pushed)
+- Source commit: `9150e80b344230eb244ec30d23e0a33283ef1fa1`
+- Local tag: `rc-0.1.0-r2` (not pushed)
 - Product branch: `main` (not pushed; the signed-release decision is pending)
 - Build date: 2026-09-24
 - Installer: `src-tauri/target/release/bundle/nsis/Bard_0.1.0_x64-setup.exe`
-- Installer SHA-256: `5CF93BC04A671B84A8DD9C58D9369961B118BFC6F19235ECC2FAC3F63BFD6453`
+- Installer SHA-256: `EF937D0215AA3527AC29B79AFE4D705F0A93840A290A4EF36734A259C72AFBF1`
 - MSIX: `src-tauri/target/release/bundle/msix/Bard_0.1.0_x64.msix`
 - MSIX SHA-256: **not a release hash**; unsigned local pack metadata changes on rebuild
-- Executable SHA-256: `7116DD19C998BFEB94B32F04FDA94EDDCF4B442A642B93DE3C75125F06E9FBA9`
-- Updater `.sig` SHA-256: `C5D7A7E0828B9DC4D04E5DABF109A0955BDD6D8EC73F02115091B727049901C3`
+- Executable SHA-256: `0B18F3BE5EC3E3AE1035882C804A2E667FAB4EE1883168F217517563E71FD5D3`
+- Updater `.sig` SHA-256: `7D1FD8C957B59F9C0F4F3E166AC2F54EF837D8216DF5A3B4F3E3252954C48EBB`
 - NSIS integrity: **pass** (`7z t`)
 - Tauri/minisign updater signature: **pass** (verified against `src-tauri/tauri.conf.json`)
 - Rust tests: **59 passed**
