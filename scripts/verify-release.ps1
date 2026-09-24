@@ -1,15 +1,20 @@
 param(
   [string]$Version = "0.1.0",
   [string]$BundleDir = "src-tauri\target\release\bundle\nsis",
-  [switch]$RequireSignature
+  [string]$MsixDir = "src-tauri\target\release\bundle\msix",
+  [switch]$RequireSignature,
+  [switch]$RequireMsix
 )
 
 $ErrorActionPreference = "Stop"
 $installer = Join-Path $BundleDir "Bard_${Version}_x64-setup.exe"
 $signature = "$installer.sig"
 $binary = "src-tauri\target\release\bard.exe"
+$msix = Join-Path $MsixDir "Bard_${Version}_x64.msix"
 
-foreach ($path in @($installer, $signature, $binary)) {
+$required = @($installer, $signature, $binary)
+if ($RequireMsix) { $required += $msix }
+foreach ($path in $required) {
   if (-not (Test-Path -LiteralPath $path)) {
     throw "Missing release artifact: $path"
   }
@@ -25,6 +30,7 @@ if ($sevenZip) {
 }
 
 $artifacts = @($binary, $installer, $signature)
+if (Test-Path -LiteralPath $msix) { $artifacts += $msix }
 $hashes = foreach ($path in $artifacts) {
   $item = Get-Item -LiteralPath $path
   [pscustomobject]@{
@@ -40,19 +46,24 @@ $binarySignature = Get-AuthenticodeSignature -FilePath $binary
 $authenticode | Select-Object Status,StatusMessage,SignerCertificate,TimeStamperCertificate | Format-List | Out-Host
 $binarySignature | Select-Object Status,StatusMessage,SignerCertificate,TimeStamperCertificate | Format-List | Out-Host
 
+$signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -match "\\x64\\" } |
+  Sort-Object FullName -Descending |
+  Select-Object -First 1 -ExpandProperty FullName
+
 if ($RequireSignature) {
   if ($authenticode.Status -ne "Valid" -or $binarySignature.Status -ne "Valid") {
     throw "Authenticode verification failed"
   }
-  $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match "\\x64\\" } |
-    Sort-Object FullName -Descending |
-    Select-Object -First 1 -ExpandProperty FullName
   if (-not $signtool) { throw "signtool.exe was not found" }
   & $signtool verify /pa /all /v $installer
   if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed" }
   & $signtool verify /pa /all /v $binary
   if ($LASTEXITCODE -ne 0) { throw "Binary signature verification failed" }
+  if ($RequireMsix) {
+    & $signtool verify /pa /all /v $msix
+    if ($LASTEXITCODE -ne 0) { throw "MSIX package signature verification failed" }
+  }
 }
 
 if ((Get-Item -LiteralPath $signature).Length -lt 32) {

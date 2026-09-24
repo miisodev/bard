@@ -368,7 +368,8 @@ on a roaming profile.
 ```sh
 bun install
 bun run tauri dev                     # dev server and app
-bun run tauri build --bundles nsis    # the only consumer installer
+bun run tauri build --bundles nsis    # direct NSIS installer
+bun run build:msix                     # direct + Store MSIX package
 bun run build                         # typecheck, CSS audit, bundle
 ```
 
@@ -378,20 +379,23 @@ duplicate selectors and undefined custom properties**, neither of which a
 typecheck can see and both of which are silent at runtime — a duplicated
 selector is not an error, it is a rule that quietly wins.
 
-The Tauri bundle target is `nsis` only. The generated custom installer carries
-the welcome, install-location, progress and finish-page contract in
-`Product & Business §7`; it has no second format and no silent fallback. A
-release job fails when any MSI artifact is emitted. The NSIS installer registers
-the narrow Explorer verb below, preserves that registration across upgrades and
-removes it on uninstall. Installer failure, cancellation and rollback leave the
-previous installed version runnable.
+The Tauri bundle target is `nsis`; `scripts/build-msix.ps1` packages the same
+release binary as a Windows desktop full-trust MSIX. The generated custom NSIS
+installer carries the welcome, install-location, progress and finish-page
+contract in `Product & Business §7`; the MSIX manifest is validated by the
+Windows SDK and submitted separately to Partner Center. A release job fails
+when any MSI artifact is emitted. The NSIS installer registers the narrow
+Explorer verb below, preserves that registration across upgrades and removes it
+on uninstall. Installer failure, cancellation and rollback leave the previous
+installed version runnable.
 
-Authenticode signing follows [Tauri's Windows signing contract](https://v2.tauri.app/distribute/sign/windows/);
-the updater artifact has its own required signature under the
-[Tauri updater contract](https://v2.tauri.app/plugin/updater/). Signing private
-keys and passwords are release-operator secrets and never enter the repository,
-the webview or a diagnostic artefact. The public updater key and active/next
-licence verification keys may ship in the application.
+Authenticode signing follows [Tauri's Windows signing contract](https://v2.tauri.app/distribute/sign/windows/)
+for `bard.exe` and the NSIS installer, and uses the same publicly trusted
+publisher identity to sign the direct MSIX package. The updater artifact has its
+own required signature under the [Tauri updater contract](https://v2.tauri.app/plugin/updater/).
+Signing private keys and passwords are release-operator secrets and never enter
+the repository, the webview or a diagnostic artefact. The public updater key and
+active/next licence verification keys may ship in the application.
 
 ### Explorer integration
 

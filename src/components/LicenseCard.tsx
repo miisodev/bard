@@ -117,7 +117,7 @@ export default function LicenseCard({
             {busy ? <LoaderCircle className="spin" size={14} aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
             Check again
           </button>
-          <a className="btn" href="https://miiso.dev/saas/bard" target="_blank" rel="noreferrer">
+          <a className="btn" href="https://miiso.dev/tools/bard" target="_blank" rel="noreferrer">
             Manage licence <ExternalLink size={14} aria-hidden="true" />
           </a>
           <button type="button" className="link-button" onClick={() => void release()} disabled={busy}>

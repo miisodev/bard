@@ -23,9 +23,10 @@ A US$20-per-year native Windows app: Copper's capture/clipboard workspace and
 best-in-class local dictation in one keyboard-first panel. The licence renews
 annually, covers three activated machines, and is backed by a 30-day signed
 offline lease between bounded online checks. A 14-day feature-complete local
-trial needs no account. The Phase 1 consumer download is a signed NSIS
-installer from miiso.dev; Microsoft Store distribution remains a separate later
-path.
+trial needs no account. Bard ships through two Windows channels: a Microsoft
+Store MSIX submission and a direct miiso.dev download with signed NSIS and MSIX
+artifacts. The direct channel requires a publicly trusted code-signing
+certificate; the Store re-signs its MSIX copy after certification.
 
 Dictation targets Wispr Flow's *capability* (minus notetaking) but delivers local
 transcription on open weights, with genuine freedom of model choice — choose a
@@ -174,11 +175,11 @@ Neither reference does this; it is the reason bard is one app and not two.
 | E8 | **Host our own models** | **done** | The catalogue points all three final defaults at the pinned, hash-verified `miisodev/bard-models` release `models-v2`, with exact asset URLs, conversion provenance, model-specific notices, byte sizes, and SHA-256 values. The public release assets match the staged hashes, support `Range` requests, and each exact file passed a Windows `transcribe-cpp` load/transcription smoke test. |
 | E9 | **A release panic is a silent death** | **partial** | A local panic hook is installed before Tauri startup, writes bounded timestamped crash logs, preserves the previous hook, and exposes a latest-log reader; the Data pane can load the newest report. A secret-free lifecycle log now records console interrupts, gesture outcomes, audio failures, model phases, and cloud test boundaries. A release-profile probe confirmed the hook writes before abort and captures a backtrace. Native/WebView2 process failures and the operator artifact-retention/field workflow remain unverified. |
 | E1 | **Recurring annual licence** — US$20/year, 14-day local trial, three paid activations, signed 30-day offline lease, bounded revalidation | **partial** | CSPRNG installation identity, Credential Manager key/lease storage, replay and temporal checks, key rotation, explicit trial, terminal revocation handling, scheduled bounded refresh, Polar broker routes and activation/deactivation UI are implemented. Live four-device, renewal/refund and checkout evidence remain. |
-| E2 | Code signing (SmartScreen) | **missing** | |
-| E3 | Auto-update channel + signed releases | **partial** | The Tauri updater endpoint, embedded public key, cryptographically verified updater artifact, user-invoked confirmed check/install flow, release workflow and updater signature verification exist. A public immutable manifest, Authenticode-signed installer, live upgrade and rollback receipt remain. |
-| E4 | miiso.dev purchase + download page | **partial** | The authenticated Bard storefront, annual Polar product/benefits, secure entitlement retrieval, broker routes, legal pages and download redirect are implemented locally; production remains fail-closed until signed release assets and checkout smoke tests are complete. |
-| E5 | Microsoft Store packaging | **later** | Separate Phase 3 distribution path; it is not a second Phase 1 consumer installer |
-| E10 | **NSIS-only signed consumer package** | **partial** | Packaging emits only NSIS with embedded WebView2 bootstrapper, Send to Bard hooks, a Tauri updater signature and release verification/metadata scripts. Authenticode signing, clean install/upgrade/uninstall, SmartScreen evidence and legal-notice packaging remain. |
+| E2 | Code signing (SmartScreen) | **partial** | Direct NSIS and MSIX use an externally held publicly trusted OV certificate; signing scripts and release gates exist, but no certificate or signed public artifact is available yet. |
+| E3 | Auto-update channel + signed releases | **partial** | The Tauri updater endpoint, embedded public key, cryptographically verified updater artifact, user-invoked confirmed check/install flow, release workflow and updater signature verification exist. A public immutable manifest, Authenticode-signed NSIS/MSIX artifacts, live upgrade and rollback receipt remain. |
+| E4 | miiso.dev purchase + download page | **partial** | The authenticated Bard storefront, annual Polar product/benefits, secure entitlement retrieval, broker routes, legal pages and NSIS/MSIX download paths are implemented locally; production remains fail-closed until signed release assets and checkout smoke tests are complete. |
+| E5 | Microsoft Store packaging | **partial** | `scripts/build-msix.ps1` creates a Windows desktop full-trust MSIX from the release binary; Partner Center submission, Store listing assets, certification, and Store update evidence remain. |
+| E10 | **Signed NSIS + MSIX consumer packages** | **partial** | NSIS remains the Tauri direct installer with embedded WebView2 bootstrapper, Send to Bard hooks, and updater signature; `build-msix.ps1` packages the same binary for Microsoft Store and direct download. Authenticode signing, clean install/upgrade/uninstall, SmartScreen evidence, and legal-notice packaging remain. |
 | E6 | Licence review — cooper is Apache-2.0, Handy is MIT | **clear, keep it that way** | bard ships **no code from either**. Handy was read for facts — which crates, which features, what its catalog records — and facts carry no licence. cooper was read for approach only; `shapes.ts` and `markdown.tsx` are bard's own. The markdown tokenizer *was* a verbatim copy of cooper's regex and has been rewritten as an independent scanner. Attribution attaches to code, so none is owed today — but it becomes owed the moment anything is vendored, `catalog.json` included |
 | E7 | Name/brand check against shadcn's Copper — bard must not read as a clone or a knock-off | **open** | |
 
@@ -198,7 +199,7 @@ licence state or unexamined primary surface blocks release.
 | **G1 Product truth** | Blueprint 1.2 contradictions, currency, retention, installer and licence registers are clean; every A/B/C row is `done`, `off`, or `resolved` with no `missing`, `partial`, `verify`, `regression`, `blocked` or `open` state; public copy matches runtime behaviour | **blocked** — new mandate rows open; blueprint reconciliation is specification only |
 | **G2 Commerce and licence** | Sandbox purchase, US$20 annual renewal, cancellation, paid-through access, refund/subscription loss, 14-day trial, three activations, fourth-machine refusal, local/portal deactivation, replacement key, 30-day offline lease, tamper/replay/clock failures and revalidation bounds all pass on installed builds | **blocked** — local contract is implemented; live Polar lifecycle and installed evidence remain |
 | **G3 Security and privacy** | No secret licence key, signed lease, signing private key, OpenRouter key or service credential appears in repo, binary strings, SQLite, events, URLs, logs, crash reports or notifications; keyring round trip passes; CSP/capabilities are least-privilege; signed lease and updater signatures reject tampering; uninstall removes persistent secrets and the shell verb | **blocked** — local lease/updater checks pass, but Authenticode, installed secret inspection and uninstall receipt remain |
-| **G4 Installer and distribution** | Exactly one signed NSIS consumer artifact; clean install, repair, upgrade and uninstall pass; no unwanted installer format is emitted; SmartScreen evidence is recorded; NSIS onboarding and in-app onboarding match the design system; Explorer verb registers, repairs and removes | **blocked** — NSIS/updater candidate is built and checked, but Authenticode and installed lifecycle evidence remain |
+| **G4 Installer and distribution** | Signed NSIS and MSIX artifacts for direct distribution; a valid MSIX Store submission; clean install, repair, upgrade and uninstall pass for both; no MSI or unsigned public artifact; SmartScreen evidence is recorded; NSIS onboarding and in-app onboarding match the design system; Explorer verb registers, repairs and removes | **blocked** — NSIS and unsigned MSIX candidates are built and checked, but Authenticode, Store certification and installed lifecycle evidence remain |
 | **G5 Update and lifecycle** | Signed update discovery/download/install, restart, rollback and failure copy pass; updater pre-exit does not resurrect Bard; deliberate Task Manager exit stays dead; single-instance, autostart and companion lifecycle pass cold/warm | **blocked** — updater artifact and opt-in guardian are implemented; public feed, Authenticode and installed lifecycle evidence remain |
 | **G6 Installed visual QA** | Every window, overlay, menu, onboarding step, settings pane and state is captured in light/dark, 100%/150% scaling and at least one narrow display; no clipping, smudge, stale frame, overlap, hidden scrollbar or misaligned companion | **blocked** — local onboarding/panel/settings/About captures exist; installed matrix remains |
 | **G7 Keyboard and accessibility** | Every action completes without a mouse; focus never disappears or lands behind a window; menu/list/companion focus order is correct; screen reader announces capture, copy, active/selected state, dictation, errors and licence changes; reduced motion and 200% text pass; rendered contrast meets WCAG 2.2 AA in every state | **blocked** — local keyboard/contrast/focus improvements pass; screen-reader and installed matrix remain |
@@ -619,7 +620,8 @@ installed binary remained responsive on a clean launch.
 **2026-09-23 — product mandate reconciled into the canonical library.** The five
 blueprints now specify the US$20 recurring annual licence, 14-day local trial,
 three paid activations, Ed25519-signed 30-day offline lease with bounded online
-revalidation, signed NSIS-only consumer distribution, persistent Draw/Settings
+revalidation, signed NSIS + MSIX direct distribution, Microsoft Store MSIX
+submission, persistent Draw/Settings
 header actions, panel-height companion docking, item Copy, one active item, a
 keyboard-complete desktop-style menu, the narrow Explorer `Send to Bard` verb,
 independent clipboard/dictation lifespans, one central five-cue audio service and
@@ -628,3 +630,13 @@ superseded standalone Settings/Draw, composer Drawing route, hidden 500-item
 prune or capture-only sound preference are marked `off`/`partial`; missing work
 is added rather than inferred complete. The production gate is **NO-GO** until
 the installed signed release candidate supplies every receipt.
+
+**2026-09-24 — two-channel distribution and tools hub.** The release mandate now
+covers Microsoft Store MSIX plus direct signed NSIS/MSIX downloads. A Windows
+SDK-backed MSIX packager now builds and structurally validates a desktop
+full-trust package from the same release binary; the release workflow requires
+both package formats and the site exposes separate NSIS/MSIX delivery paths.
+Bard and BrainLLM now live under `/tools`, with dedicated product pages and
+storefront-style cards; the legacy `/saas/bard` and `/bard` routes redirect to
+`/tools/bard`. Authenticode signing, Store certification, and live commerce
+remain **NO-GO**.

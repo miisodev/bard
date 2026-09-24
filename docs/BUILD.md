@@ -3,7 +3,8 @@
 ```sh
 bun install
 bun run tauri dev      # dev server + app
-bun run tauri build    # signed NSIS installer
+bun run tauri build    # release + NSIS installer
+bun run build:msix     # package the release binary as MSIX
 bun run build          # tsc + css-audit + vite — the frontend gate
 ```
 
@@ -130,18 +131,19 @@ are part of the normal Rust suite.
 
 ## Release gate
 
-The public consumer target is the current-user **NSIS** installer only. Before a
-release is published:
+The public consumer targets are a Microsoft Store **MSIX** and a direct
+current-user **NSIS + MSIX** download. Before a release is published:
 
 1. Freeze and tag one clean commit.
 2. Set the Tauri updater private key/password in the release environment.
-3. Sign `bard.exe` and the NSIS installer with the same Authenticode publisher
-   identity and a trusted timestamp.
+3. Sign `bard.exe`, the NSIS installer, and the MSIX package with the same
+   publicly trusted Authenticode publisher identity and a trusted timestamp.
 4. Generate the Tauri `.sig`, `SHA256SUMS`, and a release manifest.
-5. Upload only the signed installer, update signature, hashes, and notices to
-   the release-only repository.
-6. Run `scripts/verify-release.ps1 -RequireSignature` and the clean-VM install
-   matrix. An unsigned artifact is a private test build, never a paid release.
+5. Upload only the signed packages, update signature, hashes, and notices to
+   the release-only repository; submit the MSIX package through Partner Center.
+6. Run `scripts/verify-release.ps1 -RequireSignature -RequireMsix` and the
+   clean-VM NSIS/MSIX install matrix. An unsigned artifact is a private test
+   build, never a paid release.
 
 `BARD_LICENSE_SERVER` may point at a local mock during development; use
 `node scripts/mock-license-server.mjs` with

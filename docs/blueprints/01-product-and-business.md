@@ -475,9 +475,11 @@ owned here and specified in `Technology §8`.
 
 ## §7 Distribution
 
-**miiso.dev is the channel.** The product page sells the recurring annual
-licence and serves the installer directly. The consumer download is a single
-signed **NSIS** installer. No MSI package is published to consumers.
+**miiso.dev and the Microsoft Store are the channels.** The product page sells
+the recurring annual licence and serves the direct Windows packages. The direct
+consumer download is a signed **NSIS** installer and a signed **MSIX** package.
+The Store submission is an MSIX package; Microsoft re-signs its Store copy after
+certification. No MSI package is published to consumers.
 
 **The NSIS installer is the first-run product surface.** Its custom pages use
 the same name, typography, spacing and restrained language as bard: welcome,
@@ -499,9 +501,11 @@ unexpired signed lease is required to download an update. The application checks
 a release feed, verifies its signature, surfaces an available version, and
 installs only after explicit confirmation. It never updates silently.
 
-**The Microsoft Store is Phase 3 and is a separate distribution path.** It
-reaches people who will not download an installer; its Store package does not
-replace or add a second consumer installer format to the Phase 1 release.
+**The Microsoft Store is a second supported distribution channel.** It reaches
+people who prefer Store installation and updates. Its MSIX package is submitted
+through Partner Center; Microsoft handles Store package signing after
+certification. The direct miiso.dev channel remains responsible for the signed
+NSIS and MSIX files, their hashes, and the authenticated delivery path.
 Requirements are at
 [Microsoft Store policies](https://learn.microsoft.com/en-us/windows/apps/publish/store-policies).
 
@@ -557,8 +561,9 @@ its checksum policy promises.
 
 ## §9 The product page
 
-One page on miiso.dev. It carries what the product does, what it costs, the
-system requirement, a purchase action and the signed NSIS download.
+One product page on miiso.dev. It carries what the product does, what it costs,
+the system requirement, a purchase action, the Microsoft Store channel, and the
+signed direct NSIS/MSIX delivery path.
 
 **It answers four questions in this order**, because that is the order a visitor
 asks them: what is this, what does it look like, what does it cost, how do I get

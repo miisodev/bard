@@ -61,7 +61,13 @@ installer can bootstrap it when a clean machine needs it).
 bun install
 bun run tauri dev      # develop
 bun run tauri build    # release + signed NSIS installer
+bun run build:msix     # package the same release binary as MSIX
 ```
+
+The MSIX command produces an unsigned local validation package by default. For a
+public direct download, sign the executable, NSIS installer, and MSIX package
+with a publicly trusted code-signing PFX. Microsoft Store submission can use the
+MSIX package; Microsoft re-signs the Store copy after certification.
 
 The three model roles are pinned to the hash-verified
 `https://github.com/miisodev/bard-models` release `models-v2`:

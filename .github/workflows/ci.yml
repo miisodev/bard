@@ -61,12 +61,16 @@ jobs:
           BARD_NO_GUARDIAN: "1"
         run: bun run tauri build --bundles nsis --config src-tauri/tauri.ci.conf.json
 
+      - name: Package unsigned MSIX
+        run: bun run build:msix
+
       - name: Upload unsigned CI installer
         uses: actions/upload-artifact@v4
         with:
-          name: bard-nsis-ci
+          name: bard-nsis-msix-ci
           path: |
             src-tauri/target/release/bundle/nsis/*
+            src-tauri/target/release/bundle/msix/*
             src-tauri/target/release/bard.exe
             src-tauri/target/release/bard.pdb
           if-no-files-found: error
