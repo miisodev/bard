@@ -198,8 +198,10 @@ thumbnails. **Clicking a thumbnail or pressing the item's Copy button copies
 the image back to the clipboard.**
 
 A drawing is made in a companion window opened by the panel's persistent Draw
-icon. The canvas is always white whatever the theme, because a drawing is made
-to be pasted elsewhere and one drawn on a dark surface arrives unreadable.
+icon. Its page follows the theme until someone chooses Light, Dark or a custom
+colour, and a drawing is exported on the page it was drawn on — so what is
+pasted elsewhere is exactly what was seen. The ink follows the page, so a
+drawing never loses its strokes to a page change.
 
 ### Export
 

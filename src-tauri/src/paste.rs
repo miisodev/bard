@@ -4,6 +4,24 @@ use base64::Engine;
 use image::GenericImageView;
 use tauri::AppHandle;
 
+/// Send one native paste chord to the currently focused application. The
+/// caller has already written and verified the clipboard payload.
+pub fn send_paste(_app: &AppHandle) {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    let _synthetic_input = crate::capture::SyntheticInputGuard::enter();
+    let Ok(mut enigo) = Enigo::new(&Settings::default()) else {
+        return;
+    };
+    let _ = enigo.key(Key::Control, Direction::Press);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let _ = enigo.key(Key::Unicode('v'), Direction::Click);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let _ = enigo.key(Key::Control, Direction::Release);
+    // Let the low-level hook drain Bard's synthetic events before the guard
+    // re-enables gesture recognition.
+    std::thread::sleep(std::time::Duration::from_millis(40));
+}
+
 pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     cb.set_text(text.to_string()).map_err(|e| e.to_string())?;

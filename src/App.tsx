@@ -239,9 +239,3 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
  * Resolve and apply the theme. "system" follows the OS and keeps following it;
  * `useTheme` re-runs this when the OS appearance changes.
  */
-export function applyTheme(theme: string) {
-  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  const resolved =
-    theme === "light" || theme === "dark" ? theme : systemDark ? "dark" : "light";
-  document.documentElement.dataset.theme = resolved;
-}

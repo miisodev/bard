@@ -1,8 +1,27 @@
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../store";
+import { CANVAS, isHexColor, resolvedTheme, applyAppearance } from "../../appearance";
 import type { PaneProps } from "../SettingsWindow";
 import { Button, Group, Pane, Row, Segmented, Toggle } from "../ui";
 
 export default function GeneralPane({ state, refresh }: PaneProps) {
+  const custom = state.background === "custom" && isHexColor(state.backgroundColor);
+  const current = custom ? state.backgroundColor : CANVAS[resolvedTheme(state.theme)];
+  const [color, setColor] = useState(current);
+  const well = useRef<HTMLInputElement>(null);
+
+  useEffect(() => setColor(current), [current]);
+
+  // The picker previews live in this window as it moves, and is saved — and
+  // sent to every other window — once, when the picker closes.
+  useEffect(() => {
+    const input = well.current;
+    if (!input) return;
+    const commit = () => void api.setBackground("custom", input.value).then(refresh);
+    input.addEventListener("change", commit);
+    return () => input.removeEventListener("change", commit);
+  }, [refresh]);
+
   return (
     <Pane title="General" description="How Bard behaves when you are not looking at it.">
       <Group title="Appearance">
@@ -17,6 +36,34 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
               { value: "dark", label: "Dark" },
             ]}
           />
+        </Row>
+        <Row
+          label="Background"
+          hint={custom ? "Your colour. Cards keep the theme." : "Follows the theme until you pick a colour."}
+        >
+          <div className="background-control">
+            {custom ? (
+              <Button onClick={() => void api.setBackground("theme").then(refresh)}>Match theme</Button>
+            ) : null}
+            <input
+              ref={well}
+              className="color-well"
+              type="color"
+              aria-label="Background colour"
+              title="Pick a colour"
+              value={color}
+              onChange={(event) => {
+                setColor(event.target.value);
+                applyAppearance({
+                  theme: state.theme,
+                  background: "custom",
+                  backgroundColor: event.target.value,
+                  drawBackground: "theme",
+                  drawBackgroundColor: "",
+                });
+              }}
+            />
+          </div>
         </Row>
       </Group>
 

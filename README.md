@@ -28,8 +28,11 @@ Windows.
 
 | Action | Shortcut |
 | --- | --- |
-| Capture selection | `Shift` `Shift` (or `Ctrl+Shift+C`) |
-| Toggle panel | `Shift` `Shift` (right) or `Ctrl+Shift+Space` |
+| Capture selection | `Left Shift` `Left Shift` |
+| Paste item 1 / 2 / 3 | `Right Shift` `Right Shift` then `1` / `2` / `3` |
+| Toggle panel | `Right Shift` `Right Shift` |
+| Settings | `Right Alt` `Right Alt` |
+| Draw | `Left Alt` `Left Alt` |
 | Dictate | same-key `Ctrl` `Ctrl` (hold the second press for push-to-talk) |
 | Copy item | `Enter` |
 | Mark done | `Space` |
@@ -39,7 +42,7 @@ Windows.
 | Edit item | double-click |
 | Hide panel | `Esc` (steps: clear search → clear selection → hide) |
 
-Capture and panel chords are rebindable in Settings. The same-key double-tap gestures are fixed so they remain available everywhere.
+Shortcuts are fixed. The same-key gestures and the Right Shift item-paste sequence remain available from every app; the Settings → Shortcuts page is a reference, not a key editor.
 
 ## Licence
 
@@ -85,7 +88,7 @@ and SHA-256; downloads resume, hash the complete file, and load through
 Tauri 2 (Rust + React/TS/Vite), SQLite as the single source of truth:
 
 - `src-tauri/src/capture.rs` — one rdev raw-input coordinator for the fixed
-  same-key Shift and Ctrl gestures, transactional OS shortcut registration, and
+  same-key Shift, Alt, and Ctrl gestures, the Right Shift item-paste slot, and
   the enigo copy chord / zero-width-sentinel clipboard dance
 - `src-tauri/src/monitor.rs` — clipboard sequence poller, privacy-format aware,
   dedup by content

@@ -23,60 +23,49 @@ alternatives, never the only route.
 
 ## §1 Global shortcuts
 
-The double-tap gestures below are the defaults, and they follow one convention:
-Shift captures, Ctrl dictates. Two ordinary OS chords can be added on top; each
-starts **unassigned**, because a registered chord is taken from every other
-application — the old `Ctrl+Shift+C` default silenced copy in Windows Terminal
-and VS Code's terminal, and DevTools' inspect.
-
-| Action | Default | Rebindable |
-|---|---|---|
-| Capture | Unassigned | Yes |
-| Panel | Unassigned | Yes |
-
-**Three gestures are fixed and cannot be rebound:**
+Bard's global shortcuts are fixed. They are reached with a finger already
+resting on a modifier, from inside any application, and there is no key editor
+or persisted custom binding.
 
 | Gesture | Action |
 |---|---|
 | Double-tap **Left Shift** | Capture the current selection |
-| Double-tap **Right Shift** | Show or hide the panel |
+| Double-tap **Right Shift**, then `1` / `2` / `3` within the slot window | Paste the first / second / third timeline item into the focused app |
+| Double-tap **Right Shift** without a number | Show or hide the panel after the slot window expires |
+| Double-tap **Left Alt** | Open or put away Draw as a single window |
+| Double-tap **Right Alt** | Open or put away Settings as a single window |
 | Double-tap the same **Control** key | Start or stop dictation |
 
+The item slots use the current timeline order and do not open the panel. A
+missing item is a no-op; the failed paste is not converted into a new capture.
+The panel-key and gesture entry points for Settings and Draw also open one
+companion window, while tray and header buttons retain their existing companion
+behavior.
+
 **Why they are fixed.** They are reached with a finger already resting on the
-key, from inside any application, without a chord. Making them configurable
-would invite a binding that cannot be typed, and there is no second gesture of
-the same quality to fall back to.
+key, from inside any application, without taking a chord away from another
+application. There is no custom binding editor.
 
 ### The gestures' own rules
 
 A tap counts only when the key goes down and comes back up **within 500
 milliseconds with no other key pressed in between**, and the second press must
-begin **within 400 milliseconds** of the first. The Control pair waits a
-further 50 milliseconds after the second press so a following normal shortcut
-such as `Ctrl+Space` invalidates it before dictation starts. Auto-repeat,
-already-held foreign keys, mouse buttons, and Bard's own synthetic copy/paste
-chords never arm a gesture.
+begin **within 400 milliseconds** of the first. Right Shift waits that same
+400-millisecond slot window for `1`, `2`, or `3`; if no supported number arrives,
+the panel toggle runs. The Control pair waits a further 50 milliseconds after
+the second press so a following normal shortcut such as `Ctrl+Space` invalidates
+it before dictation starts. Auto-repeat, already-held foreign keys, mouse
+buttons, and Bard's own synthetic copy/paste chords never arm a gesture.
 
 **Without the dirty rule the gestures fire constantly.** Shift is held down
 during ordinary capitalisation, and a person typing two capitals in a sentence
 would otherwise be capturing their own selection mid-word.
 
 Left and right are tracked separately: the two Shift gestures never collide,
-and Ctrl-left followed by Ctrl-right is not Ctrl+Ctrl. The second Control
-release carries its hold duration to the dictation lifecycle: a short release
-leaves recording locked; a release at or beyond 300 milliseconds stops it.
-
-### Binding and registration
-
-A normal binding is stored as a string and parsed into a modifier set and a
-key code. **A binding is only in force once registration with the operating
-system succeeds.** On startup every stored binding is validated; a malformed
-value is replaced by its default rather than left dead. Registration is
-transactional: a failed or conflicting candidate restores the previous pair
-instead of persisting a shortcut the machine never accepted.
-
-**Registration can fail because another application holds the combination.** The
-failure is reported where the binding was made — see `Surfaces §3.5`.
+Left Alt and Right Alt never cross-trigger, and Ctrl-left followed by Ctrl-right
+is not Ctrl+Ctrl. The second Control release carries its hold duration to the
+dictation lifecycle: a short release leaves recording locked; a release at or
+beyond 300 milliseconds stops it.
 
 ---
 
@@ -222,8 +211,6 @@ Active whenever the panel has focus.
 | `Delete` / `Backspace` | Delete the selection |
 | `Ctrl+K` | Open the section switcher |
 | `Ctrl+/` | Open the shortcut sheet |
-| `Ctrl+,` | Toggle the Settings companion |
-| `Ctrl+Shift+D` | Toggle the Drawing companion |
 | `Escape` | Close a menu, then clear the search, then the selection, then hide the panel |
 | Typing | Goes to the composer, which holds focus by default |
 

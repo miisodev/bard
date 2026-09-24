@@ -4,7 +4,14 @@
   "description": "Bard Drawing permissions",
   "windows": ["draw"],
   "permissions": [
+    "core:window:allow-start-dragging",
+    "allow-set-draw-background",
+    "allow-get-appearance",
     "core:window:allow-close",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-get-state",
     "allow-add-image",
     "allow-copy-item"

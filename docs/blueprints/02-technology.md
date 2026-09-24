@@ -89,17 +89,17 @@ bard owns four windows and a crowd of helpers.
 | Label | Title | Size | Chrome | Purpose |
 |---|---|---|---|---|
 | `main` | Bard | 380 × 620 | Frameless, transparent, always-on-top, off the taskbar | The panel |
-| `settings` | Bard Settings | 680 px wide × panel height | Frameless companion | Settings |
-| `draw` | Drawing | 680 px wide × panel height | Frameless companion | The drawing canvas |
+| `settings` | Settings | 720 px wide × panel height | Frameless companion | Settings |
+| `draw` | Draw | 720 px wide × panel height | Frameless companion | The drawing canvas |
 | `overlay` | Recording | 260 × 60 | Frameless, transparent, never focused | The dictation indicator |
 
 **Settings and Drawing are companions, not centred documents.** Their physical
 outer height always equals the panel's current physical outer height, and every
 panel resize updates the visible companion in the same main-thread transaction.
-Their preferred width is 680 CSS pixels, clamped to the available work area on
-the chosen side. A companion is positioned on the monitor containing the panel,
-with a 10-pixel gutter between the two windows and a 16-pixel minimum gap from
-the outer screen edge.
+Their preferred width is 720 pixels — what Draw's toolbar needs — clamped to the
+available work area on the chosen side. A companion is positioned on the monitor
+containing the panel, with an 8-pixel gutter (scaled with the display) between
+the two windows and a 16-pixel minimum gap from the outer screen edge.
 
 The preferred side is inward from the panel's nearest vertical screen edge: a
 left-docked panel prefers a companion on its right, and a right-docked panel
@@ -111,7 +111,15 @@ horizontal constraint. Work-area, scale and monitor changes recompute all three
 window rectangles before the next paint.
 
 Companions use the active theme's `--r-panel`, `--canvas` and `--el-panel`; they
-have no native title bar, resize grips or independent position. The shadow
+have no native title bar or resize grips.
+
+**Docked or on its own.** Opened beside the visible panel, a companion is part
+of the summoned composition: always on top, off the taskbar, and dismissed with
+the panel when focus leaves Bard. Opened on its own — the tray, `Left Alt`
+`Left Alt`, `Right Alt` `Right Alt` — it is an ordinary window: on the taskbar,
+not on top, never dismissed by a focus change, and moved by its title row or
+sidebar (`data-tauri-drag-region`). The native layer decides which at show time
+from the panel's visibility. The shadow
 belongs to the companion surface, where a transparent margin can contain it,
 and never to the panel.
 

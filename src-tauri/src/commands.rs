@@ -144,7 +144,7 @@ fn postprocessing_settings(app: &AppHandle) -> Result<PostprocessingSettings, St
     let status_message = if credential_error {
         Some("Windows Credential Manager is unavailable; cloud processing is off.".into())
     } else if !status.ready && config.enabled {
-        Some("Post-processing needs a saved key and model ID.".into())
+        Some("Refine needs a saved key and model ID.".into())
     } else {
         None
     };
@@ -698,33 +698,59 @@ pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
     let _ = win.unminimize();
     let _ = win.show();
     crate::panel::place_companion(app, label);
+    // Beside the open panel a companion is part of the summoned composition:
+    // on top, off the taskbar, dismissed with the panel. Opened on its own —
+    // from the tray or a gesture — it is an ordinary window you can switch
+    // away from and come back to.
+    let docked = app
+        .get_webview_window("main")
+        .and_then(|panel| panel.is_visible().ok())
+        .unwrap_or(false);
+    let _ = win.set_always_on_top(docked);
+    let _ = win.set_skip_taskbar(docked);
     let _ = win.set_focus();
 }
 
-#[tauri::command]
-pub fn toggle_settings(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("settings") {
-        if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
-            let _ = win.hide();
-            return;
-        }
+fn hide_panel_for_secondary(app: &AppHandle) {
+    use tauri::Manager;
+    if let Some(panel) = app.get_webview_window("main") {
+        let _ = panel.hide();
     }
-    show_secondary(&app, "settings", false);
 }
 
-#[tauri::command]
-pub fn toggle_draw(app: AppHandle) {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
+fn toggle_secondary_alone(app: &AppHandle, label: &str) {
+    use tauri::Manager;
+    let Some(win) = app.get_webview_window(label) else {
+        return;
+    };
+    if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
+        let _ = win.hide();
         return;
     }
-    if let Some(win) = app.get_webview_window("draw") {
-        if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
-            let _ = win.hide();
+    // Tray/button entry points keep the side-by-side composition. Gesture
+    // entry points intentionally open one window only.
+    hide_panel_for_secondary(app);
+    show_secondary(app, label, false);
+}
+
+/// Left Alt × 2 opens Draw as a single window. It runs from the raw-input
+/// worker, so every native window operation is queued onto the main thread.
+pub fn draw_gesture(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Err(error) = crate::license::require(&handle) {
+            license_blocked(&handle, error);
             return;
         }
-    }
-    show_secondary(&app, "draw", true);
+        toggle_secondary_alone(&handle, "draw");
+    });
+}
+
+/// Right Alt × 2 opens Settings as a single window, matching the tray action
+/// without bringing the panel back beside it.
+pub fn settings_gesture(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || toggle_secondary_alone(&handle, "settings"));
 }
 
 #[tauri::command]
@@ -804,6 +830,32 @@ pub fn copy_item(app: AppHandle, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// Paste one of the first three timeline items into the foreground app.
+/// The global Right Shift × 2 + number gesture calls this without opening the
+/// panel, so the active application remains the paste target.
+pub fn paste_item(app: &AppHandle, slot: u8) -> Result<(), String> {
+    if !(1..=3).contains(&slot) {
+        return Err("Bard only exposes item slots 1 through 3.".into());
+    }
+    let items = db::list_items(app);
+    let Some(item) = items.get(slot as usize - 1) else {
+        return Err(format!("Bard has no item {slot} to paste."));
+    };
+    if item.kind == "image" {
+        let path = item
+            .image_path
+            .as_deref()
+            .ok_or_else(|| "That image is no longer available.".to_string())?;
+        crate::paste::set_image(app, path)?;
+    } else {
+        crate::paste::set_text(app, &item.content)?;
+    }
+    db::set_active_item(app, Some(item.id));
+    crate::paste::send_paste(app);
+    refresh(app);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn copy_attachment(app: AppHandle, id: i64) -> Result<(), String> {
     let path = db::attachment_path(&app, id).ok_or("Attachment not found")?;
@@ -869,6 +921,100 @@ pub fn attachment_image_data(app: AppHandle, id: i64) -> Option<String> {
     crate::paste::image_data(&app, &path)
 }
 
+/// What every window needs to paint itself: the theme and the background.
+/// Deliberately narrow — the overlay reads it too, and has no business seeing
+/// the clipboard history that `get_state` carries.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Appearance {
+    theme: String,
+    background: String,
+    background_color: String,
+    draw_background: String,
+    draw_background_color: String,
+}
+
+#[tauri::command]
+pub fn get_appearance(app: AppHandle) -> Appearance {
+    if !db::is_ready(&app) {
+        return Appearance {
+            theme: "system".into(),
+            background: "theme".into(),
+            background_color: String::new(),
+            draw_background: "theme".into(),
+            draw_background_color: String::new(),
+        };
+    }
+    Appearance {
+        theme: db::get_setting(&app, "theme").unwrap_or_else(|| "system".into()),
+        background: db::get_setting(&app, "background").unwrap_or_else(|| "theme".into()),
+        background_color: db::get_setting(&app, "background_color").unwrap_or_default(),
+        draw_background: db::get_setting(&app, "draw_background").unwrap_or_else(|| "theme".into()),
+        draw_background_color: db::get_setting(&app, "draw_background_color").unwrap_or_default(),
+    }
+}
+
+fn valid_hex(color: &str) -> bool {
+    color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Draw's canvas: "theme" follows Light/Dark, "light" and "dark" pin one,
+/// "custom" takes a `#rrggbb` colour. Exports carry the same background.
+#[tauri::command]
+pub fn set_draw_background(
+    app: AppHandle,
+    mode: String,
+    color: Option<String>,
+) -> Result<(), String> {
+    if !matches!(mode.as_str(), "theme" | "light" | "dark" | "custom") {
+        return Err("Unknown canvas.".into());
+    }
+    if let Some(color) = color {
+        if !valid_hex(&color) {
+            return Err("A custom canvas needs a colour like #ffffff.".into());
+        }
+        db::set_setting(&app, "draw_background_color", &color.to_ascii_lowercase());
+    }
+    if mode == "custom"
+        && db::get_setting(&app, "draw_background_color")
+            .unwrap_or_default()
+            .is_empty()
+    {
+        return Err("Choose a colour for the custom canvas.".into());
+    }
+    db::set_setting(&app, "draw_background", &mode);
+    refresh(&app);
+    Ok(())
+}
+
+/// The panel's background: "theme" follows Light/Dark, "light" and "dark" pin
+/// one, "custom" takes a `#rrggbb` colour.
+#[tauri::command]
+pub fn set_background(app: AppHandle, mode: String, color: Option<String>) -> Result<(), String> {
+    if !matches!(mode.as_str(), "theme" | "light" | "dark" | "custom") {
+        return Err("Unknown background.".into());
+    }
+    if let Some(color) = color {
+        let valid = color.len() == 7
+            && color.starts_with('#')
+            && color[1..].chars().all(|c| c.is_ascii_hexdigit());
+        if !valid {
+            return Err("A custom background needs a colour like #1c1c1f.".into());
+        }
+        db::set_setting(&app, "background_color", &color.to_ascii_lowercase());
+    }
+    if mode == "custom"
+        && db::get_setting(&app, "background_color")
+            .unwrap_or_default()
+            .is_empty()
+    {
+        return Err("Choose a colour for the custom background.".into());
+    }
+    db::set_setting(&app, "background", &mode);
+    refresh(&app);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_theme(app: AppHandle, theme: String) {
     db::set_setting(&app, "theme", &theme);
@@ -876,16 +1022,6 @@ pub fn set_theme(app: AppHandle, theme: String) {
     // window that made the change would repaint — which is exactly how the
     // panel stayed light while settings went dark.
     refresh(&app);
-}
-
-#[tauri::command]
-pub fn set_keybinds(app: AppHandle, json: String) -> Result<(), String> {
-    crate::capture::apply_keybinds(&app, &json)
-}
-
-#[tauri::command]
-pub fn set_shortcut_recording(active: bool) {
-    crate::capture::set_shortcut_recording(active);
 }
 
 #[tauri::command]

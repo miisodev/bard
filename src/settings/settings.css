@@ -19,7 +19,7 @@
   flex-direction: column;
   gap: var(--sp-1);
   padding: var(--sp-7) var(--sp-5);
-  border-right: 1px solid var(--rule);
+  border-right: 1px solid var(--canvas-rule);
 }
 
 .settings-nav-title {
@@ -35,12 +35,12 @@
   border-radius: var(--r-sm);
   font: inherit;
   font-size: var(--fs-base);
-  color: var(--text-2);
+  color: var(--on-canvas-2);
   transition: background var(--t-fast) var(--ease-out),
               color var(--t-fast) var(--ease-out);
 }
 
-.settings-nav button:hover { background: var(--surface-2); color: var(--text); }
+.settings-nav button:hover { background: var(--canvas-hover); color: var(--on-canvas); }
 
 .settings-nav button.on {
   background: var(--accent);
@@ -81,7 +81,7 @@
   margin: var(--sp-3) 0 0;
   font-size: var(--fs-base);
   line-height: var(--lh-base);
-  color: var(--text-2);
+  color: var(--on-canvas-2);
 }
 
 .group { margin-bottom: var(--sp-9); }
@@ -93,14 +93,14 @@
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tr-caption);
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--on-canvas-3);
 }
 
 .group-note {
   margin: 0 var(--sp-1) var(--sp-4);
   font-size: var(--fs-sm);
   line-height: var(--lh-base);
-  color: var(--text-2);
+  color: var(--on-canvas-2);
 }
 
 /* One card per group, with hairlines between rows: the rows belong together,
@@ -110,6 +110,7 @@
   background: var(--surface);
   box-shadow: var(--el-card);
   overflow: hidden;
+  color: var(--text);
 }
 
 .row {
@@ -156,7 +157,7 @@
   margin: var(--sp-5) var(--sp-1) 0;
   font-size: var(--fs-sm);
   line-height: var(--lh-base);
-  color: var(--text-3);
+  color: var(--on-canvas-3);
 }
 
 .note.danger { color: var(--danger); }
@@ -782,3 +783,27 @@ summary:focus-visible {
   .model-actions { justify-content: flex-start; }
   .repo-form { align-items: stretch; flex-direction: column; }
 }
+
+/* ---------- background ---------- */
+
+.background-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+/* The custom colour as a quiet well beside the choice, not a form field. */
+.color-well {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-pill);
+  background: none;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.color-well::-webkit-color-swatch-wrapper { padding: 3px; }
+.color-well::-webkit-color-swatch { border: none; border-radius: var(--r-pill); }
+.color-well:focus-visible { outline: none; box-shadow: var(--focus-ring); }

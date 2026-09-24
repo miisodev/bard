@@ -173,6 +173,22 @@
   --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--accent);
 }
 
+/* ══ Canvas ink ══════════════════════════════════════════════════════════ */
+/*
+  Ink that sits directly on the canvas — section labels, pane titles, toolbar
+  icons — rather than on a card. It follows the theme until a background is
+  chosen; then appearance.ts derives it from the canvas itself, because a
+  custom canvas can be light under a dark theme and cards keep their surfaces.
+*/
+
+:root {
+  --on-canvas: var(--text);
+  --on-canvas-2: var(--text-2);
+  --on-canvas-3: var(--text-3);
+  --canvas-rule: var(--rule);
+  --canvas-hover: var(--surface-2);
+}
+
 /* ══ Reduced motion ══════════════════════════════════════════════════════ */
 
 @media (prefers-reduced-motion: reduce) {

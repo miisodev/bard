@@ -185,7 +185,6 @@ fn main() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         // The database is opened here, before the builder runs, rather than in
         // setup(). Windows declared in tauri.conf are created before setup(),
@@ -234,7 +233,6 @@ fn main() {
                 let _ = handle.autolaunch().enable();
             }
 
-            capture::repair_keybinds(&handle);
             db::cleanup_origin(&handle, "clipboard");
             db::cleanup_origin(&handle, "dictation");
 
@@ -270,11 +268,19 @@ fn main() {
                         let _ = window.hide();
                         panel::focus_panel(window.app_handle());
                     }
-                    // A companion is part of the panel, so leaving Bard from a
-                    // companion dismisses the whole composition, exactly as
-                    // leaving it from the panel does.
+                    // Docked beside the open panel, a companion is part of the
+                    // summoned composition, so leaving Bard from it dismisses
+                    // the whole thing. Opened on its own it is an ordinary
+                    // window and stays put while you work elsewhere.
                     WindowEvent::Focused(focused) => {
-                        panel::on_focus_change(window.app_handle(), *focused);
+                        let docked = window
+                            .app_handle()
+                            .get_webview_window("main")
+                            .and_then(|panel| panel.is_visible().ok())
+                            .unwrap_or(false);
+                        if docked {
+                            panel::on_focus_change(window.app_handle(), *focused);
+                        }
                     }
                     _ => {}
                 }
@@ -309,9 +315,7 @@ fn main() {
             commands::add_item,
             commands::add_image,
             commands::open_draw,
-            commands::toggle_draw,
             commands::open_settings,
-            commands::toggle_settings,
             commands::delete_item,
             commands::set_favorite,
             commands::set_done,
@@ -325,12 +329,13 @@ fn main() {
             commands::item_image_data,
             commands::attachment_image_data,
             commands::set_theme,
-            commands::set_keybinds,
-            commands::set_shortcut_recording,
             commands::set_onboarding_completed,
             commands::set_autostart,
             commands::open_startup_settings,
             commands::open_link,
+            commands::get_appearance,
+            commands::set_background,
+            commands::set_draw_background,
             commands::set_capture_double_shift,
             commands::capture_now,
             commands::save_window_geometry,

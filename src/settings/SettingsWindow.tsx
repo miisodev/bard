@@ -140,8 +140,7 @@ export default function SettingsWindow() {
     void loadState();
   }, [loadState]);
 
-  // Esc closes the companion, exactly as it dismisses the panel. A control
-  // that owns Escape — the shortcut recorder — consumes it before it gets here.
+  // Esc closes the companion, exactly as it dismisses the panel.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !event.defaultPrevented) void getCurrentWindow().close();
@@ -204,7 +203,7 @@ export default function SettingsWindow() {
       />
     ),
     postprocessing: <PostprocessingPane state={state} refresh={refresh} />,
-    shortcuts: <ShortcutsPane state={state} refresh={refresh} />,
+    shortcuts: <ShortcutsPane />,
     data: <DataPane state={state} refresh={refresh} />,
     about: <AboutPane state={state} refresh={refresh} />,
   };
@@ -212,8 +211,9 @@ export default function SettingsWindow() {
   return (
     <div className="settings-root companion">
       {close}
-      <nav className="settings-nav" aria-label="Settings sections">
-        <p className="companion-title settings-nav-title">Settings</p>
+      {/* The sidebar is the handle: opened on its own, Settings moves by it. */}
+      <nav className="settings-nav" aria-label="Settings sections" data-tauri-drag-region>
+        <p className="companion-title settings-nav-title" data-tauri-drag-region>Settings</p>
         {SECTIONS.map((item) => (
           <button
             key={item.id}

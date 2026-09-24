@@ -142,7 +142,6 @@ export interface AppState {
   activeSectionId: number | null;
   theme: string;
   appVersion: string;
-  keybinds: string;
   onboardingCompleted: boolean;
   autostartEnabled: boolean;
   captureDoubleShift: boolean;
@@ -153,6 +152,9 @@ export interface AppState {
   license: LicenseStatus;
   /** "direct" for the miiso.dev download, "store" for the Microsoft Store copy. */
   channel: "direct" | "store";
+  /** "theme" follows Light/Dark; "light", "dark" and "custom" are chosen. */
+  background: "theme" | "light" | "dark" | "custom";
+  backgroundColor: string;
 }
 
 export interface LicenseStatus {

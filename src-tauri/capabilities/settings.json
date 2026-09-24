@@ -4,6 +4,9 @@
   "description": "Bard Settings permissions",
   "windows": ["settings"],
   "permissions": [
+    "core:window:allow-start-dragging",
+    "allow-get-appearance",
+    "allow-set-background",
     "core:event:allow-listen",
     "core:window:allow-close",
     "core:event:allow-unlisten",
@@ -12,8 +15,6 @@
     "allow-get-state",
     "allow-get-setting-str",
     "allow-set-theme",
-    "allow-set-keybinds",
-    "allow-set-shortcut-recording",
     "allow-set-autostart",
     "allow-open-startup-settings",
     "allow-open-link",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-draw-background"
+description = "Enables the set_draw_background command without any pre-configured scope."
+commands.allow = ["set_draw_background"]
+
+[[permission]]
+identifier = "deny-set-draw-background"
+description = "Denies the set_draw_background command without any pre-configured scope."
+commands.deny = ["set_draw_background"]

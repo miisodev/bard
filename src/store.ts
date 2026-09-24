@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Appearance, BackgroundMode } from "./appearance";
 import type {
   AppState,
   CachedHfModel,
@@ -24,9 +25,7 @@ export const api = {
   getSettingStr: (key: string) => invoke<string>("get_setting_str", { key }),
   addItem: (content: string) => invoke<void>("add_item", { content }),
   openDraw: () => invoke<void>("open_draw"),
-  toggleDraw: () => invoke<void>("toggle_draw"),
   openSettings: () => invoke<void>("open_settings"),
-  toggleSettings: () => invoke<void>("toggle_settings"),
   addImage: (dataBase64: string, ext: string) =>
     invoke<number>("add_image", { dataBase64, ext }),
   deleteItem: (id: number) => invoke<void>("delete_item", { id }),
@@ -60,14 +59,16 @@ export const api = {
   setExportDir: (path: string) => invoke<void>("set_export_dir", { path }),
   getExportDir: () => invoke<string>("get_export_dir"),
   setTheme: (theme: string) => invoke<void>("set_theme", { theme }),
-  setKeybinds: (json: string) => invoke<void>("set_keybinds", { json }),
-  setShortcutRecording: (active: boolean) =>
-    invoke<void>("set_shortcut_recording", { active }),
   setOnboardingCompleted: (done: boolean) =>
     invoke<void>("set_onboarding_completed", { done }),
   setAutostart: (enabled: boolean) => invoke<unknown>("set_autostart", { enabled }),
   openStartupSettings: () => invoke<void>("open_startup_settings"),
   openLink: (url: string) => invoke<void>("open_link", { url }),
+  getAppearance: () => invoke<Appearance>("get_appearance"),
+  setDrawBackground: (mode: BackgroundMode, color?: string) =>
+    invoke<void>("set_draw_background", { mode, color: color ?? null }),
+  setBackground: (mode: BackgroundMode, color?: string) =>
+    invoke<void>("set_background", { mode, color: color ?? null }),
   setCaptureDoubleShift: (enabled: boolean) =>
     invoke<void>("set_capture_double_shift", { enabled }),
   setSoundOnCapture: (enabled: boolean) =>
@@ -142,19 +143,5 @@ export const api = {
   dictateStop: () => invoke<void>("dictate_stop"),
   dictateCancel: () => invoke<void>("dictate_cancel"),
 };
-
-/** Chords start unassigned: the double-tap gestures are the defaults. */
-export const DEFAULT_KEYBINDS: Record<string, string> = {
-  capture: "",
-  panel: "",
-};
-
-let shortcutRecording = false;
-export function setShortcutRecording(v: boolean) {
-  shortcutRecording = v;
-}
-export function isShortcutRecording() {
-  return shortcutRecording;
-}
 
 export type { ModelProgress };

@@ -185,10 +185,17 @@ local trial or signed paid state in force.
 
 **Purpose.** Every preference bard has, one window, eight panes.
 
-**Entered from.** The panel's persistent Settings icon, `Ctrl+,`, the tray's
-**Settings**, or a restricted-state action. The companion is created at startup
-and hidden; opening it docks it beside the panel, matches the panel height and
-takes focus.
+**Entered from.** The panel's persistent Settings icon, `Right Alt` `Right Alt`,
+the tray's **Settings**, or a restricted-state action. The icon and tray action
+open the companion beside the panel; `Right Alt` `Right Alt` opens Settings as a
+single window without leaving the panel visible beside it. The companion is
+created at startup and hidden.
+
+**Docked or on its own.** Beside the open panel the companion is part of the
+summoned composition: always on top, off the taskbar, and dismissed with the
+panel when you leave Bard. Opened on its own — from the tray or a gesture — it
+is an ordinary window: it appears in the taskbar, stays where it is while you
+work in another app, and moves by its sidebar.
 
 **Zones.** A frameless companion window (`Technology §2`): a compact title row
 with **Settings** and a close icon, then a sidebar of eight items on the left
@@ -312,16 +319,14 @@ discovery is list-based.
 
 ### 3.5 Shortcuts
 
-`Shortcuts` · `Two taps of a modifier, in any app. Shift captures, Ctrl dictates.`
+`Shortcuts` · `Fixed gestures and panel keys. These are intentionally not customizable.`
 
-A **Gestures** group comes first, because the gestures are the defaults: rows
-**Capture**, **Panel** and **Dictate**, each showing its keys as keycaps
-(`Left Shift` `Left Shift`, `Right Shift` `Right Shift`, `Ctrl` `Ctrl`). They
-cannot be rebound. A **Chords** group follows, noted `Optional. A chord takes
-its key combination away from every other app.`: rows **Capture** and **Panel**,
-each unassigned by default and showing **Record** until a chord is recorded,
-then the chord as keycaps with a quiet clear control. A **Reset** row clears
-every chord; the gestures always stay.
+A **From any app** group shows the fixed global actions: **Capture** (`Left
+Shift` `Left Shift`), **Paste item** (`Right Shift` `Right Shift` then `1 / 2 /
+3`), **Panel** (`Right Shift` `Right Shift`), **Settings** (`Right Alt` `Right
+Alt`), **Draw** (`Left Alt` `Left Alt`), and **Dictate** (`Ctrl` `Ctrl`). A
+second **Inside the panel** group lists the panel keys. There is no recorder,
+chord store, clear control, or reset action.
 
 ### 3.6 Data
 
@@ -433,10 +438,9 @@ default that would be written back on the first interaction.
 
 **Settings-wide failures.**
 
-- *A shortcut the person records is already held by another application.*
-  Registration fails, the row says so, and the previous binding stays in force.
-  A binding that is stored but not registered is the worst outcome, because
-  settings then disagrees with the machine.
+- *A fixed gesture is temporarily unavailable.* The raw-input coordinator
+  remains the single source of gesture state; a failed listener or window
+  transition is reported without silently substituting a custom binding.
 - *The export folder is gone.* Export fails with `Export failed` in the panel's
   toast rather than creating a folder the person did not ask for.
 - *A retention pass cannot finish.* No database row or owned file is removed;
@@ -452,9 +456,9 @@ default that would be written back on the first interaction.
   panel's title region announces `Settings` or `Drawing`; Bard does not report
   success by closing a hidden window.
 
-**Leaves to.** Hidden, on close, with focus returned to the panel. The companion
-is never destroyed — see
-`Technology §2`.
+**Leaves to.** Hidden, on close. When opened from the panel or tray, focus
+returns to the panel; when opened as a standalone shortcut window, the panel
+stays hidden. The companion is never destroyed — see `Technology §2`.
 
 ---
 
@@ -462,17 +466,31 @@ is never destroyed — see
 
 **Purpose.** Make an image that lands in the timeline as a retained item.
 
-**Entered from.** The panel's persistent Paintbrush **Draw** icon or
-`Ctrl+Shift+D`. It opens the Drawing companion beside the panel at exactly the
-panel's current height; the composer does not offer a duplicate Create Drawing
-command.
+**Entered from.** The panel's persistent Paintbrush **Draw** icon, or
+`Left Alt` `Left Alt`. The icon and tray action open the companion beside the
+panel at exactly the panel's current height; the gesture opens Draw as a single
+window without bringing the panel back beside it. The composer does not offer
+a duplicate Create Drawing command.
 
 **Zones.** A frameless companion window (`Technology §2`): a compact title row
-with **Drawing** and a close icon, one compact toolbar, and the canvas. The
-toolbar carries Select, Pen, Line, Arrow, Rectangle, Ellipse and Text; five
-stroke colours; three widths; Undo, Redo, Delete, **Copy** and **Save**. Icon
-buttons have one-word tooltips and shortcut hints. The canvas fills the
-remaining companion area and is always white.
+with **Draw**, a **Canvas** chip, a fullscreen toggle and a close icon; one
+compact toolbar; and the page. The toolbar carries Select, Pen, Line, Arrow,
+Rectangle, Ellipse and Text; the ink swatch, four hues and a custom colour
+well; three widths; Undo, Redo, **Copy** and **Save**. Icon buttons have
+one-word tooltips and shortcut hints.
+
+**The page.** It follows the theme — white in Light, the dark card surface in
+Dark — until someone chooses. The **Canvas** chip opens a small sheet with
+**Light**, **Dark** and a **Custom** colour well, plus **Match theme** once a
+page has been chosen. The first swatch is the ink: dark on a light page, light
+on a dark one, and a stroke in ink follows the page when it changes. **Save**
+and **Copy** export the page in its colour.
+
+**Keys.** `F11` and the fullscreen button toggle native fullscreen while Draw
+has focus; F11 is never taken from another app. Fullscreen runs edge to edge
+without the companion's radius. `Esc` closes the Canvas sheet, then clears a
+selection, then leaves fullscreen, then closes Draw — one step per press. On its
+own, Draw moves by its title row, like Settings.
 
 **States.** Empty canvas · drawing · committed · copy confirmation · save
 error. The title row's dirty marker is one small dot, never a blocking modal.
@@ -587,31 +605,28 @@ placeholder updated.
 
 ## §7 The shortcut sheet
 
-**Purpose.** Show every current command and fixed gesture without hiding the
-values behind a settings workflow.
+**Purpose.** Show every current fixed command without hiding the values behind a
+settings workflow.
 
-**Entered from.** `Ctrl+/` in the focused panel, or **Shortcut guide** at the
-bottom of Settings → Shortcuts. It opens as a sheet over its invoker and never
-changes a binding.
+**Entered from.** `Ctrl+/` in the focused panel. It opens as a sheet over its
+invoker and never changes a binding.
 
 **Zones.** A scrim, one compact card, a title, two groups—**Gestures** and
-**Keys**—and a close icon. Fixed gestures use `Left Shift × 2`, `Right Shift ×
-2`, and `Ctrl × 2`; ordinary rows show the current normalized key chord. A
-single **Open Settings** action returns to Settings → Shortcuts.
+**Keys**—and a close icon. The gesture rows show the fixed Left/Right Shift,
+Left/Right Alt, and same-key Control actions, including the Right Shift item
+paste suffix. The key rows show the panel commands and Draw's `F11`
+fullscreen action. The sheet closes directly to its invoker; Settings → Shortcuts
+is the read-only reference.
 
-**States.** Normal · copied row · recording unavailable. Copying a row uses the
-same Copy action and `Copied` confirmation as every other shortcut. The sheet
-has no loading state because it reads only the already-registered in-memory
-map plus the three fixed gestures.
+**States.** Normal. The sheet has no loading state because it reads the fixed
+command map, not a user-editable registration map.
 
 **Copy.** Title `Shortcuts` · group labels `Gestures` and `Keys` · close label
-`Close` · footer action `Open Settings`.
+`Close`.
 
-**Fails when.** *A stored normal binding no longer registers.* The sheet shows
-that row as `Unavailable`, names `Open Settings`, and never displays the stored
-value as if it worked. *A fixed gesture conflicts with the operating system.*
-The fixed row remains visible and the activation failure uses the same safe
-toast as any rejected gesture.
+**Fails when.** *A fixed gesture conflicts with the operating system.* The row
+remains visible and the activation failure uses the same safe toast as any
+rejected gesture.
 
 **Leaves to.** Its invoker, with focus restored to the exact control that opened
 the sheet.

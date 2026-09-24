@@ -84,7 +84,6 @@ pub struct AppState {
     pub active_section_id: Option<i64>,
     pub theme: String,
     pub app_version: String,
-    pub keybinds: String,
     pub onboarding_completed: bool,
     pub autostart_enabled: bool,
     pub capture_double_shift: bool,
@@ -95,6 +94,9 @@ pub struct AppState {
     pub license: crate::license::LicenseStatus,
     /// "direct" for the miiso.dev download, "store" for the Microsoft Store copy.
     pub channel: String,
+    /// "theme", "light", "dark" or "custom"; the custom colour is `background_color`.
+    pub background: String,
+    pub background_color: String,
 }
 
 fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -1045,7 +1047,6 @@ pub fn get_state(app: &AppHandle) -> AppState {
             active_section_id: None,
             theme: "system".into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
-            keybinds: "{}".into(),
             onboarding_completed: false,
             autostart_enabled: false,
             capture_double_shift: true,
@@ -1064,6 +1065,8 @@ pub fn get_state(app: &AppHandle) -> AppState {
                 message: Some("Bard is still starting.".into()),
             },
             channel: crate::packaging::channel().into(),
+            background: "theme".into(),
+            background_color: String::new(),
         };
     }
     AppState {
@@ -1073,7 +1076,6 @@ pub fn get_state(app: &AppHandle) -> AppState {
         active_section_id: get_active_section(app),
         theme: get_setting(app, "theme").unwrap_or_else(|| "system".into()),
         app_version: env!("CARGO_PKG_VERSION").into(),
-        keybinds: get_setting(app, "keybinds").unwrap_or_else(|| "{}".into()),
         onboarding_completed: get_setting(app, "onboarding_completed") == Some("1".into()),
         autostart_enabled: get_setting(app, "autostart_enabled") == Some("1".into()),
         capture_double_shift: get_setting(app, "capture_double_shift") != Some("0".into()),
@@ -1083,6 +1085,8 @@ pub fn get_state(app: &AppHandle) -> AppState {
         active_item_id: active_item(app),
         license: crate::license::status(app),
         channel: crate::packaging::channel().into(),
+        background: get_setting(app, "background").unwrap_or_else(|| "theme".into()),
+        background_color: get_setting(app, "background_color").unwrap_or_default(),
     }
 }
 

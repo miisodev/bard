@@ -203,12 +203,14 @@ export default function Onboarding({
       ) : step === 2 ? (
         <>
           <h1>Make it yours</h1>
-          <p>Two taps of a modifier do the everyday work, in any app. Chords are yours to add in Settings.</p>
+          <p>Two taps of a modifier do the everyday work, in any app. These gestures are fixed and always available.</p>
           <div className="shortcut-list" aria-label="Bard keyboard shortcuts">
             <div><kbd>Left Shift</kbd><kbd>Left Shift</kbd><span>Capture</span></div>
+            <div><kbd>Right Shift</kbd><kbd>Right Shift</kbd><kbd>1 / 2 / 3</kbd><span>Paste item</span></div>
             <div><kbd>Right Shift</kbd><kbd>Right Shift</kbd><span>Panel</span></div>
+            <div><kbd>Right Alt</kbd><kbd>Right Alt</kbd><span>Settings</span></div>
+            <div><kbd>Left Alt</kbd><kbd>Left Alt</kbd><span>Draw</span></div>
             <div><kbd>Ctrl</kbd><kbd>Ctrl</kbd><span>Dictate — hold to talk</span></div>
-            <div><kbd>Ctrl</kbd><kbd>,</kbd><span>Settings</span></div>
           </div>
         </>
       ) : (

@@ -4,6 +4,12 @@
 //! set plus one non-modifier key, while this gesture is two physical presses
 //! of a modifier. It therefore lives beside the Shift gestures in the raw
 //! input coordinator.
+//!
+//! One convention runs through all of them: Shift captures, Ctrl dictates,
+//! Left Alt draws, and Right Alt opens Settings. Alt × 2 behaves like the Shift
+//! taps — a discrete action on the second release — and inherits the same clean-
+//! sequence rules, so AltGr, which arrives with a synthetic Control press on
+//! the layouts that have it, never reads as a double tap.
 
 use std::time::{Duration, Instant};
 
@@ -23,14 +29,28 @@ pub enum GestureKey {
     RightShift,
     LeftControl,
     RightControl,
+    LeftAlt,
+    RightAlt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GestureAction {
     Capture,
     TogglePanel,
+    ToggleDraw,
+    ToggleSettings,
+    PasteItem { slot: u8 },
     DictationPress { token: u64 },
     DictationRelease { token: u64, held: Duration },
+}
+
+/// Result of consuming the optional number after Right Shift × 2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemSlotResult {
+    Unchanged,
+    Paste(u8),
+    TogglePanel,
+    Cancelled,
 }
 
 impl GestureKey {
@@ -38,6 +58,8 @@ impl GestureKey {
         match self {
             Self::LeftShift => GestureAction::Capture,
             Self::RightShift => GestureAction::TogglePanel,
+            Self::LeftAlt => GestureAction::ToggleDraw,
+            Self::RightAlt => GestureAction::ToggleSettings,
             Self::LeftControl | Self::RightControl => {
                 // This variant is never returned directly. Control uses the
                 // ownership token below so a late release cannot stop a take
@@ -53,6 +75,8 @@ impl GestureKey {
             Self::RightShift => 1,
             Self::LeftControl => 2,
             Self::RightControl => 3,
+            Self::LeftAlt => 4,
+            Self::RightAlt => 5,
         }
     }
 }
@@ -85,8 +109,11 @@ struct ControlGesture {
 /// not turned into dictation after its second Control tap.
 #[derive(Clone, Debug)]
 pub struct GestureState {
-    keys: [KeyState; 4],
+    keys: [KeyState; 6],
     pending: Option<PendingTap>,
+    /// A Right Shift × 2 sequence is held briefly for 1/2/3 item paste.
+    /// If no slot arrives, poll() falls back to the normal panel toggle.
+    item_slot: Option<Instant>,
     control: Option<ControlGesture>,
     foreign_down: bool,
     next_token: u64,
@@ -101,19 +128,20 @@ impl Default for GestureState {
 impl GestureState {
     pub fn new() -> Self {
         Self {
-            keys: [KeyState::default(); 4],
+            keys: [KeyState::default(); 6],
             pending: None,
+            item_slot: None,
             control: None,
             foreign_down: false,
             next_token: 0,
         }
     }
 
-    /// Forget all physical-key state. Used while the shortcut editor is open
-    /// or after a synthetic input burst.
+    /// Forget all physical-key state. Used after a synthetic input burst.
     pub fn reset(&mut self) {
-        self.keys = [KeyState::default(); 4];
+        self.keys = [KeyState::default(); 6];
         self.pending = None;
+        self.item_slot = None;
         self.control = None;
         self.foreign_down = false;
     }
@@ -137,6 +165,7 @@ impl GestureState {
             }
         }
         self.pending = None;
+        self.item_slot = None;
         if self.control.is_some_and(|control| !control.activated) {
             self.control = None;
         }
@@ -149,6 +178,10 @@ impl GestureState {
         if self.keys[index].pressed_at.is_some() {
             return Vec::new();
         }
+
+        // Any gesture key after the Right Shift × 2 prefix ends the optional
+        // item-paste sequence; the next gesture starts cleanly.
+        self.item_slot = None;
 
         // Any other held gesture is an intervening key. In particular, holding
         // both Control keys must never count as Ctrl+Ctrl.
@@ -225,20 +258,18 @@ impl GestureState {
             return Vec::new();
         }
 
-        if matches!(
-            key,
-            GestureKey::LeftShift
-                | GestureKey::RightShift
-                | GestureKey::LeftControl
-                | GestureKey::RightControl
-        ) {
+        {
             if let Some(pending) = self.pending {
                 let gap = now
                     .checked_duration_since(pending.released_at)
                     .unwrap_or_default();
                 if pending.key == key && gap <= TAP_WINDOW && !self.foreign_down {
                     self.pending = None;
-                    if matches!(key, GestureKey::LeftShift | GestureKey::RightShift) {
+                    if key == GestureKey::RightShift {
+                        self.item_slot = Some(now);
+                        return Vec::new();
+                    }
+                    if !matches!(key, GestureKey::LeftControl | GestureKey::RightControl) {
                         return vec![key.action()];
                     }
                     self.next_token = self.next_token.wrapping_add(1).max(1);
@@ -260,6 +291,24 @@ impl GestureState {
         Vec::new()
     }
 
+    /// Consume the optional 1/2/3 suffix after Right Shift × 2. Returning
+    /// `Cancelled` means the sequence was consumed by an unsupported number;
+    /// the caller should not let that number reach the focused application as
+    /// part of a normal shortcut.
+    pub fn consume_item_slot(&mut self, slot: u8, now: Instant) -> ItemSlotResult {
+        let Some(released_at) = self.item_slot.take() else {
+            return ItemSlotResult::Unchanged;
+        };
+        if now.checked_duration_since(released_at).unwrap_or_default() > TAP_WINDOW {
+            return ItemSlotResult::TogglePanel;
+        }
+        if (1..=3).contains(&slot) {
+            ItemSlotResult::Paste(slot)
+        } else {
+            ItemSlotResult::Cancelled
+        }
+    }
+
     /// Poll time-based transitions. The raw-input worker calls this on a short
     /// timer even when no keyboard event arrives.
     pub fn poll(&mut self, now: Instant) -> Vec<GestureAction> {
@@ -269,6 +318,12 @@ impl GestureState {
                 > TAP_WINDOW
         }) {
             self.pending = None;
+        }
+        if self.item_slot.is_some_and(|released_at| {
+            now.checked_duration_since(released_at).unwrap_or_default() > TAP_WINDOW
+        }) {
+            self.item_slot = None;
+            return vec![GestureAction::TogglePanel];
         }
 
         let Some(control) = self.control else {
@@ -327,6 +382,71 @@ mod tests {
         release(state, key, at + Duration::from_millis(80))
     }
 
+    #[test]
+    fn alt_double_tap_opens_the_matching_secondary_window() {
+        let base = Instant::now();
+        let mut draw = GestureState::new();
+        assert!(shift_tap(&mut draw, GestureKey::LeftAlt, base, Duration::ZERO).is_empty());
+        assert_eq!(
+            shift_tap(
+                &mut draw,
+                GestureKey::LeftAlt,
+                base,
+                Duration::from_millis(250)
+            ),
+            vec![GestureAction::ToggleDraw]
+        );
+
+        let mut settings = GestureState::new();
+        assert!(shift_tap(&mut settings, GestureKey::RightAlt, base, Duration::ZERO).is_empty());
+        assert_eq!(
+            shift_tap(
+                &mut settings,
+                GestureKey::RightAlt,
+                base,
+                Duration::from_millis(250)
+            ),
+            vec![GestureAction::ToggleSettings]
+        );
+    }
+
+    #[test]
+    fn altgr_with_its_synthetic_control_is_not_a_tap() {
+        let mut state = GestureState::new();
+        let base = Instant::now();
+        for offset in [0u64, 250] {
+            let at = base + Duration::from_millis(offset);
+            press(&mut state, GestureKey::LeftControl, at);
+            press(&mut state, GestureKey::RightAlt, at);
+            release(
+                &mut state,
+                GestureKey::RightAlt,
+                at + Duration::from_millis(80),
+            );
+            let actions = release(
+                &mut state,
+                GestureKey::LeftControl,
+                at + Duration::from_millis(80),
+            );
+            assert!(actions.is_empty());
+        }
+        assert!(state.poll(base + Duration::from_secs(1)).is_empty());
+    }
+
+    #[test]
+    fn left_then_right_alt_is_not_a_gesture() {
+        let mut state = GestureState::new();
+        let base = Instant::now();
+        shift_tap(&mut state, GestureKey::LeftAlt, base, Duration::ZERO);
+        assert!(shift_tap(
+            &mut state,
+            GestureKey::RightAlt,
+            base,
+            Duration::from_millis(200)
+        )
+        .is_empty());
+    }
+
     fn control_press(
         state: &mut GestureState,
         key: GestureKey,
@@ -355,17 +475,55 @@ mod tests {
     }
 
     #[test]
-    fn right_shift_double_tap_toggles_panel() {
+    fn right_shift_double_tap_toggles_panel_after_slot_window() {
         let base = Instant::now();
         let mut state = GestureState::new();
         shift_tap(&mut state, GestureKey::RightShift, base, Duration::ZERO);
+        assert!(shift_tap(
+            &mut state,
+            GestureKey::RightShift,
+            base,
+            Duration::from_millis(200)
+        )
+        .is_empty());
         assert_eq!(
-            shift_tap(
-                &mut state,
-                GestureKey::RightShift,
-                base,
-                Duration::from_millis(200)
-            ),
+            state.poll(base + Duration::from_millis(700)),
+            vec![GestureAction::TogglePanel]
+        );
+    }
+
+    #[test]
+    fn right_shift_slot_pastes_without_opening_the_panel() {
+        let base = Instant::now();
+        let mut state = GestureState::new();
+        assert!(shift_tap(&mut state, GestureKey::RightShift, base, Duration::ZERO).is_empty());
+        assert!(shift_tap(
+            &mut state,
+            GestureKey::RightShift,
+            base,
+            Duration::from_millis(200)
+        )
+        .is_empty());
+        assert_eq!(
+            state.consume_item_slot(1, base + Duration::from_millis(300)),
+            ItemSlotResult::Paste(1)
+        );
+        assert!(state.poll(base + Duration::from_millis(500)).is_empty());
+    }
+
+    #[test]
+    fn right_shift_without_a_slot_still_toggles_the_panel() {
+        let base = Instant::now();
+        let mut state = GestureState::new();
+        shift_tap(&mut state, GestureKey::RightShift, base, Duration::ZERO);
+        shift_tap(
+            &mut state,
+            GestureKey::RightShift,
+            base,
+            Duration::from_millis(200),
+        );
+        assert_eq!(
+            state.poll(base + Duration::from_millis(700)),
             vec![GestureAction::TogglePanel]
         );
     }

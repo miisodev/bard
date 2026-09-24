@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Redo2, Undo2, X } from "lucide-react";
+import { Maximize2, Minimize2, Redo2, Undo2, X } from "lucide-react";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
+import { DRAW_CANVAS, drawCanvasFor, inkFor, isHexColor, type BackgroundMode } from "../appearance";
 import {
   bounds,
   exportPng,
@@ -17,7 +18,9 @@ import {
 
 const win = getCurrentWindow();
 
-const COLORS = ["#1d1d1f", "#2f6fed", "#e5484d", "#2c9e5b", "#e8a33d"];
+/** The first swatch is the ink: dark on a light page, light on a dark one. */
+const HUES = ["#2f6fed", "#e5484d", "#2c9e5b", "#e8a33d"];
+const INKS = ["#1d1d1f", "#f5f5f7"];
 const WIDTHS = [2, 4, 8];
 
 const TOOLS: { tool: Tool; label: string; icon: JSX.Element }[] = [
@@ -40,7 +43,13 @@ const TOOLS: { tool: Tool; label: string; icon: JSX.Element }[] = [
   width, and which shape is selected.
 */
 export default function DrawWindow() {
-  useTheme();
+  // Draw takes the theme but not the panel's custom background: its page has a
+  // background of its own, chosen in the header.
+  const appearance = useTheme({ background: false });
+  const [canvasPreview, setCanvasPreview] = useState<string | null>(null);
+  const page = canvasPreview ?? (appearance ? drawCanvasFor(appearance) : DRAW_CANVAS.light);
+  const ink = inkFor(page);
+  const colors = [ink, ...HUES];
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const shapesRef = useRef<Shape[]>([]);
@@ -49,10 +58,22 @@ export default function DrawWindow() {
   const undoneRef = useRef<Shape[]>([]);
 
   const [tool, setTool] = useState<Tool>("pen");
-  const [color, setColor] = useState(COLORS[0]);
+  const [color, setColor] = useState(INKS[0]);
+  const [customColor, setCustomColor] = useState("#8e5cf6");
+  const [canvasOpen, setCanvasOpen] = useState(false);
+  const canvasWell = useRef<HTMLInputElement>(null);
+  const canvasChoice = useRef<HTMLDivElement>(null);
+  const penCustom = !colors.includes(color);
+
+  // The ink follows the page: a stroke in ink stays readable when the page
+  // turns from light to dark, while a chosen hue is left exactly as chosen.
+  useEffect(() => {
+    setColor((current) => (INKS.includes(current) ? ink : current));
+  }, [ink]);
   const [width, setWidth] = useState(WIDTHS[1]);
   const [selected, setSelected] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [empty, setEmpty] = useState(true);
 
   const paint = useCallback(() => {
@@ -67,8 +88,8 @@ export default function DrawWindow() {
       canvas.height = Math.round(h * dpr);
     }
     const all = draftRef.current ? [...shapesRef.current, draftRef.current] : shapesRef.current;
-    render(ctx, all, w, h, { dpr, background: "#ffffff", selected });
-  }, [selected]);
+    render(ctx, all, w, h, { dpr, background: page, selected });
+  }, [selected, page]);
 
   useEffect(() => {
     paint();
@@ -76,6 +97,33 @@ export default function DrawWindow() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [paint]);
+
+  const toggleFullscreen = useCallback(async () => {
+    const next = !fullscreen;
+    try {
+      await win.setFullscreen(next);
+      setFullscreen(next);
+    } catch {
+      // A window manager may reject a fullscreen transition while it is
+      // animating; the next F11 or toolbar click can retry it.
+    }
+  }, [fullscreen]);
+
+  useEffect(() => {
+    let alive = true;
+    void win.isFullscreen().then((value) => {
+      if (alive) setFullscreen(value);
+    }).catch(() => undefined);
+    const pending = win.onResized(() => {
+      void win.isFullscreen().then((value) => {
+        if (alive) setFullscreen(value);
+      }).catch(() => undefined);
+    });
+    return () => {
+      alive = false;
+      void pending.then((unlisten) => unlisten());
+    };
+  }, []);
 
   const commit = (s: Shape | null) => {
     if (s) {
@@ -181,7 +229,7 @@ export default function DrawWindow() {
     if (!canvas || saving) return;
     setSaving(true);
     try {
-      const b64 = exportPng(shapesRef.current, canvas.clientWidth, canvas.clientHeight, 2);
+      const b64 = exportPng(shapesRef.current, canvas.clientWidth, canvas.clientHeight, 2, page);
       if (b64) {
         const id = await api.addImage(b64, "png");
         if (alsoCopy && id) await api.copyItem(id);
@@ -195,6 +243,13 @@ export default function DrawWindow() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
+      // F11 is Draw's own while Draw has focus — the universal fullscreen key,
+      // never taken from whichever app you are actually using.
+      if (e.key === "F11") {
+        e.preventDefault();
+        void toggleFullscreen();
+        return;
+      }
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
         e.shiftKey ? redo() : undo();
@@ -204,7 +259,9 @@ export default function DrawWindow() {
           remove();
         }
       } else if (e.key === "Escape") {
-        if (selected != null) setSelected(null);
+        if (canvasOpen) setCanvasOpen(false);
+        else if (selected != null) setSelected(null);
+        else if (fullscreen) void toggleFullscreen();
         else void win.close();
       } else if (mod && e.key === "Enter") {
         e.preventDefault();
@@ -213,26 +270,127 @@ export default function DrawWindow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, saving]);
+  }, [selected, saving, fullscreen, canvasOpen, toggleFullscreen]);
+
+  // The canvas choice closes when you click anywhere else.
+  useEffect(() => {
+    if (!canvasOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!canvasChoice.current?.contains(event.target as Node)) setCanvasOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [canvasOpen]);
+
+  // A custom page previews live while the picker moves and is saved once,
+  // when the picker closes.
+  useEffect(() => {
+    const input = canvasWell.current;
+    if (!input) return;
+    const commit = () => {
+      if (!isHexColor(input.value)) return;
+      void api.setDrawBackground("custom", input.value).finally(() => setCanvasPreview(null));
+    };
+    input.addEventListener("change", commit);
+    return () => input.removeEventListener("change", commit);
+  }, [canvasOpen]);
+
+  const chooseCanvas = (mode: BackgroundMode) => {
+    setCanvasPreview(null);
+    void api.setDrawBackground(mode);
+  };
+  const canvasMode = appearance?.drawBackground ?? "theme";
 
   return (
-    <div className="draw-root companion">
-      <header className="draw-head">
-        <p className="companion-title">Draw</p>
+    <div className={`draw-root companion${fullscreen ? " fullscreen" : ""}`}>
+      {/* The header is the handle: an ordinary window can be moved by it. */}
+      <header className="draw-head" data-tauri-drag-region>
+        <div className="draw-head-lead" data-tauri-drag-region>
+          <p className="companion-title" data-tauri-drag-region>Draw</p>
+          <div className="canvas-choice" ref={canvasChoice}>
+            <button
+              type="button"
+              className="canvas-toggle"
+              aria-expanded={canvasOpen}
+              aria-haspopup="true"
+              title="Canvas"
+              onClick={() => setCanvasOpen((open) => !open)}
+            >
+              <span className="canvas-chip" style={{ background: page }} aria-hidden="true" />
+              Canvas
+            </button>
+            {canvasOpen ? (
+              <div className="canvas-pop" role="group" aria-label="Canvas">
+                <div className="canvas-options">
+                  {(["light", "dark"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`canvas-opt${canvasMode === mode ? " on" : ""}`}
+                      style={{ background: DRAW_CANVAS[mode] }}
+                      aria-label={mode === "light" ? "Light canvas" : "Dark canvas"}
+                      aria-pressed={canvasMode === mode}
+                      title={mode === "light" ? "Light" : "Dark"}
+                      onClick={() => chooseCanvas(mode)}
+                    />
+                  ))}
+                  <label
+                    className={`canvas-opt custom${canvasMode === "custom" ? " on" : ""}`}
+                    style={canvasMode === "custom" ? { background: page } : undefined}
+                    title="Custom"
+                  >
+                    <input
+                      ref={canvasWell}
+                      type="color"
+                      aria-label="Custom canvas colour"
+                      defaultValue={isHexColor(appearance?.drawBackgroundColor ?? "") ? appearance?.drawBackgroundColor : page}
+                      onChange={(event) => setCanvasPreview(event.target.value)}
+                    />
+                  </label>
+                </div>
+                <p className="canvas-note">
+                  {canvasMode === "theme" ? "Follows the theme until you choose." : "Chosen by you."}
+                </p>
+                {canvasMode === "theme" ? null : (
+                  <button type="button" className="canvas-match" onClick={() => chooseCanvas("theme")}>
+                    Match theme
+                  </button>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="draw-head-actions">
+          <button
+            type="button"
+            className="draw-head-action"
+            aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            aria-pressed={fullscreen}
+            title={fullscreen ? "Exit fullscreen · F11" : "Fullscreen · F11"}
+            onClick={() => void toggleFullscreen()}
+          >
+            {fullscreen ? (
+              <Minimize2 aria-hidden="true" strokeWidth={1.8} />
+            ) : (
+              <Maximize2 aria-hidden="true" strokeWidth={1.8} />
+            )}
+          </button>
+          <button
+            type="button"
+            className="draw-head-action"
+            aria-label="Close"
+            title="Close"
+            onClick={() => void win.close()}
+          >
+            <X aria-hidden="true" strokeWidth={2} />
+          </button>
+        </div>
       </header>
-      <button
-        type="button"
-        className="companion-close"
-        aria-label="Close"
-        title="Close"
-        onClick={() => void win.close()}
-      >
-        <X aria-hidden="true" strokeWidth={2} />
-      </button>
       <div className="draw-surface">
         <canvas
           ref={canvasRef}
           className={`draw-canvas tool-${tool}`}
+          style={{ background: page }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -266,17 +424,32 @@ export default function DrawWindow() {
         <div className="draw-sep" />
 
         <div className="draw-group">
-          {COLORS.map((c) => (
+          {colors.map((c) => (
             <button
               key={c}
               className={`draw-swatch${color === c ? " on" : ""}`}
               style={{ ["--swatch" as string]: c }}
-              title={c}
-              aria-label={`Colour ${c}`}
+              title={c === ink ? "Ink" : c}
+              aria-label={c === ink ? "Ink" : `Colour ${c}`}
               aria-pressed={color === c}
               onClick={() => setColor(c)}
             />
           ))}
+          <label
+            className={`draw-swatch custom${penCustom ? " on" : ""}`}
+            style={{ ["--swatch" as string]: customColor }}
+            title="Custom colour"
+          >
+            <input
+              type="color"
+              aria-label="Custom pen colour"
+              value={customColor}
+              onChange={(event) => {
+                setCustomColor(event.target.value);
+                setColor(event.target.value);
+              }}
+            />
+          </label>
         </div>
 
         <div className="draw-sep" />

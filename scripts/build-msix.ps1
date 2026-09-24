@@ -59,8 +59,11 @@ $makeAppx = Find-SdkTool "makeappx.exe"
 if (-not (Test-Path -LiteralPath $binary)) {
   throw "Missing release binary: $binary. Run the release build first."
 }
+# Microsoft signs the whole package after certification, and a Store install
+# never meets SmartScreen, so the Store channel does not wait for Bard's own
+# certificate. Once that certificate exists, the package embeds the signed exe.
 if ($Store -and (Get-AuthenticodeSignature -FilePath $binary).Status -ne "Valid") {
-  throw "The Store package must embed the Authenticode-signed bard.exe from scripts\build-release.ps1."
+  Write-Warning "bard.exe is not Authenticode-signed. Acceptable for the Store, which signs the package."
 }
 
 if (Test-Path -LiteralPath $staging) {

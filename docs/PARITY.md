@@ -79,11 +79,11 @@ Verified against the Copper demo videos and cooper's source.
 | A4 | **Light theme quality** | **done** | Rebuilt off the measured Copper values. Panel `#e6e7ea` vs Copper `#e5e6e9`, card `#f9f9fb` vs `#f8f8f8`, field `#f3f4f7` exact |
 | A5 | **Sub-branches / nesting** — `add_child`, branch style, per-item collapse | **missing** | cooper: `BranchPanel.tsx`, nesting to 10 deep |
 | A6 | **Section collapse** — `##` clears the board, others compress to one-line dropdowns | **missing** | `set_section_collapsed` absent |
-| A7 | **Drawing** — persistent Draw icon to a companion canvas to a retained timeline item | **partial** | The canvas implements select / pen / line / arrow / rect / ellipse / text, five colours, three widths, undo, redo, delete, Save and Copy. The companion placement path exists; save durability, focus restoration and installed visual QA remain. |
+| A7 | **Drawing** — persistent Draw icon to a companion canvas to a retained timeline item | **partial** | Select / pen / line / arrow / rect / ellipse / text; an ink swatch that follows the page, four hues and a custom colour; three widths; undo, redo, Copy and Save. The page follows the theme or takes Light, Dark or a custom colour, and exports carry it. Fullscreen (button or F11 while focused) runs edge to edge. Save durability, focus restoration after save, and the installed 150% receipt remain |
 | A8 | **Composer plus-menu** — "Attach" only | **done** | The composer plus-menu offers **Attach** only; drawing lives behind the persistent header Draw icon. Verified in the installed build 2026-09-24 |
 | A9 | **Click thumbnail to copy image to clipboard** | **done** | The row was wrong: `copy_item` already handled images, only the click affordance was missing. Card images and attachment thumbnails now copy on click |
 | A10 | **Copy as List** — multi-select to Markdown list (`Ctrl+Shift+M`) | **verify** | The list-copy action is implemented and keyboard-complete; the final shortcut collision and installed interaction still need a receipt. |
-| A11 | **Shortcuts sheet** (`Ctrl+/`) and shortcuts editor | **done** | Settings → Shortcuts is live; normal chords are recorded transactionally, while fixed gestures are shown separately and cannot be rebound |
+| A11 | **Shortcuts sheet** (`Ctrl+/`) and fixed shortcut reference | **done** | Settings → Shortcuts is a read-only reference for fixed gestures and panel keys; the customizable chord editor, persisted bindings, and global-shortcut registration layer have been removed. |
 | A12 | **Focus hand-back** — Esc returns focus to the previous app | **verify** | `panel.rs` remembers and restores the previous foreground window; still untested by hand |
 | A13 | **Right-Shift x2 toggles panel** (Left-Shift x2 captures) | **done** | One shared raw-input coordinator, same-side timing/dirty rules, synthetic-input guard, and deterministic gesture tests; packaged Windows runtime remained responsive through both gestures |
 | A14 | **Obsidian export** — vault detection, one file per section | **missing** | cooper has all three commands |
@@ -97,7 +97,7 @@ Verified against the Copper demo videos and cooper's source.
 | A21 | **No timestamps on cards** | **done** | Cards keep the direct Copy affordance required by A27; the broader per-card action-row prohibition is retired. Other actions remain keyboard and context-menu routes |
 | A22 | **Section header style** — small-caps letterspaced label + hairline rule | **done** | |
 | A23 | **Composer copy** — `Add a note or a prompt` | **done** | `#`/`##` still work; the active section name is appended in lowercase parentheses |
-| A25 | **Persistent Draw and Settings header icons** | **partial** | Paintbrush and Settings controls now have labels, tooltips and keyboard focus states; the global `Ctrl+,` / `Ctrl+Shift+D` routes and installed visual receipt remain. |
+| A25 | **Persistent Draw and Settings header icons** | **partial** | Paintbrush and Settings controls now have labels, tooltips and keyboard focus states; the fixed global `Right Alt` / `Left Alt` gesture routes and installed visual receipt remain. |
 | A26 | **Companion windows** — dock left/right, exact panel height, DPI/work-area recompute, one visible companion | **verify** | Companions are frameless, always-on-top and skip the taskbar, so their outer rectangle is what is drawn. Measured in the installed build 2026-09-24 at 100%: panel and Settings tops both y=97, heights both 620, visible gap 8 px (DPI-scaled); opening Draw hid Settings. The previous framed windows ended 7 px short with a 15 px gap because placement used the outer rect, invisible resize border included. 150% and multi-monitor receipts remain |
 | A27 | **Copy button on items** | **done** | Copy sits in the card's own column (26 px target), so text never runs under it; it surfaces on hover, focus, selection and the active card. Captured in the installed build 2026-09-24 |
 | A28 | **Active item treatment** | **verify** | Native `activeItemId` and an aria-current/active class now distinguish the active row from multi-selection; installed keyboard and visual evidence remains. |
@@ -130,7 +130,7 @@ Every row is a user-visible capability.
 | B16 | **Always-on microphone**, channel selector | **missing** | |
 | B17 | **Model unload timeout** | **partial** | Fixed 5-minute idle unload; not configurable |
 | B18 | **Hardware acceleration** — GPU backend + runtime CPU-ISA dispatch, and a selector | **blocked on the build** | The change itself is one line: on Windows x86_64, `transcribe-cpp` with `features = ["dynamic-backends", "vulkan"]` — a Vulkan GPU backend plus per-ISA CPU modules scored at runtime. But any non-default feature set makes `transcribe-cpp-sys` compile ggml from source, and that build does not come up on this machine: it shortens paths through a symlink under `%LOCALAPPDATA%	cs` pointing at a per-build `out/` directory, and CMake cannot write into it (`os error 267`, then `Unable to open check cache file for write`). CMake also is not on PATH — see `docs/BUILD.md`. Solve the from-source build first; it is the gate for the whole acceleration story. (ONNX Runtime stays CPU-only on Windows on purpose — DirectML pulled a prebuilt with an AVX2 static initialiser that crashes pre-Haswell CPUs) |
-| B19 | **Recording overlay** — position, style, on/off | **partial** | The overlay is a compact, centered pill with no clipped border/shadow edge; six persisted placements (top/bottom × left/middle/right) are implemented with DPI-aware, clamped bounds and live repositioning. On/off remains future work. |
+| B19 | **Recording overlay** — position, style, on/off | **partial** | A compact, centered pill with six persisted placements (top/bottom × left/middle/right), DPI-aware and clamped. It now follows the theme: the overlay window reads the narrow appearance record its capability allows, and a hairline gives the light pill an edge. On/off remains future work |
 | B20 | **Shortcut activation mode** (hold vs toggle) + hold threshold | **done** | Same-key Ctrl+Ctrl has a 50 ms activation grace, 300 ms push-to-talk threshold, short-tap lock, ownership tokens, and cooperative `transcribe-cpp` cancellation. |
 | B21 | **Central audio cues** — capture/copy/dictation start-stop/error, master volume, per-event toggle | **partial** | A shared bounded Web Audio cue registry drives the visible panel's capture, copy, dictation and error events; native hidden-panel playback, volume, per-event toggles and visual-equivalent coverage remain. |
 | B22 | **Start hidden / show tray icon / autostart** | **partial** | Direct copy: Run-key autostart in General. Store copy: the manifest's `BardStartup` startup task, switched in Settings › Apps › Startup (General opens that page); a packaged launch within two minutes of logon stays in the tray — a workaround, named as one. Start-hidden and tray-icon toggles still missing; the Store startup task is unverified until a Store install exists |
@@ -147,7 +147,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | C1 | Dictation lands in the panel when open, pastes into the focused app when closed | **verify** | |
 | C2 | Dictate directly into the composer (voice to note) | **missing** | |
 | C3 | Dictate into an existing card (voice to edit / append) | **missing** | |
-| C4 | One coherent shortcut map across both halves, no collisions | **done** | Fixed Shift/Control gestures share one raw-input coordinator; normal chords are conflict-checked and registration is transactional. |
+| C4 | One coherent shortcut map across both halves, no collisions | **done** | Fixed Left/Right Shift, Left/Right Alt, and same-key Control gestures share one raw-input coordinator; Right Shift × 2 + 1/2/3 is reserved for item paste, and no user-customized binding map remains. |
 | C5 | One settings surface where dictation and clipboard read as one product | **missing** | |
 | C6 | One onboarding covering both halves | **partial** | The onboarding now reaches model setup, feature/keybind summary, trial/licence activation and startup choice; clean install and every state still need visual QA. |
 | C7 | One semantic audio-cue service shared by capture, copy, dictation and errors | **partial** | The visible shell now uses one semantic cue registry; native delivery and the complete accessibility/equivalence contract remain. |
@@ -663,3 +663,32 @@ defaults; trial and restricted licences can reach the purchase page, and every
 in-app link now opens the browser (there was no opener, so none did). The
 dictation overlay was not re-verified: it has no preview path, and triggering
 it records and pastes into the focused app.
+
+**2026-09-24 — fixed command surface and standalone companions.** Right Shift
+× 2 now accepts a quick `1` / `2` / `3` suffix to paste the first three timeline
+items into the focused app, while an unadorned Right Shift × 2 still toggles the
+panel after the slot window. Right Alt × 2 opens Settings and Left Alt × 2 opens
+Draw as single companion windows; the tray/header paths retain their existing
+side-by-side behavior. Custom shortcut recording, persisted keybinds, the
+global-shortcut plugin, and its generated permissions are removed. Draw now has
+a fullscreen control beside close and responds to F11. Gesture, Rust, Clippy,
+and frontend build gates pass.
+
+**2026-09-24 — Draw's page, standalone windows, and an overlay that follows
+the theme.** Draw's page is now a choice — Light, Dark or a custom colour — that
+follows the theme until made, and exports carry it; the first swatch is the ink,
+which follows the page, and a custom pen colour sits after the hues. The panel
+background is reduced to a single custom colour plus Match theme, and no longer
+reaches Draw, whose page has its own background. F11 moved from the global
+input hook, which claimed it whenever Draw was merely visible — so a browser in
+front toggled too — to Draw's own keys while it has focus; `Esc` steps out one
+layer at a time. A companion opened on its own is now an ordinary window: in
+the taskbar, not on top, not dismissed when you switch apps (a Settings window
+used to vanish mid-way through copying an API key), and movable by its title
+row. The dictation overlay never followed the theme because its capability
+file denied the state read its theme hook depended on; every window now reads
+a narrow appearance record instead of the whole app state (clipboard history
+included). Verified in the installed build: canvas sheet, Dark page with light
+ink, custom wells, fullscreen edge to edge, Esc out of fullscreen, Match theme.
+Not verified here: gestures by physical key — injected Alt taps put Windows'
+menu mode on the focused window and are not a fair test.

@@ -136,7 +136,7 @@ On a clean supported Windows 10/11 machine:
   holds for its 30-day maximum;
 - capture text and an image, dictate real speech, open Draw and Settings, and
   navigate by keyboard only;
-- test `Shift × 2`, `Ctrl × 2`, `Right Shift × 2`, `Ctrl+,`, `Ctrl+Shift+D`
+- test `Left Shift × 2`, `Ctrl × 2`, `Right Shift × 2`, `Right Shift × 2` + `1/2/3`, `Right Alt × 2`, `Left Alt × 2`, and Draw `F11`
   and `Ctrl+/`;
 - test Send to Bard cold, warm, with several files, duplicates and an
   unreadable file;

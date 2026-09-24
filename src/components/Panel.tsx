@@ -3,7 +3,7 @@ import { playCue } from "../audio";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DictationState } from "../App";
-import { api, isShortcutRecording } from "../store";
+import { api } from "../store";
 import type { AppState, Item, Section } from "../types";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
 import ItemCard from "./ItemCard";
@@ -126,7 +126,6 @@ export default function Panel({
         if (e.key === "Escape") setShowShortcuts(false);
         return;
       }
-      if (isShortcutRecording()) return;
       if (showOverflow) {
         if (e.key === "Escape") setShowOverflow(false);
         return;
@@ -154,19 +153,9 @@ export default function Panel({
           setShowSwitcher(true);
           return;
         }
-        if (key === ",") {
-          e.preventDefault();
-          void api.toggleSettings();
-          return;
-        }
         if (key === "/") {
           e.preventDefault();
           setShowShortcuts(true);
-          return;
-        }
-        if (key === "d" && e.shiftKey) {
-          e.preventDefault();
-          void api.toggleDraw();
           return;
         }
         if (key === "c" && actionSel.length > 0) {
@@ -715,8 +704,10 @@ export default function Panel({
             <div><kbd>Enter</kbd><span>Copy</span></div>
             <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd><span>Copy as list</span></div>
             <div><kbd>Ctrl</kbd><kbd>K</kbd><span>Sections</span></div>
-            <div><kbd>Ctrl</kbd><kbd>,</kbd><span>Settings</span></div>
-            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd><span>Draw</span></div>
+            <div><kbd>Right Shift</kbd><kbd>Right Shift</kbd><kbd>1 / 2 / 3</kbd><span>Paste item, from any app</span></div>
+            <div><kbd>Right Alt</kbd><kbd>Right Alt</kbd><span>Settings, from any app</span></div>
+            <div><kbd>Left Alt</kbd><kbd>Left Alt</kbd><span>Draw, from any app</span></div>
+            <div><kbd>F11</kbd><span>Fullscreen Draw</span></div>
             <div><kbd>Space</kbd><span>Done</span></div>
             <div><kbd>Esc</kbd><span>Close</span></div>
           </div>

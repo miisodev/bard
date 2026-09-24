@@ -66,6 +66,7 @@ body {
   border-radius: var(--r-panel);
   border: 1px solid var(--border);
   overflow: hidden;
+  color: var(--on-canvas);
 }
 
 /* ---------- header ---------- */
@@ -187,10 +188,12 @@ body {
   border-radius: var(--r-sm);
   background: transparent;
   box-shadow: none;
+  color: var(--on-canvas-2);
 }
 
 .header-action:hover {
-  background: var(--surface-2);
+  background: var(--canvas-hover);
+  color: var(--on-canvas);
 }
 
 /* ---------- timeline ---------- */
@@ -443,7 +446,7 @@ body {
   padding: var(--sp-8);
   padding-bottom: 88px;   /* optical centre: the composer occupies the foot */
   text-align: center;
-  color: var(--text-2);
+  color: var(--on-canvas-2);
   animation: card-in var(--t-slow) var(--ease-out);
 }
 
@@ -463,7 +466,7 @@ body {
 .empty-state .title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--on-canvas);
 }
 
 
@@ -916,14 +919,14 @@ body {
   font-size: 20px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: var(--text);
+  color: var(--on-canvas);
   margin: 0;
 }
 
 .onboarding p {
   font-size: 13px;
   line-height: 1.6;
-  color: var(--text-2);
+  color: var(--on-canvas-2);
   text-align: center;
   max-width: 280px;
   margin: 0;
@@ -998,7 +1001,7 @@ body {
   border: 0;
   border-radius: 17px;
   background: var(--surface-3);
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
   font-size: var(--fs-sm);
   line-height: 1;
   color: var(--text);
@@ -1131,13 +1134,13 @@ body {
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tr-caption);
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--on-canvas-3);
   transition: color var(--t-fast) var(--ease-out);
 }
 
 .group-header:hover,
 .group-header.active {
-  color: var(--text-2);
+  color: var(--on-canvas-2);
 }
 
 .group-name {
@@ -1151,7 +1154,7 @@ body {
 .group-rule {
   flex: 1;
   height: 1px;
-  background: var(--rule);
+  background: var(--canvas-rule);
 }
 
 .group-header:first-child {
@@ -1722,7 +1725,7 @@ mark {
   border: 1px solid var(--border);
   border-radius: var(--r-panel);
   overflow: hidden;
-  color: var(--text);
+  color: var(--on-canvas);
 }
 
 .companion-title {
@@ -1732,7 +1735,7 @@ mark {
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tr-caption);
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--on-canvas-3);
 }
 
 .companion-close {
@@ -1748,15 +1751,15 @@ mark {
   border: none;
   border-radius: var(--r-pill);
   background: transparent;
-  color: var(--text-3);
+  color: var(--on-canvas-3);
   cursor: pointer;
   transition: background var(--t-fast) var(--ease-out),
               color var(--t-fast) var(--ease-out);
 }
 
 .companion-close:hover {
-  background: var(--surface-2);
-  color: var(--text);
+  background: var(--canvas-hover);
+  color: var(--on-canvas);
 }
 
 .companion-close:focus-visible {
@@ -1774,39 +1777,4 @@ mark {
   box-shadow: none;
   min-width: 0;
   padding: 0;
-}
-
-.keys.unset {
-  color: var(--text-3);
-}
-
-.chord-control {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
-.chord-clear {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--text-3);
-  font-size: var(--fs-md);
-  line-height: 1;
-  cursor: pointer;
-}
-
-.chord-clear:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.chord-clear:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
