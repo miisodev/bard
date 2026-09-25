@@ -94,6 +94,11 @@
   --card-pad-x: var(--sp-6);
   --card-gap: var(--sp-3);
   --checkbox-size: 18px;
+  /* The design system names a single 32px hit area and a 17px glyph for every
+     icon control. The build had seven control sizes from 16px to 34px and eleven
+     glyph sizes, all as literals. These are the canonical pair. */
+  --icon-control: 32px;
+  --icon-glyph: 17px;
 }
 
 /* ══ Light ═══════════════════════════════════════════════════════════════ */
@@ -155,9 +160,16 @@
   --border-strong: rgba(255, 255, 255, 0.16);
   --rule: rgba(255, 255, 255, 0.1);
 
-  --accent: #5b8def;
-  --accent-hover: #74a0f5;
-  --accent-soft: rgba(91, 141, 239, 0.18);
+  /* The design system specifies these values for the dark theme, and they are
+     load-bearing: white on the lightened #5b8def is 3.23:1, so every primary
+     button, the active Settings sidebar item, every selected Draw tool and the
+     menu hover state were below AA in dark — and 2.60:1 on hover, which made a
+     primary button less readable when you hovered it. `--accent-text` below
+     already covers accent-as-text, which is the reason the accent had been
+     lightened in the first place. */
+  --accent: #3f73d8;
+  --accent-hover: #315fb8;
+  --accent-soft: rgba(63, 115, 216, 0.24);
   --accent-text: #9ab8f7;
 
   --danger: #ff6369;

@@ -307,25 +307,29 @@ body {
   align-self: flex-start;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  margin: -4px -6px -4px calc(var(--sp-2) * -1);
+  width: var(--icon-control);
+  height: var(--icon-control);
+  margin: -7px -9px -7px calc(var(--sp-2) * -1 - 3px);
   padding: 0;
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
+  /* Visible at rest. The design system states it twice — "The Copy button is
+     never removed from layout" and "At rest it uses --text-3" — and the surfaces
+     blueprint says "one visible Copy button". Hiding it until hover meant the
+     panel's only direct command was invisible on a product whose entire claim is
+     that it is a natural extension of your input. */
+  opacity: 1;
   transition: opacity var(--t-fast) var(--ease-out),
               background var(--t-fast) var(--ease-out),
               color var(--t-fast) var(--ease-out);
 }
 
 .item-copy svg {
-  width: 15px;
-  height: 15px;
+  width: var(--icon-glyph);
+  height: var(--icon-glyph);
   fill: none;
   stroke: currentColor;
   stroke-width: 1.4;
@@ -337,8 +341,7 @@ body {
 .item-card:focus-within .item-copy,
 .item-card.selected .item-copy,
 .item-card.active .item-copy {
-  opacity: 1;
-  pointer-events: auto;
+  color: var(--text);
 }
 
 .item-copy:hover {

@@ -42,6 +42,47 @@ const REPORT_TRUNCATION_MARKER: &str = "\n[truncated]\n";
 const READ_TRUNCATION_MARKER: &str = "\n[truncated while reading]\n";
 const PAYLOAD_TRUNCATION_MARKER: &str = "...[truncated]";
 
+static LOGGER: LifecycleLogger = LifecycleLogger;
+
+/// A `log` sink that writes into the same lifecycle log the gesture events use.
+///
+/// The `log` crate is a dependency and the tree calls `log::warn!` in three
+/// places, but nothing ever called `set_logger`. Without it the crate's
+/// `MAX_LOG_LEVEL` starts at `Off` and every one of those calls is discarded at
+/// runtime — not merely invisible in a windowed app, but never executed
+/// anywhere. This sink reuses [`record_event`] so the evidence lands where it is
+/// already read, and cannot become a second failure because that write is
+/// bounded and swallows I/O errors.
+struct LifecycleLogger;
+
+impl log::Log for LifecycleLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        record_event(&format!(
+            "log:{}:{}",
+            record.level().as_str().to_lowercase(),
+            record.args()
+        ));
+    }
+
+    fn flush(&self) {}
+}
+
+fn install_logger() {
+    // `set_logger` fails if something already claimed the sink. Bard installs one
+    // thing, so a failure means a future caller arrived first; respect it rather
+    // than overwriting whatever is there.
+    if log::set_logger(&LOGGER).is_ok() {
+        log::set_max_level(log::LevelFilter::Warn);
+    }
+}
+
 /// Install the process-wide panic hook and use `directory` for crash logs.
 ///
 /// Calling this more than once updates the destination without chaining
@@ -65,6 +106,7 @@ fn install_inner(directory: &Path) {
     let directory = directory.to_path_buf();
     let _ = create_crash_directory(&directory);
     set_configured_directory(directory);
+    install_logger();
 
     let _ = panic::catch_unwind(AssertUnwindSafe(|| {
         INSTALL_HOOK.call_once(|| {

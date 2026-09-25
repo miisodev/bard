@@ -274,6 +274,37 @@ export default function Panel({
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
+  // The composer holds focus by default, per the blueprint: "Typing — Goes to
+  // the composer". Without this the panel draws a focus ring on
+  // `.composer-row:focus-within` while nothing inside it is focused, so a
+  // keyboard-first panel looks ready and the first keystrokes go nowhere.
+  //
+  // Focus is re-asserted on every `panel-shown` rather than on mount alone: the
+  // panel window is hidden and shown, never unmounted, so mount fires once and
+  // the second and later openings would silently lose focus again.
+  useEffect(() => {
+    const focusComposer = () => {
+      const composer = composerRef.current;
+      if (!composer || composer.disabled) return;
+      // The window is shown and focused by the time this arrives, but WebView2
+      // can still report the webview as unfocused for a tick, and `focus()` is
+      // then a no-op.
+      window.setTimeout(() => composer.focus(), 0);
+    };
+
+    focusComposer();
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void listen("panel-shown", focusComposer).then((off) => {
+      if (cancelled) off();
+      else unlisten = off;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   useEffect(() => {
     const onDragOver = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes("Files")) {
@@ -780,20 +811,36 @@ function copySelection(state: AppState, ids: number[], toast: (m: string) => voi
   const items = ids
     .map((id) => state.items.find((i) => i.id === id))
     .filter((i): i is Item => !!i);
+  // Rust verifies the clipboard write and returns an error when it could not be
+  // confirmed, so an unhandled rejection here used to leave the panel playing a
+  // success cue and claiming "Copied" for a copy that never happened. A person
+  // who walks away from a confirmed copy pastes whatever was there before.
+  const reportFailure = (reason: unknown) => {
+    playCue("error");
+    const detail = reason instanceof Error ? reason.message : String(reason ?? "");
+    toast(detail || "Couldn't copy.");
+  };
+
   if (items.length === 1) {
     const it = items[0];
-    if (it.kind === "image") {
-      void api.copyItem(it.id).then(() => { playCue("copy"); toast("Copied"); });
-    } else {
-      void api.copyText(it.content).then(() => { playCue("copy"); toast("Copied"); });
-    }
+    const write = it.kind === "image" ? api.copyItem(it.id) : api.copyText(it.content);
+    void write
+      .then(() => {
+        playCue("copy");
+        toast("Copied");
+      })
+      .catch(reportFailure);
     return;
   }
   void api
     .copyText(
       items.map((i) => (i.kind === "text" ? `- ${i.content}` : `- [image]`)).join("\n")
     )
-    .then(() => { playCue("copy"); toast("Copied as list"); });
+    .then(() => {
+      playCue("copy");
+      toast("Copied as list");
+    })
+    .catch(reportFailure);
 }
 
 function copyAsList(state: AppState, ids: number[], toast: (m: string) => void) {

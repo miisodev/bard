@@ -118,10 +118,27 @@ export default function Onboarding({
     setFinishing(true);
     setFinishError(null);
     try {
+      // The 14-day trial is the default path, not a decision the user has to
+      // make to leave this screen. Per the blueprint, "Skipping key entry starts
+      // the 14-day local trial and never consumes a paid activation" — so
+      // arriving here without a licence starts one rather than raising an error
+      // at someone who has not yet decided about money.
       if (!license.canUse) {
-        throw new Error("Start the 14-day trial or activate a licence before opening Bard.");
+        await api.startTrial();
       }
-      await api.setAutostart(autostart);
+
+      // Autostart is not the app's to set on the Microsoft Store build, where
+      // Windows owns it and `set_autostart` reports that as an error. That is a
+      // channel fact, not a failure, and treating it as fatal left Store users
+      // stuck on the last onboarding screen with an error that reads like a bug
+      // report. A genuine failure to register autostart on the direct channel is
+      // still worth surfacing.
+      try {
+        await api.setAutostart(autostart);
+      } catch (reason) {
+        if (!/store/i.test(errorText(reason))) throw reason;
+      }
+
       await onDone();
     } catch (reason) {
       setFinishError(errorText(reason));
@@ -216,7 +233,7 @@ export default function Onboarding({
       ) : (
         <>
           <h1>You're set</h1>
-          <p>Start with a 14-day local trial, or enter the annual licence key from your purchase email.</p>
+          <p>Start with a 14-day local trial, or enter the licence key from your purchase email.</p>
           <LicenseCard status={license} onStatus={setLicense} compact />
           <div className="setting-row">
             <span>
