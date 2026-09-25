@@ -24,7 +24,7 @@
   embeds that exact bard.exe.
 #>
 param(
-  [string]$Version = "0.1.0",
+  [string]$Version = ((Get-Content (Join-Path $PSScriptRoot "..\package.json") -Raw | ConvertFrom-Json).version),
   [string]$PackageName = "miisodev.Bard.Validation",
   [string]$Publisher = "CN=Bard Validation",
   [string]$PublisherDisplayName = "miiso.dev",

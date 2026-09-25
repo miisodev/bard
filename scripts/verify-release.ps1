@@ -1,5 +1,5 @@
 param(
-  [string]$Version = "0.1.0",
+  [string]$Version = ((Get-Content (Join-Path $PSScriptRoot "..\package.json") -Raw | ConvertFrom-Json).version),
   [string]$BundleDir = "src-tauri\target\release\bundle\nsis",
   [switch]$RequireSignature
 )

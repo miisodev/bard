@@ -8,6 +8,7 @@ import {
   bounds,
   exportPng,
   hitTest,
+  INKS,
   move,
   newId,
   render,
@@ -20,7 +21,6 @@ const win = getCurrentWindow();
 
 /** The first swatch is the ink: dark on a light page, light on a dark one. */
 const HUES = ["#2f6fed", "#e5484d", "#2c9e5b", "#e8a33d"];
-const INKS = ["#1d1d1f", "#f5f5f7"];
 const WIDTHS = [2, 4, 8];
 
 const TOOLS: { tool: Tool; label: string; icon: JSX.Element }[] = [
@@ -88,8 +88,8 @@ export default function DrawWindow() {
       canvas.height = Math.round(h * dpr);
     }
     const all = draftRef.current ? [...shapesRef.current, draftRef.current] : shapesRef.current;
-    render(ctx, all, w, h, { dpr, background: page, selected });
-  }, [selected, page]);
+    render(ctx, all, w, h, { dpr, background: page, ink, selected });
+  }, [selected, page, ink]);
 
   useEffect(() => {
     paint();

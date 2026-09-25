@@ -10,7 +10,20 @@
   in `render`, via the context transform — nothing in this file knows about DPI.
 */
 
+import { inkFor } from "../appearance";
+
 export type Tool = "select" | "pen" | "line" | "arrow" | "rect" | "ellipse" | "text";
+
+/**
+ * The two inks: dark on a light page, light on a dark one. A shape drawn in
+ * either is painted in whichever reads on the page it is rendered onto, so a
+ * drawing never loses its strokes when the page changes.
+ */
+export const INKS = ["#1d1d1f", "#f5f5f7"];
+
+function paintFor(color: string, ink: string | undefined): string {
+  return ink && INKS.includes(color) ? ink : color;
+}
 
 export interface Point {
   x: number;
@@ -208,7 +221,7 @@ export function render(
   shapes: Shape[],
   w: number,
   h: number,
-  opts: { dpr?: number; background?: string; selected?: number | null } = {}
+  opts: { dpr?: number; background?: string; ink?: string; selected?: number | null } = {}
 ): void {
   const dpr = opts.dpr ?? 1;
   ctx.save();
@@ -224,12 +237,12 @@ export function render(
 
   for (const s of shapes) {
     if (s.kind === "text") {
-      ctx.fillStyle = s.color;
+      ctx.fillStyle = paintFor(s.color, opts.ink);
       ctx.font = `${s.size}px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif`;
       ctx.textBaseline = "alphabetic";
       ctx.fillText(s.text, s.at.x, s.at.y);
     } else {
-      ctx.strokeStyle = s.color;
+      ctx.strokeStyle = paintFor(s.color, opts.ink);
       ctx.lineWidth = s.width;
       path(ctx, s);
       ctx.stroke();
@@ -271,6 +284,6 @@ export function exportPng(
   canvas.height = Math.round(h * scale);
   const ctx = canvas.getContext("2d");
   if (!ctx) return "";
-  render(ctx, shapes, w, h, { dpr: scale, background });
+  render(ctx, shapes, w, h, { dpr: scale, background, ink: inkFor(background) });
   return canvas.toDataURL("image/png").split(",")[1] ?? "";
 }

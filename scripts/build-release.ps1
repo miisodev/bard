@@ -32,7 +32,7 @@
   signature is independent of Authenticode and is made either way.
 #>
 param(
-  [string]$Version = "0.1.0",
+  [string]$Version = ((Get-Content (Join-Path $PSScriptRoot "..\package.json") -Raw | ConvertFrom-Json).version),
   [string]$CertificateThumbprint,
   [string]$SignCommand,
   [string]$TimestampUrl = "http://timestamp.digicert.com",
