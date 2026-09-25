@@ -74,7 +74,7 @@ off selected files and shows the panel.
 | Empty — no results | "No matches" and the query, with **no** capture hint |
 | Populated | Sections in order, active section first |
 | Offline | Capture, drawing, clipboard work and unexpired signed-lease use are unchanged; licence state shows `Offline licence` until revalidation succeeds |
-| Restricted | Trial ended or the signed lease expired: the timeline stays legible; copy/export remain available; composer, capture, dictation, drawing, attachment and update commands are disabled; the persistent Settings icon opens the licence group |
+| Restricted | Trial ended, the licence term ran out, or no current signed lease: the timeline stays legible; copy/export remain available; composer, capture, dictation, drawing, attachment and update commands are disabled; the persistent Settings icon opens the licence group |
 
 **Copy.**
 
@@ -92,6 +92,7 @@ off selected files and shows the panel.
   `Couldn't copy.` · `Couldn't add <n> file(s).`
 - Restricted trial: `Your 14-day trial has ended. Activate Bard to keep creating.`
 - Restricted lease: `We couldn't verify this licence. Connect to the internet or activate a valid key.`
+- Restricted licence ended: `This Bard licence has ended. Buy another licence to keep creating.`
 
 **Sort menu** (`⇅`), one choice: **Newest first** · **Oldest first** ·
 **Favorites first** · **Completed last**. Newest first is the default and the
@@ -366,7 +367,8 @@ a **Licence** group, and a **Privacy** group.
 **Licence** shows one of these states without exposing the key or lease:
 
 - Trial: `Trial · <n> days left` and `Start trial` is replaced by `Activate`.
-- Active: `Licensed · <n> activations of 3 used` and `Renews <date>`.
+- Active: `Licensed · <n> activations of 3 used` and `Valid through <date>`, the
+  365-day term the key was stamped with.
 - Revalidation: `Checking licence…` while one request is in flight; the prior
   signed lease remains valid and the surface stays interactive.
 - Offline with a valid lease: `Offline licence · <n> days left`.

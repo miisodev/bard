@@ -8,8 +8,8 @@ and how the product is built and released. It owns the integration contracts
 with every outside service. It carries no feature behaviour — that is
 `Product & Business` — and no visual rules.
 
-**Deliverables.** A buildable repository, a release pipeline, and a signed
-installer.
+**Deliverables.** A buildable repository, a release pipeline, and a direct
+installer that updates itself.
 
 **Path conventions.** As `Index §0`. `src-tauri/` is the Rust core, `src/` the
 webview.
@@ -377,7 +377,7 @@ on a roaming profile.
 bun install
 bun run tauri dev                     # dev server and app
 bun run tauri build --bundles nsis    # direct NSIS installer (unsigned, local)
-scripts/build-release.ps1             # signed direct release
+scripts/build-release.ps1             # direct release (unsigned by decision)
 bun run build:msix                     # Microsoft Store MSIX package
 bun run build                         # typecheck, CSS audit, bundle
 ```
@@ -389,8 +389,8 @@ typecheck can see and both of which are silent at runtime — a duplicated
 selector is not an error, it is a rule that quietly wins.
 
 The Tauri bundle target is `nsis`; `scripts/build-msix.ps1` packages the same
-signed release binary as a Windows desktop full-trust MSIX for the Store only,
-under the Identity Name and Publisher that Partner Center assigns, with a
+release binary as a Windows desktop full-trust MSIX for the Store only, under
+the Identity Name and Publisher that Partner Center assigns, with a
 `windows.startupTask` extension for login start. The NSIS installer carries the
 standard welcome, install-location, progress and finish pages in
 `Product & Business §7`; the MSIX manifest is validated by the Windows SDK and
@@ -410,8 +410,12 @@ and happens inside the build: a certificate thumbprint (token or store
 certificate) or a cloud signer's sign command is supplied at release time, so
 Tauri signs `bard.exe`, the installer and its uninstaller before it writes the
 updater signature over the final file. Signing after the build would ship an
-installer holding the unsigned binary and break the updater signature. The
-updater artifact has its own required signature under the
+installer holding the unsigned binary and break the updater signature. **No
+certificate is bought, and the direct release ships unsigned by decision**, so
+that path stays parked: a publicly trusted code-signing key is hardware-bound,
+and the SmartScreen notice it would remove was judged not to deter buyers. The
+updater artifact signature is not Authenticode and is
+always required; it has its own signature under the
 [Tauri updater contract](https://v2.tauri.app/plugin/updater/).
 Signing private keys and passwords are release-operator secrets and never enter
 the repository, the webview or a diagnostic artefact. The public updater key and
@@ -480,10 +484,11 @@ network boundaries; neither receives captures, audio or unrelated local data.
 ### Licensing service
 
 The external licence service is Polar's
-[License Keys](https://polar.sh/docs/features/benefits/license-keys) and
-[subscription benefits](https://polar.sh/docs/features/benefits/introduction).
-Bard requires an annual recurring product, three activation instances,
-customer-controlled deactivation and subscription-state enforcement. The exact
+[License Keys](https://polar.sh/docs/features/benefits/license-keys) benefit on a
+one-time product. Bard requires three activation instances and
+customer-controlled deactivation, and no subscription-state enforcement: the
+benefit carries no Polar-side expiry, because an expiry set on the benefit would
+start the 365-day clock at purchase rather than at first activation. The exact
 API request and response fields, authentication method, rate limits and current
 endpoint are read from the linked canonical API documentation; the resolved
 product, benefit and organisation identifiers live in the release operator's
@@ -642,10 +647,10 @@ asset requires byte-count, SHA-256, ranged-download and Windows
 requires a disposable round trip, and a live OpenRouter request requires a real
 test credential. Licensing evidence covers trial start and expiry, all three
 activations, the fourth-machine refusal, portal and local deactivation,
-purchase, renewal, cancellation, refund or subscription loss, signed-lease
-tampering, clock bounds and every revalidation failure. Release status and
-receipts live in `docs/PARITY.md`; a passing metadata assertion is not a
-substitute for the boundary it claims to cover.
+purchase, refund or revocation, the 365-day term stamped on the key at first
+activation, signed-lease tampering, clock bounds and every revalidation failure.
+Release status and receipts live in `docs/PARITY.md`; a passing metadata
+assertion is not a substitute for the boundary it claims to cover.
 
 **These verify the installed application, not a development build.** A
 development build cannot be run by the person who bought the product, so

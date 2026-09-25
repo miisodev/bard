@@ -107,7 +107,7 @@ export default function LicenseCard({
           : trial
             ? `Try Bard free for ${daysLeft(status.trialExpiresAt)} more days. No card is required.`
             : restricted
-              ? "Your timeline remains readable. Renew Bard to capture, dictate, draw, and edit."
+              ? "Your timeline remains readable. Buy another licence to capture, dictate, draw, and edit."
               : status.message || "Bard is checking its local licence state."}
       </p>
       {status.message && !active && !trial ? <p className="license-card-note" role="status">{status.message}</p> : null}

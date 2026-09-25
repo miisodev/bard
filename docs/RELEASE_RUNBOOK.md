@@ -2,19 +2,26 @@
 
 Bard ships through two Windows channels, one package each:
 
-1. **Direct download from miiso.dev** — the signed NSIS installer, which updates
-   itself through the Tauri updater feed.
+1. **Direct download from miiso.dev** — the NSIS installer, which updates itself
+   through the Tauri updater feed.
 2. **Microsoft Store** — the MSIX package, submitted under the Partner Center
    identity. Microsoft signs, distributes and updates that copy.
 
 There is no downloadable MSIX. A sideloaded package would carry a different
 identity from the Store copy, install beside it, and never receive an update.
 
-The release is **NO-GO** until the direct installer passes Authenticode, the
-updater signature, commerce, and installed-machine gates. An unsigned local
-build is for testing only and is never uploaded or labelled as a release.
+The direct release is **NO-GO** until the updater signature, commerce, and
+installed-machine gates pass. It is also **unsigned by decision**: no
+Authenticode certificate is bought, so the direct installer ships unsigned and
+Windows shows its SmartScreen notice on first run. Steps 1 and 3 below describe
+the signing path for anyone who later holds a certificate; until then run
+`.\scripts\build-release.ps1 -Unsigned` and skip the Authenticode check in
+`verify-release.ps1`.
 
 ## 1. The certificate
+
+No certificate is bought today, and step 3 below is the path for anyone who
+later holds one.
 
 Publicly trusted code-signing keys have been hardware-bound since June 2023
 (CA/Browser Forum baseline requirements): a certificate arrives on a **USB
@@ -48,7 +55,15 @@ git tag -a v0.1.0 -m "Bard 0.1.0"
 
 A green build is not a release approval. Keep the output with the release record.
 
-## 3. Build the signed direct release
+## 3. Build the direct release
+
+Until a certificate exists, build it unsigned:
+
+```powershell
+.\scripts\build-release.ps1 -Unsigned
+```
+
+With one, the signed path is:
 
 ```powershell
 .\scripts\build-release.ps1 -CertificateThumbprint <thumbprint>
@@ -70,7 +85,9 @@ the file. The script ends by running:
 which checks NSIS integrity, Authenticode on the executable and the installer,
 the updater signature envelope, the embedded updater public key, and hashes.
 `NotSigned`, `UnknownError`, an untrusted certificate or a failed updater
-verification is a hard stop.
+verification is a hard stop. On the unsigned path drop `-RequireSignature`: the
+Authenticode block is what it gates, while the Tauri updater signature is
+verified either way.
 
 The updater key comes from `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, or from `$HOME\.tauri\bard-updater.key`
@@ -118,9 +135,12 @@ signed here: Microsoft signs it after certification. Follow
 
 1. Run a real smallest-value purchase in Polar production mode.
 2. Verify price and currency, receipt email, webhook delivery, licence
-   issuance, three activations, and fourth-machine rejection.
-3. Test cancellation, renewal, refund/revocation, failed renewal, and portal
-   deactivation. Keep customer and transaction IDs in the private release log.
+   issuance, that the key arrives by email, and that it carries a 365-day term
+   counted from that activation.
+3. Test the three-activation limit, a fourth machine, refund/revocation,
+   releasing a machine in the customer portal, and a replacement key. There is
+   nothing to cancel and no failed renewal to test. Keep customer and
+   transaction IDs in the private release log.
 4. Deploy the site only after the installer URL and the Store listing are
    verified. Confirm `/tools/bard`, `/api/bard/update` and
    `/download/bard/windows` from an unauthenticated browser and a customer
@@ -149,13 +169,14 @@ On a clean supported Windows 10/11 machine:
 
 ## 8. Rollback
 
-If a release fails before customers have it, keep the previous signed release
-in the updater manifest and remove the bad tag and assets. If it fails after:
+If a release fails before customers have it, keep the previous known-good
+release in the updater manifest and remove the bad tag and assets. If it fails
+after:
 
 1. point the updater manifest back at the last known-good `latest.json`;
 2. disable checkout and keep the entitlement broker running;
 3. halt or supersede the Store submission according to Partner Center policy;
-4. publish a fixed version only after the same source, signing, updater, Store
+4. publish a fixed version only after the same source, updater-signature, Store
    and installed gates pass;
 5. record affected versions, hashes, timestamps and customer impact.
 

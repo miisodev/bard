@@ -457,7 +457,7 @@ fn status_from_receipt(
         && machine_matches;
     let default_message = match receipt.entitlement.as_str() {
         "suspended" => Some("This Bard licence is temporarily suspended.".into()),
-        "ended" => Some("This Bard licence has ended. Renew it to continue creating.".into()),
+        "ended" => Some("This Bard licence has ended. Buy another licence to keep creating.".into()),
         _ => Some("The Bard licence has expired or is not valid on this computer.".into()),
     };
     LicenseStatus {

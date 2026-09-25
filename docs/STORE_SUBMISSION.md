@@ -55,11 +55,13 @@ channel in About.
   before requesting certification.
 - Test the Store-installed copy on a clean Windows account before release.
 
-## Submission 1 — what goes in each section
+## Submission 1 — what went in
 
-Submission 1 is open as a draft in Partner Center. The package and four
-screenshots (1600 × 900, real Bard windows on a demo profile) are in
-`Downloads\Bard Store submission`.
+Submission 1 of Store ID `9N37XJJS1F3H` is submitted and in certification. The
+package and four screenshots (1600 × 900, real Bard windows on a demo profile)
+were in `Downloads\Bard Store submission`. The listing returns HTTP 410 until
+Microsoft publishes it, and the same sections are re-read if certification asks
+for a change.
 
 **Pricing and availability.** All markets · public · discoverable · release as
 soon as possible · base price **Free** · no free trial (Bard's own 14-day trial

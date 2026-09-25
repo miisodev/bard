@@ -1,26 +1,26 @@
 # Bard release record
 
 **Status: 0.1.2 is public on the direct channel, unsigned by decision
-(2026-09-24); the Store submission is drafted.** Windows SmartScreen prompts on
-the direct installer's first run until an Authenticode certificate is bought.
-Microsoft signs the Store MSIX, so the Store needs nothing of Bard's own
-signing.
+(2026-09-24); the Store submission is in certification.** Windows SmartScreen
+prompts on the direct installer's first run, and the product page tells buyers
+how to dismiss it; no Authenticode certificate is being bought. Microsoft signs
+the Store MSIX, so the Store needs nothing of Bard's own signing.
 
 ## Channels
 
 | Channel | State |
 |---|---|
 | Direct (miiso.dev) | `v0.1.2` is the latest release on the public `miisodev/bard-releases`; `/download/bard/windows` and `/api/bard/update` follow `releases/latest/download/`, so earlier installs are offered 0.1.2 |
-| Microsoft Store | Reserved as **Bard: Capture & Dictation**, Store ID `9N37XJJS1F3H`; identity `miisodev.BardCaptureDictation` / `CN=61F791B1-D87E-4C90-9617-536200345DA6` / `miisodev`. Submission 1 is a draft; `Bard_0.1.2_x64_Store.msix` and the listing copy are ready (`docs/STORE_SUBMISSION.md`). Submit by 2026-12-24 or the reservation lapses |
+| Microsoft Store | Reserved as **Bard: Capture & Dictation**, Store ID `9N37XJJS1F3H`; identity `miisodev.BardCaptureDictation` / `CN=61F791B1-D87E-4C90-9617-536200345DA6` / `miisodev`. Submission 1 is submitted and in certification; the public page still returns HTTP 410 until certification completes (`docs/STORE_SUBMISSION.md`). `NEXT_PUBLIC_BARD_STORE_URL` waits on the published listing. Submit by 2026-12-24 or the reservation lapses |
 | Commerce | Polar one-time product `d019d40d-218d-4e76-8323-add0822b0c3f`, $20 USD; licence benefit with 3 activations and no Polar-side expiry — the broker stamps 365 days at first activation; the downloadable benefit carries the 0.1.2 installer. The subscription product it replaced is archived |
 
 ## What is waiting
 
 | Gate | Needs | Owner |
 |---|---|---|
-| Store submission | Fill the drafted sections from `docs/STORE_SUBMISSION.md`, answer the age-rating questionnaire, submit for certification | Miiso — the attestations are the account holder's |
+| Store certification | Track submission 1 through certification, answer any rejection, publish the listing and set `NEXT_PUBLIC_BARD_STORE_URL` | Miiso — the attestations are the account holder's |
 | First purchase | One real purchase, activation on the direct and Store copies | Miiso |
-| Authenticode | DigiCert (account open) or another individual-validation certificate | Miiso, later |
+| Authenticode | None by decision — no certificate is bought; revisit only if the SmartScreen notice costs buyers | Miiso, only if it ever comes back |
 | Expiry reminders | A daily job emailing keys nearing `expiresAt` — before day 335 | Here |
 | Installed matrix | Clean-machine install, upgrade, uninstall, 150% scaling, screen reader | Here |
 

@@ -319,7 +319,7 @@ success, error, disabled, restricted, offline.
 | First use | Nothing has ever been captured | The creating action | Yes — the only kind that earns one |
 | No results | A search excluded everything | Clear the search. **Never the creating action** | No |
 | Cleared | The user emptied it | The creating action | No |
-| Restricted | Trial expired | Purchase; content stays visible behind | No |
+| Restricted | Trial or licence term ended | Purchase; content stays visible behind | No |
 | **Error-empty** | A read failed; contents unknown | Retry | No |
 
 **Error-empty is the one that causes harm.** A failed read rendering "Nothing

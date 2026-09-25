@@ -135,17 +135,20 @@ The public consumer targets are a direct current-user **NSIS** installer from
 miiso.dev and a Microsoft Store **MSIX**. Before a release is published:
 
 1. Freeze and tag one clean commit.
-2. Build with `scripts/build-release.ps1 -CertificateThumbprint <thumbprint>`
-   (or `-SignCommand` for a cloud signer). Tauri signs `bard.exe`, the
-   installer and its uninstaller inside the build, then writes the updater
-   `.sig` over the signed installer; the script finishes with
-   `scripts/verify-release.ps1 -RequireSignature`.
+2. Build with `scripts/build-release.ps1 -Unsigned` — the direct release is
+   unsigned by decision and no certificate is bought — or, for anyone who later
+   holds one, `-CertificateThumbprint <thumbprint>` (or `-SignCommand` for a
+   cloud signer). Tauri signs `bard.exe`, the installer and its uninstaller
+   inside the build when a certificate is supplied, then writes the updater
+   `.sig` over the final installer; the script finishes with
+   `scripts/verify-release.ps1`, adding `-RequireSignature` only on the signed
+   path.
 3. Build the Store package with `scripts/build-msix.ps1 -Store` and the Partner
    Center identity; submit it through Partner Center, which signs it.
-4. Generate `SHA256SUMS` and the release manifest, upload the signed installer,
+4. Generate `SHA256SUMS` and the release manifest, upload the installer,
    updater signature, hashes and notices to the release-only repository.
-5. Run the clean-VM install matrix for both channels. An unsigned artifact is a
-   private test build, never a paid release.
+5. Run the clean-VM install matrix for both channels. The updater `.sig` and the
+   published hashes are what protect a release that carries no Authenticode.
 
 `BARD_LICENSE_SERVER` may point at a local mock during development; use
 `node scripts/mock-license-server.mjs` with

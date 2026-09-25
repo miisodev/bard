@@ -388,12 +388,14 @@ saying so is correct where panicking is not.
 
 ## §6 Pricing and licensing
 
-**bard costs US$20 per year as a recurring annual licence.** It renews annually
-until cancellation. Cancellation stops future renewals; time already paid for
-remains represented by the licence service's paid-through state. A confirmed
-refund is an explicit service-side entitlement change; Bard never infers or
-applies refund policy locally. Bard does not sell a perpetual key or describe the
-annual term as a perpetual local entitlement.
+**bard costs US$20 once.** A licence is a one-time purchase, sold only on
+miiso.dev, and it runs for 365 days from its first activation on up to three
+Windows computers. Nothing is charged again and nothing renews by itself; Bard
+emails a reminder before the term runs out, and a new $20 purchase continues
+Bard for another 365 days. There is no subscription to cancel. A confirmed
+refund or revocation is an explicit service-side entitlement change; Bard never
+infers or applies refund policy locally. Bard does not sell a perpetual key or
+describe the 365-day term as a perpetual local entitlement.
 
 **The local trial lasts 14 consecutive days from the moment the person selects
 `Start trial` during first-run onboarding.** It requires no account, licence
@@ -411,6 +413,8 @@ Windows Credential Manager and never derives it from hardware fingerprints,
 account names or other invasive machine identity. Paid activation requires an
 online service round trip. The person can inspect and release activations from
 the service's customer portal, or release the current installation from bard.
+The 365 days are stamped on the key at its first activation, so releasing a
+computer and activating it again does not restart the term.
 
 ### The signed offline lease
 
@@ -459,31 +463,33 @@ in a rolling 24-hour period while a lease is valid. Revalidation never blocks
 application startup and a timeout, transport error or service error never
 invalidates an otherwise valid signed lease. A successful response
 replaces the stored lease atomically; a signed response that ends or suspends
-the entitlement takes effect when received. At `valid_until`, an installation
-without a replacement lease becomes restricted, while existing items remain
-visible, copyable and exportable and the licence surface remains reachable.
-Restricted mode disables the composer, selection and clipboard capture,
-dictation, drawing, file attachment and updates; it never hides, encrypts or
-deletes existing local data.
+the entitlement takes effect when received. At `valid_until`, or when the
+`license_expires_at` stamped on the key arrives, an installation without a
+current entitlement becomes restricted, while existing items remain visible,
+copyable and exportable and the licence surface remains reachable. Restricted
+mode disables the composer, selection and clipboard capture, dictation, drawing,
+file attachment and updates; it never hides, encrypts or deletes existing local
+data.
 
 The external service is Polar's [License Keys](https://polar.sh/docs/features/benefits/license-keys)
-and subscription-benefit lifecycle. Bard requires a recurring annual product,
-three activation instances, customer-controlled deactivation, and
-subscription-state enforcement. The exact API shape is anchored to the linked
-documentation; the Rust integration and every offline/failure behaviour are
-owned here and specified in `Technology §8`.
+benefit on a one-time product. Bard requires three activation instances and
+customer-controlled deactivation, and nothing else: the benefit carries no
+Polar-side expiry, because the 365 days are stamped on the key at its first
+activation rather than counted from the purchase. The exact API shape is
+anchored to the linked documentation; the Rust integration and every
+offline/failure behaviour are owned here and specified in `Technology §8`.
 
 ---
 
 ## §7 Distribution
 
 **miiso.dev and the Microsoft Store are the channels, one package each.** The
-product page sells the recurring annual licence and serves one direct download:
-a signed **NSIS** installer. The Store carries the **MSIX** package, submitted
-under the Partner Center identity; Microsoft signs, distributes and updates that
-copy. There is no downloadable MSIX: a sideloaded package would carry a
-different identity from the Store copy, install beside it, and never receive an
-update. No MSI package is published to consumers.
+product page sells the one-time licence and serves one direct download: the
+**NSIS** installer, distributed unsigned by decision. The Store carries the
+**MSIX** package, submitted under the Partner Center identity; Microsoft signs,
+distributes and updates that copy. There is no downloadable MSIX: a sideloaded
+package would carry a different identity from the Store copy, install beside it,
+and never receive an update. No MSI package is published to consumers.
 
 **The installer is brief; the app is the first-run surface.** The NSIS installer
 shows the standard pages — welcome, install location, progress, and a finish
@@ -491,14 +497,15 @@ page that launches Bard — and asks nothing else. The Store copy has no install
 at all, so first-run onboarding in the application owns the feature, shortcut
 and licence-key walkthrough for both channels (`Surfaces §2`).
 
-**The installer and every downloaded update are signed.** An unsigned Windows
-binary triggers SmartScreen, and a paid product that opens with a security
-warning has lost the argument before it starts. Authenticode signing and the
-updater's separate artifact signature are both Phase 1 requirements, not polish
-items. A publicly trusted code-signing key lives in hardware — a USB token or a
-certificate authority's cloud signer — so the direct release is signed where
-that key is. Signing names the publisher; SmartScreen reputation still accrues
-with downloads. The signing requirements are anchored to
+**The direct installer ships unsigned, by decision.** No Authenticode
+certificate is bought: a publicly trusted code-signing key is hardware-bound — a
+USB token or a certificate authority's cloud signer — and the SmartScreen notice
+it would have removed was judged not to deter buyers of a $20 product. Windows
+shows that notice on the direct installer's first run, and the product page says
+how to dismiss it rather than pretending it is not there. The updater's artifact
+signature is a different thing and stays mandatory: the application verifies the
+release feed's signature before it installs anything. Signing, for anyone who
+later holds such a key, is anchored to
 [Tauri Windows signing](https://v2.tauri.app/distribute/sign/windows/) and the
 [updater](https://v2.tauri.app/plugin/updater/).
 
@@ -509,12 +516,13 @@ installs only after explicit confirmation. It never updates silently.
 
 **The Microsoft Store is the second channel.** It reaches people who prefer
 Store installation and updates. Its MSIX package is submitted through Partner
-Center; Microsoft signs it after certification and delivers its updates, so the
+Center and sits in certification until Microsoft publishes the listing; then
+Microsoft signs it and delivers its updates, so the
 Store copy has no in-app updater. Windows starts it at login through the
 package's startup task, switched in Settings › Apps › Startup, and the Explorer
 `Send to Bard` verb belongs to the direct installer only. The direct miiso.dev
-channel remains responsible for the signed NSIS installer, its hashes and its
-update feed.
+channel remains responsible for the NSIS installer, its hashes and its update
+feed.
 Requirements are at
 [Microsoft Store policies](https://learn.microsoft.com/en-us/windows/apps/publish/store-policies).
 
@@ -572,25 +580,35 @@ its checksum policy promises.
 
 One product page on miiso.dev. It carries what the product does, what it costs,
 the system requirement, a purchase action, the Microsoft Store listing, and the
-signed direct installer.
+direct installer.
 
 **It answers four questions in this order**, because that is the order a visitor
 asks them: what is this, what does it look like, what does it cost, how do I get
 it. Everything else — the local-processing promise, the model story, the
 shortcut map — is supporting material below that fold.
 
-**The commercial terms are explicit.** The price block reads: `US$20 per year.
-Renews annually until cancelled.` The trial block reads: `Try every feature
-free for 14 days. No account required.` The device block reads: `One licence
-works on up to 3 machines.` The offline block reads: `After activation, Bard
+**The commercial terms are explicit.** The price block reads: `$20` with `one
+payment · never renews` beneath it. The licence block reads: `One $20 licence
+covers 365 days from the day you activate it, on up to three computers. It is
+sold only here, needs no account, never renews on its own, and we email you
+before it runs out.` The trial block reads: `Free for 14 days. Then one licence.
+Install it and every feature works for 14 days. A licence runs for 365 days from
+the day you activate it, on up to three PCs. No account needed.` The checkout
+block reads: `Secure checkout by Polar. Your key arrives by email, with a
+reminder before it expires.` The offline block reads: `After activation, Bard
 works offline for up to 30 days between licence checks.` The page links to the
 Terms and Privacy documents and makes no perpetual-licence claim.
 
+**The page tells the buyer what happens on their machine.** The download block
+says: `On first run Windows may show a SmartScreen notice: choose More
+info, then Run anyway.`, and the Store block says: `In review at Microsoft` for
+as long as certification has not published the listing.
+
 **The local-first promise is the headline, not a footnote, and it is
 conditional.** The page says: `Audio capture and transcription run on your PC.
-If you enable cloud post-processing, Bard sends the completed transcript text
-to OpenRouter using the model ID you enter.` It never claims that every part of
-Bard remains on-device while a cloud stage is enabled.
+If you enable text-only post-processing, Bard sends the completed transcript
+text to OpenRouter using the model ID you enter.` It never claims that every
+part of Bard remains on-device while a cloud stage is enabled.
 
 ---
 
@@ -601,11 +619,11 @@ rather than the application.
 
 | Metric | Source | What it answers |
 |---|---|---|
-| Annual licences sold | Payment processor | Whether the product sells |
-| Renewal rate | Payment processor | Whether the first year earns a second |
+| Licences sold | Payment processor | Whether the product sells |
+| Second-purchase rate | Payment processor | Whether 365 days earn a second $20 |
 | Refund rate | Payment processor | Whether it is what buyers expected |
 | Page-to-purchase conversion | Site analytics on miiso.dev | Whether the page argues well |
-| Trial-to-activation conversion | Licence service | Whether the local trial leads to a paid year |
+| Trial-to-activation conversion | Licence service | Whether the local trial leads to a paid licence |
 
 **There is no in-product funnel and there will not be one.** Knowing which
 features a user touches would require watching them, and the product's central
