@@ -711,4 +711,6 @@ panel, where the transcript would have been pasted; the click guard now handles
 pill clicks itself. Verified in the installed build: both toggles, fullscreen
 close and reopen at 720 × 620, Draw chrome on a custom background, overlay
 focus kept in Notepad through a held click. Physically confirmed by Miiso:
-Alt × 2 gestures.
+Alt × 2 gestures. The Store screenshots then caught one more: shapes drawn in ink kept
+their dark colour when the page turned dark and vanished; ink shapes now paint in
+the page's ink on screen and in exports (0.1.1).

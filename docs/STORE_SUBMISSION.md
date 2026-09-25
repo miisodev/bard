@@ -55,6 +55,73 @@ channel in About.
   before requesting certification.
 - Test the Store-installed copy on a clean Windows account before release.
 
+## Submission 1 — what goes in each section
+
+Submission 1 is open as a draft in Partner Center. The package and four
+screenshots (1600 × 900, real Bard windows on a demo profile) are in
+`Downloads\Bard Store submission`.
+
+**Pricing and availability.** All markets · public · discoverable · release as
+soon as possible · base price **Free** · no free trial (Bard's own 14-day trial
+covers it).
+
+**Properties.** Category **Productivity**. Privacy policy
+`https://miiso.dev/privacy` · website `https://miiso.dev/tools/bard` · support
+`miisodev@gmail.com`. Declaration: **This product allows users to make
+purchases, but does not use the Microsoft Store commerce system** — checked.
+
+**Age ratings.** No to every content question. Interactive elements: digital
+purchases **yes** (the licence is bought on miiso.dev); users interact, shares
+location, unrestricted internet — **no**.
+
+**Packages.** `Bard_0.1.1_x64_Store.msix`, Desktop only.
+
+**Store listing (English).**
+
+- Short description: *Capture, clipboard and offline dictation in one
+  keyboard-first panel.*
+- Description:
+
+  > Bard keeps the fragments worth keeping and the words you would rather say
+  > than type, in one keyboard-first panel.
+  >
+  > Capture: select text anywhere and tap Shift twice, and it lands in Bard's
+  > timeline. Paste images, drop files, sort notes into sections, mark them
+  > done and copy any of them back with a keystroke — or paste your first three
+  > straight into the app you are in with Right Shift twice and 1, 2 or 3.
+  >
+  > Dictate: tap Ctrl twice and speak. Bard transcribes on your PC with a local
+  > speech model, so your audio never leaves the machine, and pastes the text
+  > where you were typing. Hold the second Ctrl for push-to-talk.
+  >
+  > Draw: sketch a quick diagram beside your notes, then copy or save it as an
+  > image.
+  >
+  > Refine (optional): send only the finished transcript to a model you choose
+  > through OpenRouter to tidy it up. Off by default.
+  >
+  > Every feature is free for 14 days. To keep using Bard, buy a licence at
+  > miiso.dev: $20 once, for 365 days from the day you activate it, on up to
+  > three PCs. It never renews on its own.
+
+- Features: Capture any selection with Shift + Shift · Offline dictation with a
+  local speech model · Paste your first three items anywhere · Sections, done
+  state, favourites and sort · Quick diagrams, copied as images · Light, dark
+  and custom backgrounds
+- Keywords: dictation, speech to text, clipboard, capture, notes, offline,
+  whisper
+- Copyright: © 2026 miisodev
+
+**Submission options — notes for certification.**
+
+> Bard is a full-trust desktop app (runFullTrust is needed for its global
+> shortcuts, clipboard capture and pasting into the active app). Every feature
+> works for 14 days with no account or key. After that, a licence bought on
+> https://miiso.dev activates it; as a non-game app it uses its own commerce
+> (policy 10.8.2). To try it: select text in any app and tap Shift twice to
+> capture it; tap Ctrl twice to dictate (onboarding downloads the local voice
+> model).
+
 ## Release relationship
 
 The Store listing and `/tools/bard` describe the same version, price, trial,
