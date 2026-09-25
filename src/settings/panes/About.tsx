@@ -80,8 +80,11 @@ export default function AboutPane({ state, refresh }: PaneProps) {
       {updateMessage ? <Note>{updateMessage}</Note> : null}
 
       <Group title="Legal">
-        <Row label="Terms" hint="Annual term, three activations, offline lease and renewal.">
+        <Row label="Terms" hint="One licence: 365 days from activation, three computers, an offline lease.">
           <Button onClick={() => void api.openLink("https://miiso.dev/terms")}>Read</Button>
+        </Row>
+        <Row label="Support" hint="Report a problem, including anything Refine returned.">
+          <Button onClick={() => void api.openLink("https://miiso.dev/tools/bard#support")}>Contact</Button>
         </Row>
         <Row label="Privacy" hint="Local data, activation and the optional OpenRouter disclosures.">
           <Button onClick={() => void api.openLink("https://miiso.dev/privacy")}>Read</Button>

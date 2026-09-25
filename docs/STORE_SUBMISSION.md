@@ -67,8 +67,13 @@ covers it).
 
 **Properties.** Category **Productivity**. Privacy policy
 `https://miiso.dev/privacy` · website `https://miiso.dev/tools/bard` · support
-`miisodev@gmail.com`. Declaration: **This product allows users to make
-purchases, but does not use the Microsoft Store commerce system** — checked.
+`miisodev@gmail.com`. Declarations: **This product allows users to make purchases, but does not
+use the Microsoft Store commerce system** and **This product incorporates
+generative AI features** (Refine) — checked; Settings › Refine › Report and
+About › Support open miiso.dev/tools/bard#support, the reporting route the
+Store requires of generative AI features. Unchecked: accessibility-tested (not
+yet tested), OneDrive backups (Bard's data stays on the machine), recording and
+broadcast (games only), pen and ink (untested).
 
 **Age ratings.** No to every content question. Interactive elements: digital
 purchases **yes** (the licence is bought on miiso.dev); users interact, shares

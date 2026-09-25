@@ -516,6 +516,15 @@ export function PostprocessingPane(_: PaneProps) {
         </div>
       </Group>
 
+      <Group title="Report">
+        <Row
+          label="Report a refined transcript"
+          hint="If Refine returns something wrong, harmful or inappropriate, send what you said and what came back."
+        >
+          <Button onClick={() => void api.openLink("https://miiso.dev/tools/bard#support")}>Report</Button>
+        </Row>
+      </Group>
+
       {loading ? (
         <div className="loading-row" role="status">
           <LoaderCircle className="spinning" aria-hidden="true" />
