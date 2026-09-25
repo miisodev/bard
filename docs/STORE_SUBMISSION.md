@@ -79,7 +79,11 @@ broadcast (games only), pen and ink (untested).
 purchases **yes** (the licence is bought on miiso.dev); users interact, shares
 location, unrestricted internet — **no**.
 
-**Packages.** `Bard_0.1.1_x64_Store.msix`, Desktop only.
+**Packages.** `Bard_0.1.2_x64_Store.msix`, Desktop only.
+
+**System requirements.** Memory 4 GB minimum, 8 GB recommended (the local
+speech model runs in memory). Processor: 64-bit, 2 cores minimum; 64-bit,
+4 cores recommended. DirectX, video memory and graphics: not specified.
 
 **Store listing (English).**
 
