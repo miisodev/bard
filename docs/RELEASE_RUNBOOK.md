@@ -78,38 +78,41 @@ and `bard-updater-password.txt`. It never enters the repository.
 
 The CI release workflow can sign only through a cloud signer
 (`WINDOWS_SIGN_COMMAND` secret); a token-held certificate signs on its own
-machine with the script above.
+machine with the script above. Until a certificate exists the direct release
+is built here with `.\scripts\build-release.ps1 -Unsigned` (decision
+2026-09-24), and a `v*` tag push starts the CI workflow, which cannot sign —
+cancel that run.
 
 ## 4. Build the Store package
 
 ```powershell
 .\scripts\build-msix.ps1 -Store `
-  -PackageName "<Partner Center Package/Identity/Name>" `
-  -Publisher "<Partner Center Package/Identity/Publisher>" `
-  -PublisherDisplayName "<Partner Center publisher display name>"
+  -PackageName "miisodev.BardCaptureDictation" `
+  -Publisher "CN=61F791B1-D87E-4C90-9617-536200345DA6" `
+  -PublisherDisplayName "miisodev" `
+  -DisplayName "Bard: Capture & Dictation"
 ```
 
-Take all three values from **Partner Center › Product identity**. The package
-embeds the signed `bard.exe` from step 3 and declares a startup task for login
-start. It is not signed here: Microsoft signs it after certification. Follow
+The values come from **Partner Center › Product identity**. The package embeds
+`bard.exe` from step 3 and declares a startup task for login start. It is not
+signed here: Microsoft signs it after certification. Follow
 `docs/STORE_SUBMISSION.md` for the submission itself.
 
 ## 5. Publish the direct release
 
-1. Generate metadata and the source archive:
-
-   ```powershell
-   .\scripts\generate-release-metadata.ps1 -Version 0.1.0 -OutputDir release-metadata
-   git archive --format=zip --output release-metadata/Bard_0.1.0_source.zip v0.1.0
-   ```
-
-2. Upload the signed installer, `bard.exe`, the `.sig`, hashes, provenance,
-   SBOM and source archive to the `miisodev/bard-releases` release for the tag.
-3. Publish the immutable updater `latest.json` for that version and set
-   `BARD_UPDATE_MANIFEST_URL` to it.
-4. Set `BARD_WINDOWS_INSTALLER_URL` to the signed installer and, once the Store
-   listing is live, `NEXT_PUBLIC_BARD_STORE_URL` to the listing.
-5. Point the Polar downloadable benefit at the same signed installer.
+1. Stage the installer, a stable-name copy `Bard_x64-setup.exe`, the `.sig`,
+   `latest.json` (the updater manifest, pointing at the versioned installer),
+   `SHA256SUMS`, provenance and SBOM from
+   `.\scripts\generate-release-metadata.ps1`.
+2. Create the release for the tag on the public `miisodev/bard-releases` and
+   mark it latest. **Never attach a source archive** — that repository is
+   public and the source is not.
+3. The site needs no change per release: `BARD_WINDOWS_INSTALLER_URL` and
+   `BARD_UPDATE_MANIFEST_URL` point at `releases/latest/download/`, so the
+   newest release is what `/download/bard/windows` and `/api/bard/update`
+   serve. `NEXT_PUBLIC_BARD_STORE_URL` is set once the Store listing is live.
+4. Upload the same installer to the Polar downloadable benefit
+   (`a934d3ed-…`), replacing the previous file.
 
 ## 6. Commerce and site switch
 

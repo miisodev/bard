@@ -109,7 +109,7 @@ jobs:
           $sig = "$installer.sig"
           Copy-Item $installer, $sig, 'src-tauri\target\release\bard.exe' -Destination $stage
           .\scripts\generate-release-metadata.ps1 -Version $version -OutputDir (Join-Path $stage 'metadata')
-          git archive --format=zip --output (Join-Path $stage 'metadata' "Bard_${version}_source.zip") HEAD
+          # No source archive: miisodev/bard-releases is public and the source is not.
           Copy-Item (Join-Path $stage 'metadata\*') $stage -Force
           $hashes = Get-FileHash (Join-Path $stage '*') -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" }
           $hashes | Set-Content (Join-Path $stage 'SHA256SUMS') -Encoding ascii
