@@ -587,19 +587,32 @@ pub fn export_markdown(app: AppHandle) -> Result<String, String> {
             }
         }
     }
+    // The export directory is a folder the person chose through the native
+    // picker, so it is written into as-is and never created. The old code called
+    // `create_dir_all` unconditionally, which meant a stale or mistyped setting
+    // silently produced a new folder the user never asked for — and a `%TEMP%`
+    // fallback meant a failed export could scatter a full copy of their capture
+    // history into a temporary directory. Failing loudly is better than either.
     let fallback = dirs_documents();
     let dir = db::get_setting(&app, "export_dir")
         .filter(|d| !d.is_empty() && std::path::Path::new(d).is_dir())
         .unwrap_or(fallback);
-    let path = std::path::Path::new(&dir).join("bard-export.md");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dir = std::path::PathBuf::from(dir);
+    if !dir.is_dir() {
+        return Err("Choose a folder to export to in Data › Export folder.".into());
+    }
+    let path = dir.join("bard-export.md");
     std::fs::write(&path, out).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
 pub fn set_export_dir(app: AppHandle, path: String) {
-    if path.is_empty() || std::path::Path::new(&path).is_dir() {
+    // Only an existing directory is accepted. The frontend routes this through
+    // the native folder picker, so the value is expected to be real; storing an
+    // arbitrary string would let a compromised renderer point the export at any
+    // writable location.
+    if !path.is_empty() && std::path::Path::new(&path).is_dir() {
         db::set_setting(&app, "export_dir", &path);
     }
 }
@@ -913,17 +926,33 @@ pub fn set_active_item(app: AppHandle, id: Option<i64>) {
 #[tauri::command]
 pub fn set_retention_days(app: AppHandle, origin: String, days: Option<i64>) -> Result<(), String> {
     db::set_retention_days(&app, &origin, days)?;
-    db::cleanup_origin(&app, &origin);
+    // Applying a shorter lifespan should take effect now, not at the next
+    // capture. The result is propagated so the caller learns if the pass failed
+    // rather than assuming the change applied.
+    db::cleanup_origin(&app, &origin)?;
     refresh(&app);
     Ok(())
 }
 
+/// Run one retention pass on demand, reporting what it removed.
+///
+/// This returned `()` and discarded every result, so the Data pane could neither
+/// confirm success nor show a failure — the spec names both strings. It now
+/// returns a count and propagates the first error, so the caller can say
+/// `History pruned.` or `Couldn't prune history. Try again.` honestly.
+///
+/// The count cap is applied here rather than on the capture path, so pruning is
+/// something a person asked for and watches happen, not something that silently
+/// deletes their data mid-session.
 #[tauri::command]
-pub fn prune_history_now(app: AppHandle) {
-    db::cleanup_origin(&app, "clipboard");
-    db::cleanup_origin(&app, "dictation");
-    db::prune_history(&app, 5_000);
+pub fn prune_history_now(app: AppHandle) -> Result<usize, String> {
+    let mut removed = 0usize;
+    for origin in ["clipboard", "dictation"] {
+        removed += db::prune_expired(&app, origin)?;
+    }
+    removed += db::prune_history(&app, db::AUTOMATIC_ITEM_CEILING)?;
     refresh(&app);
+    Ok(removed)
 }
 
 #[tauri::command]
@@ -1090,11 +1119,17 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 /// went nowhere; only Bard's own site is allowed through.
 #[tauri::command]
 pub fn open_link(url: String) -> Result<(), String> {
+    // `&` and `%` are gone from the allowlist. This is not command injection —
+    // `Command` does not go through a shell and the scheme is pinned — but
+    // whether Explorer splits on either character inside a single argument is a
+    // behaviour of Explorer this project should not depend on. The two real
+    // call sites pass fixed `https://miiso.dev/...` paths, so a tight allowlist
+    // costs nothing.
     let allowed = url.starts_with("https://miiso.dev/")
         && url.len() <= 256
         && url
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "/:.-_?=&#%".contains(c));
+            .all(|c| c.is_ascii_alphanumeric() || "/:.-_=".contains(c));
     if !allowed {
         return Err("Bard only opens pages on miiso.dev.".into());
     }

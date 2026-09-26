@@ -9,7 +9,6 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{commands::ImagesDir, db};
 
-static LAST_CONTENT: Mutex<Option<String>> = Mutex::new(None);
 static LAST_IMAGE_HASH: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_OWN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -39,64 +38,134 @@ pub fn note_own_write(app: &AppHandle) {
     let _ = app;
 }
 
+/// The largest clipboard text Bard will store, in bytes.
+///
+/// Nothing bounded this before. A single 200 MB copy out of a log viewer was
+/// written to the database and then re-serialised into every open webview on
+/// every refresh event, which left the panel permanently unresponsive with no
+/// way back short of deleting the item by hand. Bard is a background agent that
+/// must never be the reason a machine feels wrong, so an oversized payload is
+/// refused with a visible reason rather than absorbed.
+pub const MAX_CAPTURE_TEXT_BYTES: usize = 256 * 1024;
+
+/// Hash of the last captured text, rather than the text itself.
+///
+/// The previous code kept a full `String` copy of the most recent payload alive
+/// for the lifetime of the process, purely to compare against the next one. A
+/// 64-bit hash answers the same question — has this exact text been captured
+/// already — without retaining a user's clipboard contents in memory
+/// indefinitely.
+static LAST_CONTENT_HASH: Mutex<Option<u64>> = Mutex::new(None);
+
+fn content_hash(text: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
 pub fn capture_text(app: &AppHandle, text: &str) {
     if crate::license::require(app).is_err() {
         return;
     }
-    let mut guard = LAST_CONTENT.lock().unwrap();
-    if guard.as_deref() == Some(text) {
+    let digest = content_hash(text);
+    {
+        // A poisoned lock must not kill capture for the rest of the session, so
+        // degrade to "have not seen this" rather than panicking the monitor.
+        let mut guard = LAST_CONTENT_HASH
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *guard == Some(digest) {
+            return;
+        }
+        *guard = Some(digest);
+    }
+
+    if text.len() > MAX_CAPTURE_TEXT_BYTES {
+        crate::crash::record_event("capture:text-too-large");
+        let _ = app.emit(
+            "capture-failed",
+            format!(
+                "That selection is {} KB. Bard keeps items up to {} KB.",
+                text.len() / 1024,
+                MAX_CAPTURE_TEXT_BYTES / 1024
+            ),
+        );
         return;
     }
-    *guard = Some(text.to_string());
+
     let id = db::insert_item_with_origin(app, text, "text", None, "clipboard");
+    if id == db::INSERT_FAILED {
+        // The write did not happen. `insert_item_with_origin` has already
+        // reported it; emitting `captured` here would tell four webviews an item
+        // exists that is not in the timeline.
+        return;
+    }
     db::set_active_item(app, Some(id));
-    db::cleanup_origin(app, "clipboard");
-    db::prune_history(app, 5_000);
+    // Age-based retention is the only automatic deletion. The old call to
+    // `prune_history` here deleted the oldest automatic items past 5,000 on
+    // every single capture, including when the user had chosen Forever.
+    if let Err(error) = db::cleanup_origin(app, "clipboard") {
+        crate::crash::record_event("capture:retention-failed");
+        let _ = app.emit("capture-failed", error);
+    }
     let _ = app.emit("captured", id);
     let _ = app.emit("refresh", ());
 }
 
-fn history_limit(app: &AppHandle) -> usize {
-    // Keep the old setting as a bounded safety cap for migrated installs. The
-    // user-facing lifespan is age-based and lives in the two retention keys.
-    db::get_setting(app, "history_limit")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5_000)
-        .clamp(100, 100_000)
-}
-
+/// Poll the clipboard for new content.
+///
+/// This loop is the product. It had no heartbeat and no supervision, so when it
+/// stopped — a panicking iteration, a poisoned lock — capture was simply gone
+/// with nothing anywhere saying so, which is the same class of silent failure the
+/// raw-input listener had. Each iteration is now panic-contained so one bad poll
+/// cannot end capture for the session, and a periodic heartbeat records that the
+/// loop is alive.
 pub fn start(app: AppHandle) {
     thread::spawn(move || {
         let mut last_seq = clip_seq();
+        let mut ticks: u64 = 0;
         loop {
             thread::sleep(Duration::from_millis(300));
-            let seq = clip_seq();
-            if seq == last_seq {
-                continue;
+            ticks += 1;
+            if ticks % HEARTBEAT_TICKS == 0 {
+                crate::crash::record_event("monitor:alive");
             }
-            last_seq = seq;
-            if seq as u64 == LAST_OWN_SEQ.load(std::sync::atomic::Ordering::SeqCst) {
-                continue;
-            }
-            if clip_excluded() {
-                continue;
-            }
-            let mut cb = match arboard::Clipboard::new() {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            if let Ok(text) = cb.get_text() {
-                let t = text.trim().to_string();
-                if t.is_empty() || t.contains(crate::capture::SENTINEL) {
-                    continue;
+            let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let seq = clip_seq();
+                if seq == last_seq {
+                    return;
                 }
-                capture_text(&app, &t);
-            } else if let Ok(img) = cb.get_image() {
-                let _ = capture_image(&app, &img);
+                last_seq = seq;
+                if seq as u64 == LAST_OWN_SEQ.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                if clip_excluded() {
+                    return;
+                }
+                let mut cb = match arboard::Clipboard::new() {
+                    Ok(c) => c,
+                    Err(_) => return,
+                };
+                if let Ok(text) = cb.get_text() {
+                    let t = text.trim().to_string();
+                    if t.is_empty() || t.contains(crate::capture::SENTINEL) {
+                        return;
+                    }
+                    capture_text(&app, &t);
+                } else if let Ok(img) = cb.get_image() {
+                    let _ = capture_image(&app, &img);
+                }
+            }));
+            if polled.is_err() {
+                crate::crash::record_event("monitor:iteration-failed");
             }
         }
     });
 }
+
+/// Roughly every five minutes at the 300 ms poll interval. An idle install
+/// writes one line; this is a liveness marker, not a log of activity.
+const HEARTBEAT_TICKS: u64 = 1_000;
 
 pub fn capture_image(app: &AppHandle, img: &arboard::ImageData<'_>) -> bool {
     if crate::license::require(app).is_err() {
@@ -106,14 +175,18 @@ pub fn capture_image(app: &AppHandle, img: &arboard::ImageData<'_>) -> bool {
     img.bytes.hash(&mut hasher);
     let hash = hasher.finish();
     {
-        let mut guard = LAST_IMAGE_HASH.lock().unwrap();
+        let mut guard = LAST_IMAGE_HASH
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if *guard == Some(hash) {
             return true;
         }
         *guard = Some(hash);
     }
     let Some(encoded) = encode_png(img) else {
-        let mut guard = LAST_IMAGE_HASH.lock().unwrap();
+        let mut guard = LAST_IMAGE_HASH
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = None;
         return false;
     };
@@ -124,23 +197,49 @@ pub fn capture_image(app: &AppHandle, img: &arboard::ImageData<'_>) -> bool {
         std::process::id() & 0xFFFF
     ));
     if std::fs::write(&path, encoded).is_err() {
-        let mut guard = LAST_IMAGE_HASH.lock().unwrap();
+        let mut guard = LAST_IMAGE_HASH
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = None;
         return false;
     }
     let id =
         db::insert_item_with_origin(app, "", "image", Some(&path.to_string_lossy()), "clipboard");
+    if id == db::INSERT_FAILED {
+        // The PNG is on disk with no row referencing it. Remove it rather than
+        // leaving an orphan no sweep will ever collect.
+        let _ = std::fs::remove_file(&path);
+        return false;
+    }
     db::set_active_item(app, Some(id));
-    db::cleanup_origin(app, "clipboard");
-    db::prune_history(app, history_limit(app));
+    if let Err(error) = db::cleanup_origin(app, "clipboard") {
+        crate::crash::record_event("capture:retention-failed");
+        let _ = app.emit("capture-failed", error);
+    }
     let _ = app.emit("captured", id);
     let _ = app.emit("refresh", ());
     true
 }
 
+/// The largest image Bard will store, by pixel count and by encoded size.
+///
+/// A 4K screenshot is tens of megabytes of raw DIB, and the encode allocated an
+/// unbounded `Vec` on the monitor thread — so one large screenshot meant tens of
+/// megabytes and tens of milliseconds of work on the thread that also has to
+/// notice the next copy. Both limits are checked before any of that happens.
+pub const MAX_CAPTURE_IMAGE_PIXELS: u64 = 40_000_000;
+pub const MAX_CAPTURE_IMAGE_BYTES: usize = 25 * 1024 * 1024;
+
 fn encode_png(img: &arboard::ImageData) -> Option<Vec<u8>> {
     use image::{ExtendedColorType, ImageEncoder};
-    let mut png = Vec::new();
+    let pixels = (img.width as u64).saturating_mul(img.height as u64);
+    if pixels > MAX_CAPTURE_IMAGE_PIXELS {
+        crate::crash::record_event("capture:image-too-large");
+        return None;
+    }
+    // Preallocated from the known raw size: the encoder appends, and growing a
+    // `Vec` from empty on a hot thread is the expensive part.
+    let mut png = Vec::with_capacity(img.bytes.len().min(MAX_CAPTURE_IMAGE_BYTES));
     let encoder = image::codecs::png::PngEncoder::new(&mut png);
     encoder
         .write_image(
@@ -150,6 +249,10 @@ fn encode_png(img: &arboard::ImageData) -> Option<Vec<u8>> {
             ExtendedColorType::Rgba8,
         )
         .ok()?;
+    if png.len() > MAX_CAPTURE_IMAGE_BYTES {
+        crate::crash::record_event("capture:image-encoded-too-large");
+        return None;
+    }
     Some(png)
 }
 

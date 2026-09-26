@@ -17,6 +17,8 @@ use crate::gesture::{GestureAction, GestureKey, GestureState};
 pub const SENTINEL: &str = "\u{200B}bard::capturing\u{200B}";
 static CAPTURING: AtomicBool = AtomicBool::new(false);
 static SYNTHETIC_INPUT: AtomicBool = AtomicBool::new(false);
+/// How many synthetic-input guards are live. See [`SyntheticInputGuard`].
+static SYNTHETIC_DEPTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static GESTURE_RESET: AtomicBool = AtomicBool::new(false);
 
 /// True only while the raw-input hook thread is inside `rdev::listen`. The worker
@@ -77,19 +79,38 @@ fn restore_snapshot(app: &AppHandle, snapshot: &ClipboardSnapshot) {
     }
 }
 
-pub struct SyntheticInputGuard;
+/// Suppresses gesture interpretation while Bard synthesises its own keystrokes.
+///
+/// A depth counter rather than a boolean, because these bursts genuinely overlap:
+/// a selection capture can begin while a dictation paste chord is still being
+/// synthesised. With a plain flag the inner guard's `Drop` cleared the
+/// suppression while the outer burst was still running, so Bard's own Ctrl+C
+/// became visible to the coordinator and could be read as a Ctrl tap. In the
+/// other direction, while the flag was set the hook discarded *every* event, so
+/// genuine user input during a paste was lost outright for up to 180ms.
+pub struct SyntheticInputGuard {
+    outermost: bool,
+}
 
 impl SyntheticInputGuard {
     pub fn enter() -> Self {
+        let outermost = SYNTHETIC_DEPTH.fetch_add(1, Ordering::SeqCst) == 0;
         SYNTHETIC_INPUT.store(true, Ordering::SeqCst);
-        GESTURE_RESET.store(true, Ordering::SeqCst);
-        Self
+        // Only reset the gesture machine on the outermost entry: a nested burst
+        // is part of the same synthetic event, and clearing mid-sequence would
+        // drop the pending state the outer one established.
+        if outermost {
+            GESTURE_RESET.store(true, Ordering::SeqCst);
+        }
+        Self { outermost }
     }
 }
 
 impl Drop for SyntheticInputGuard {
     fn drop(&mut self) {
-        SYNTHETIC_INPUT.store(false, Ordering::SeqCst);
+        if SYNTHETIC_DEPTH.fetch_sub(1, Ordering::SeqCst) == 1 && self.outermost {
+            SYNTHETIC_INPUT.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -133,6 +154,15 @@ fn handle_gesture(action: GestureAction, app: &AppHandle) {
         GestureAction::Capture => {
             if crate::db::get_setting(app, "capture_double_shift").as_deref() != Some("0") {
                 capture_selection(app);
+            } else {
+                // The gesture still fires and still logged, then did nothing at
+                // all, with no indication that capture had been switched off.
+                // The Shortcuts pane still lists the gesture, so the user had no
+                // way to connect the two.
+                let _ = app.emit(
+                    "capture-failed",
+                    "Double-Shift capture is off. Turn it back on in Settings › Capture.",
+                );
             }
         }
         GestureAction::TogglePanel => crate::panel::toggle_now(app),
@@ -140,7 +170,12 @@ fn handle_gesture(action: GestureAction, app: &AppHandle) {
         GestureAction::ToggleSettings => crate::commands::settings_gesture(app),
         GestureAction::PasteItem { slot } => {
             if let Err(error) = crate::commands::paste_item(app, slot) {
+                // A failed paste used to be one `log::warn!` to a sink that
+                // never existed. The gesture is global and the user is looking
+                // at another window, so the only place they will see the failure
+                // is the panel.
                 log::warn!("item paste failed: {error}");
+                let _ = app.emit("capture-failed", error);
             }
         }
         GestureAction::DictationPress { token } => crate::dictation::gesture_press(app, token),
@@ -163,10 +198,21 @@ fn spawn_listener(sender: mpsc::Sender<Event>) {
         LISTENER_ALIVE.store(true, Ordering::Release);
         let result = rdev::listen(move |event| {
             EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
-            // Bard's own Ctrl+C/Ctrl+V synthesis must never be interpreted as
-            // a physical Ctrl tap. The worker also checks this flag in case an
-            // event is already queued behind the hook.
-            if !SYNTHETIC_INPUT.load(Ordering::SeqCst) {
+            // Suppress only the keys Bard itself synthesises, rather than every
+            // event. The blanket discard meant that for the whole duration of a
+            // Ctrl+C or Ctrl+V burst — up to 180ms — a person's real typing was
+            // thrown away, so a keypress could simply vanish. Control is the only
+            // key Bard ever sends, so scoping the filter to it removes the loss
+            // without letting Bard's own chords be read as gestures.
+            let synthetic = SYNTHETIC_INPUT.load(Ordering::SeqCst)
+                && matches!(
+                    event.event_type,
+                    EventType::KeyPress(Key::ControlLeft)
+                        | EventType::KeyPress(Key::ControlRight)
+                        | EventType::KeyRelease(Key::ControlLeft)
+                        | EventType::KeyRelease(Key::ControlRight)
+                );
+            if !synthetic {
                 let _ = hook_sender.send(event);
             }
         });
@@ -234,6 +280,16 @@ pub fn start(app: AppHandle) {
                         &worker_app,
                     ),
                     Err(RecvTimeoutError::Timeout) => {
+                        // If the coordinator has been disarmed by a lost
+                        // release, the adapter's physical-key sets still hold the
+                        // stale entries. Clearing them alongside the state keeps
+                        // the two in agreement; clearing only the state would let
+                        // the next foreign key press re-disarm it immediately.
+                        if gestures.expire_stale_foreign(Instant::now()) {
+                            foreign_keys.clear();
+                            foreign_buttons.clear();
+                            crate::crash::record_event("input:foreign-state-recovered");
+                        }
                         for action in gestures.poll(Instant::now()) {
                             handle_gesture(action, &worker_app);
                         }
@@ -258,6 +314,12 @@ pub fn start(app: AppHandle) {
                 crate::crash::record_event("input:hook-vanished");
             }
             crate::crash::record_event("input:worker-rearming");
+            // Gesture state is rebuilt fresh on every re-arm. The sets below are
+            // the coordinator's whole memory of which keys are physically down,
+            // and one stranded entry makes every later gesture key press look
+            // "dirty" — so the coordinator is permanently disarmed with nothing in
+            // any log. Re-arming with a clean machine is what makes the recovery
+            // actually recover.
             thread::sleep(backoff);
             backoff = (backoff * 2).min(LISTENER_RETRY_MAX);
         }
@@ -281,7 +343,13 @@ fn process_raw_event(
     let now = Instant::now();
     match event.event_type {
         EventType::KeyPress(key) => {
-            if key == Key::Escape && crate::dictation::is_recording() {
+            // `is_busy`, not `is_recording`: Escape has to cancel a take that is
+            // still transcribing too. Gating on `Recording` only left the
+            // keyboard unable to stop a wedged transcription, and the overlay's
+            // own close button is unreachable while the click guard holds every
+            // click in the pill and the window cannot take focus. `cancel`
+            // already branches correctly per phase.
+            if key == Key::Escape && crate::dictation::is_busy() {
                 gestures.invalidate();
                 crate::dictation::cancel(app);
             }
@@ -367,18 +435,52 @@ pub fn capture_selection(app: &AppHandle) {
     }
     let app = app.clone();
     thread::spawn(move || {
+        // The flag is cleared by a guard rather than by a statement after the
+        // call, so a panic inside `do_capture` cannot leave `CAPTURING` stuck
+        // true — which would wedge selection capture for the rest of the
+        // session, silently, since the gesture would keep firing and doing
+        // nothing.
+        let _guard = CapturingGuard;
         do_capture(&app);
-        CAPTURING.store(false, Ordering::SeqCst);
     });
 }
 
+/// Releases the in-flight selection-capture slot.
+struct CapturingGuard;
+
+impl Drop for CapturingGuard {
+    fn drop(&mut self) {
+        CAPTURING.store(false, Ordering::SeqCst);
+    }
+}
+
 fn do_capture(app: &AppHandle) {
+    // Every exit restores the person's real clipboard. The old code returned
+    // early on a clipboard-open or sentinel-write failure, leaving the sentinel
+    // in the clipboard and the user's actual contents gone — an unrecoverable
+    // loss of whatever they had copied, caused by Bard failing at a capture.
     let mut cb = match arboard::Clipboard::new() {
-        Ok(c) => c,
-        Err(_) => return,
+        Ok(clipboard) => clipboard,
+        Err(error) => {
+            crate::crash::record_event("capture:clipboard-unavailable");
+            log::warn!("could not open the clipboard for capture: {error}");
+            let _ = app.emit(
+                "capture-failed",
+                "Bard could not read the clipboard. Another app may be holding it.",
+            );
+            return;
+        }
     };
     let old = snapshot_clipboard(&mut cb);
-    if cb.set_text(SENTINEL.to_string()).is_err() {
+    if let Err(error) = cb.set_text(SENTINEL.to_string()) {
+        crate::crash::record_event("capture:sentinel-write-failed");
+        log::warn!("could not place the capture sentinel: {error}");
+        // Nothing was overwritten, so the clipboard is already intact; say why
+        // nothing happened rather than returning in silence.
+        let _ = app.emit(
+            "capture-failed",
+            "Bard could not reach the clipboard. Try again in a moment.",
+        );
         return;
     }
     thread::sleep(Duration::from_millis(60));
@@ -399,7 +501,15 @@ fn do_capture(app: &AppHandle) {
         }
     }
     restore_snapshot(app, &old);
-    let _ = app.emit("capture-failed", ());
+    // The most common first-run mistake is having nothing selected. The sentinel
+    // machinery worked perfectly and this event was emitted with an empty
+    // payload that nothing in the frontend listened for, so the gesture appeared
+    // to do nothing at all. It now carries a sentence written for a person.
+    crate::crash::record_event("capture:no-selection");
+    let _ = app.emit(
+        "capture-failed",
+        "Nothing was selected. Select some text or an image, then try again.",
+    );
 }
 
 fn send_copy() {

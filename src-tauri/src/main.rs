@@ -4,6 +4,7 @@ mod capture;
 mod catalog;
 mod cloud;
 mod commands;
+mod credential;
 mod crash;
 mod db;
 mod dictation;
@@ -233,8 +234,16 @@ fn main() {
                 let _ = handle.autolaunch().enable();
             }
 
-            db::cleanup_origin(&handle, "clipboard");
-            db::cleanup_origin(&handle, "dictation");
+            // Retention is the app's central data promise, so a failed pass is
+            // recorded and reported rather than discarded. It used to be
+            // `let _ =`, which made a failure indistinguishable from "nothing
+            // expired".
+            for origin in ["clipboard", "dictation"] {
+                if let Err(error) = db::cleanup_origin(&handle, origin) {
+                    crate::crash::record_event("db:startup-retention-failed");
+                    log::warn!("startup retention pass failed for {origin}: {error}");
+                }
+            }
 
             monitor::start(handle.clone());
             capture::start(handle.clone());

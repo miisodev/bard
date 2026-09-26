@@ -9,18 +9,15 @@
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use keyring::Entry;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
-const CREDENTIAL_SERVICE: &str = "com.miisodev.bard";
 const LICENSE_USERNAME: &str = "license-key";
 const INSTALLATION_ID_USERNAME: &str = "installation-id";
 const TRIAL_SECRET_USERNAME: &str = "trial-secret";
@@ -35,6 +32,16 @@ const DEFAULT_LICENSE_SERVER: &str = "https://miiso.dev/api/bard/license";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const KEYRING_TIMEOUT: Duration = Duration::from_millis(400);
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+/// How long a signed offline lease stays usable past the point it asked to be
+/// re-checked. Three days covers a laptop that is genuinely offline for a
+/// weekend without punishing someone whose connection is unreliable, and it
+/// replaces an unbounded month-long window in which a revoked licence could not
+/// be enforced at all.
+const OFFLINE_REVALIDATION_GRACE_SECONDS: i64 = 3 * 24 * 60 * 60;
+
+/// How many 15-minute intervals make one heartbeat — four hours.
+const REVALIDATION_HEARTBEAT_TICKS: u64 = 16;
 static REFRESH_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 struct RefreshGuard;
@@ -167,81 +174,63 @@ struct DeactivateRequest<'a> {
     app_version: &'a str,
 }
 
-fn credential_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+enum CredentialRead {
+    Value(String),
+    Absent,
+    Unavailable,
 }
 
-fn credential_entry(username: &str) -> Result<Entry, LicenseError> {
-    Entry::new(CREDENTIAL_SERVICE, username).map_err(|_| LicenseError::CredentialStore)
+impl CredentialRead {
+    fn value(self) -> Option<String> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Absent | Self::Unavailable => None,
+        }
+    }
 }
 
-fn read_credential_bounded(username: &str) -> Option<String> {
-    let username = username.to_owned();
-    let (sender, receiver) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let _guard = credential_lock()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let result =
-            credential_entry(&username)
-                .ok()
-                .and_then(|entry| match entry.get_password() {
-                    Ok(value) if !value.trim().is_empty() => Some(value),
-                    Ok(_) => None,
-                    Err(keyring::Error::NoEntry) => None,
-                    Err(_) => None,
-                });
-        let _ = sender.send(result);
-    });
-    receiver
-        .recv_timeout(KEYRING_TIMEOUT)
-        .ok()
-        .flatten()
-        .filter(|value| !value.trim().is_empty())
+/// A read that distinguishes "nothing stored" from "could not find out".
+///
+/// Collapsing the two is what let a slow vault look like a fresh install, which
+/// destroyed a paying customer's machine binding irrecoverably: the new random ID
+/// overwrote the old one, and the original activation could never validate again.
+fn read_credential_bounded(username: &str) -> CredentialRead {
+    match crate::credential::read(username, KEYRING_TIMEOUT) {
+        crate::credential::Read::Value(value) => CredentialRead::Value(value),
+        crate::credential::Read::Absent => CredentialRead::Absent,
+        crate::credential::Read::Unavailable => CredentialRead::Unavailable,
+    }
 }
 
-fn write_credential_bounded(username: &str, mut value: String) -> Result<(), LicenseError> {
-    let username = username.to_owned();
-    let (sender, receiver) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let _guard = credential_lock()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let result = credential_entry(&username).and_then(|entry| {
-            entry
-                .set_password(value.trim())
-                .map_err(|_| LicenseError::CredentialStore)
-        });
-        value.zeroize();
-        let _ = sender.send(result);
-    });
-    receiver
-        .recv_timeout(KEYRING_TIMEOUT)
-        .map_err(|_| LicenseError::CredentialStore)?
+fn write_credential_bounded(username: &str, value: String) -> Result<(), LicenseError> {
+    match crate::credential::write(username, value, KEYRING_TIMEOUT) {
+        crate::credential::Done::Ok => Ok(()),
+        crate::credential::Done::Unavailable => Err(LicenseError::CredentialStore),
+    }
 }
 
 fn delete_credential_bounded(username: &str) -> Result<(), LicenseError> {
-    let username = username.to_owned();
-    let (sender, receiver) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let _guard = credential_lock()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let result =
-            credential_entry(&username).and_then(|entry| match entry.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-                Err(_) => Err(LicenseError::CredentialStore),
-            });
-        let _ = sender.send(result);
-    });
-    receiver
-        .recv_timeout(KEYRING_TIMEOUT)
-        .map_err(|_| LicenseError::CredentialStore)?
+    match crate::credential::delete(username, KEYRING_TIMEOUT) {
+        crate::credential::Done::Ok => Ok(()),
+        crate::credential::Done::Unavailable => Err(LicenseError::CredentialStore),
+    }
 }
 
+/// Read the stored licence key.
+///
+/// Absence and unavailability both read as "no key", because every caller acts
+/// on that the same way. They are still told apart in the log: a vault that stops
+/// answering would otherwise look to a paying customer like a licence that
+/// silently vanished, and the reason would be nowhere.
 fn read_key_bounded() -> Option<String> {
-    read_credential_bounded(LICENSE_USERNAME)
+    match read_credential_bounded(LICENSE_USERNAME) {
+        CredentialRead::Value(value) => Some(value),
+        CredentialRead::Absent => None,
+        CredentialRead::Unavailable => {
+            crate::crash::record_event("licence:key-unavailable");
+            None
+        }
+    }
 }
 
 fn write_key_bounded(key: String) -> Result<(), LicenseError> {
@@ -263,26 +252,40 @@ fn new_machine_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+fn is_machine_id(candidate: &str) -> bool {
+    candidate.len() == 32 && candidate.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+/// The stable identifier this installation is bound to.
+///
+/// The ordering here is the whole point. A credential read that did not *answer*
+/// must never fall through to minting a new ID: the new value overwrites the old
+/// one, and because the receipt was signed against the old one, the customer's
+/// original activation can never validate on this machine again. That turned one
+/// slow vault into permanent loss of a paid licence, and Credential Manager
+/// stalls are ordinary on domain-joined machines, in RDP sessions, and behind
+/// locked vaults.
+///
+/// So an unavailable store is a hard error, and only a confirmed `NoEntry` is
+/// permission to create.
 fn machine_id(app: &tauri::AppHandle) -> Result<String, LicenseError> {
-    if let Some(existing) = read_credential_bounded(INSTALLATION_ID_USERNAME) {
-        if existing.len() == 32
-            && existing
-                .chars()
-                .all(|character| character.is_ascii_hexdigit())
-        {
-            return Ok(existing);
+    match read_credential_bounded(INSTALLATION_ID_USERNAME) {
+        CredentialRead::Value(existing) if is_machine_id(&existing) => return Ok(existing),
+        CredentialRead::Unavailable => {
+            crate::crash::record_event("licence:machine-id-unavailable");
+            return Err(LicenseError::CredentialStore);
         }
+        // A stored value that is not a well-formed ID is corrupt rather than
+        // absent, and replacing it would be the same mistake as a timeout. The
+        // legacy migration below is the one path allowed to write here.
+        CredentialRead::Value(_) | CredentialRead::Absent => {}
     }
 
     // Migrate the old opaque value once so existing paid activations remain
     // valid, then remove it from SQLite. New installations never derive an ID
     // from a computer name, username, or hardware string.
     if let Some(existing) = crate::db::get_setting(app, MACHINE_ID_SETTING) {
-        if existing.len() == 32
-            && existing
-                .chars()
-                .all(|character| character.is_ascii_hexdigit())
-        {
+        if is_machine_id(&existing) {
             write_credential_bounded(INSTALLATION_ID_USERNAME, existing.clone())?;
             let _ = crate::db::set_setting_checked(app, MACHINE_ID_SETTING, "");
             return Ok(existing);
@@ -353,7 +356,7 @@ fn decode_receipt_with_key(encoded: &str, key: &VerifyingKey) -> Result<Receipt,
 }
 
 fn cached_receipt(app: &tauri::AppHandle) -> Option<Receipt> {
-    if let Some(encoded) = read_credential_bounded(RECEIPT_USERNAME) {
+    if let Some(encoded) = read_credential_bounded(RECEIPT_USERNAME).value() {
         return decode_receipt(&encoded).ok();
     }
     // One-way migration for builds that briefly stored the signed lease in
@@ -377,8 +380,8 @@ fn trial_mac(secret: &str, started: i64) -> String {
 /// failed/altered state fails closed instead of manufacturing a fresh trial.
 fn trial_window(app: &tauri::AppHandle) -> Option<(i64, i64)> {
     let now = now_seconds();
-    let secret = read_credential_bounded(TRIAL_SECRET_USERNAME);
-    let state = read_credential_bounded(TRIAL_STATE_USERNAME);
+    let secret = read_credential_bounded(TRIAL_SECRET_USERNAME).value();
+    let state = read_credential_bounded(TRIAL_STATE_USERNAME).value();
     let (secret, started) = match (secret, state) {
         (None, None) => {
             let secret = uuid::Uuid::new_v4().to_string();
@@ -408,8 +411,8 @@ fn trial_window(app: &tauri::AppHandle) -> Option<(i64, i64)> {
 }
 
 fn existing_trial_window(_app: &tauri::AppHandle) -> Option<(i64, i64)> {
-    let secret = read_credential_bounded(TRIAL_SECRET_USERNAME)?;
-    let raw = read_credential_bounded(TRIAL_STATE_USERNAME)?;
+    let secret = read_credential_bounded(TRIAL_SECRET_USERNAME).value()?;
+    let raw = read_credential_bounded(TRIAL_STATE_USERNAME).value()?;
     let mut parts = raw.split('|');
     let version = parts.next()?;
     let started = parts.next()?.parse::<i64>().ok()?;
@@ -450,11 +453,20 @@ fn status_from_receipt(
     let machine_matches = machine_id(app)
         .map(|machine| receipt.machine_id == machine)
         .unwrap_or(false);
+    // The receipt asks the client to re-check within 24 hours. Previously nothing
+    // enforced that, so a licence revoked or ended on the server stayed usable
+    // for the whole 30-day lease as long as the machine stayed offline — bounded,
+    // but a month rather than days. A short grace keeps genuine offline use
+    // (a laptop on a train, a weekend away) working while making the offline
+    // window days instead of a month.
+    let revalidation_current =
+        receipt.next_check_at > now.saturating_sub(OFFLINE_REVALIDATION_GRACE_SECONDS);
     let valid = temporal_bounds_valid
         && receipt.entitlement == "active"
         && receipt.valid_until > now
         && receipt.license_expires_at > now
-        && machine_matches;
+        && machine_matches
+        && revalidation_current;
     let default_message = match receipt.entitlement.as_str() {
         "suspended" => Some("This Bard licence is temporarily suspended.".into()),
         "ended" => Some("This Bard licence has ended. Buy another licence to keep creating.".into()),
@@ -462,8 +474,7 @@ fn status_from_receipt(
     };
     LicenseStatus {
         state: if valid { "active" } else { "restricted" }.into(),
-        can_use: valid,
-        key_configured,
+        can_use: valid,        key_configured,
         trial_started_at: Some(trial_started_at),
         trial_expires_at: Some(trial_expires_at),
         expires_at: Some(receipt.license_expires_at),
@@ -511,7 +522,10 @@ pub fn status(app: &tauri::AppHandle) -> LicenseStatus {
         };
     }
     let Some((started, expires)) = existing_trial_window(app) else {
-        if read_credential_bounded(TRIAL_STATE_USERNAME).is_none() {
+        if matches!(
+            read_credential_bounded(TRIAL_STATE_USERNAME),
+            CredentialRead::Absent
+        ) {
             return LicenseStatus {
                 state: "trial_available".into(),
                 can_use: false,
@@ -614,6 +628,13 @@ async fn post_service(
 ) -> Result<ServiceResponse, LicenseError> {
     let client = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
+        // The body carries the licence key. A 307 or 308 preserves the method
+        // and the body by HTTP semantics, so reqwest's default follow policy
+        // would re-issue the key to whatever host a `Location` header named. The
+        // licence service is a fixed endpoint with no legitimate reason to
+        // redirect, so refusing to follow is the correct behaviour rather than a
+        // limitation.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| LicenseError::Service("The licence service could not be reached.".into()))?;
     let response = client
@@ -786,18 +807,43 @@ pub async fn refresh(app: &tauri::AppHandle) -> LicenseStatus {
     refreshed
 }
 
+/// Keep the signed lease fresh.
+///
+/// This loop is the only thing that enforces a server-side revocation while the
+/// app is running, so its death is a security-relevant event, not a cosmetic
+/// one — and previously it died silently, with nothing recorded anywhere. It
+/// also cannot die quietly from a panic any more: a panicking iteration is
+/// caught and the loop continues, so one bad status read cannot quietly stop
+/// enforcement for the rest of the session.
 pub fn spawn_revalidation(app: tauri::AppHandle) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(REVALIDATION_INTERVAL);
-        let current = status(&app);
-        if !current.key_configured {
-            continue;
-        }
-        let due = cached_receipt(&app)
-            .map(|receipt| receipt.next_check_at <= now_seconds())
-            .unwrap_or(false);
-        if due {
-            let _ = tauri::async_runtime::block_on(refresh(&app));
+    std::thread::spawn(move || {
+        let mut ticks: u64 = 0;
+        loop {
+            std::thread::sleep(REVALIDATION_INTERVAL);
+            ticks += 1;
+            // Every four hours, and only while a licence is actually in play.
+            // An idle install writes nothing.
+            if ticks % REVALIDATION_HEARTBEAT_TICKS == 0 {
+                let configured = read_key_bounded().is_some();
+                if configured {
+                    crate::crash::record_event(&format!("licence:revalidation-alive:{ticks}"));
+                }
+            }
+            let stepped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let current = status(&app);
+                if !current.key_configured {
+                    return;
+                }
+                let due = cached_receipt(&app)
+                    .map(|receipt| receipt.next_check_at <= now_seconds())
+                    .unwrap_or(false);
+                if due {
+                    let _ = tauri::async_runtime::block_on(refresh(&app));
+                }
+            }));
+            if stepped.is_err() {
+                crate::crash::record_event("licence:revalidation-iteration-failed");
+            }
         }
     });
 }

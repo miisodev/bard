@@ -116,6 +116,13 @@ pub struct GestureState {
     item_slot: Option<Instant>,
     control: Option<ControlGesture>,
     foreign_down: bool,
+    /// Set when `foreign_down` last became true.
+    ///
+    /// `None` means the clock is not running, because the press that set the flag
+    /// was stamped with an explicit instant supplied by the caller. A real
+    /// `Instant::now()` here would be a different timeline from every other
+    /// transition in this machine, and the tests drive a synthetic clock.
+    foreign_since: Option<Instant>,
     next_token: u64,
 }
 
@@ -133,6 +140,7 @@ impl GestureState {
             item_slot: None,
             control: None,
             foreign_down: false,
+            foreign_since: None,
             next_token: 0,
         }
     }
@@ -149,11 +157,61 @@ impl GestureState {
     /// Set whether any non-gesture key or mouse button is currently held.
     /// The adapter owns the physical-key set; this method only needs the
     /// aggregate state to make a first gesture dirty.
+    ///
+    /// `now` stamps the belief when it starts. Without it a synthetic clock
+    /// could never be used to drive this state, and the tests would be asserting
+    /// against wall-clock time instead of the timeline the machine runs on.
+    #[cfg(test)]
+    pub fn set_foreign_down_at(&mut self, down: bool, now: Instant) {
+        if down && !self.foreign_down {
+            self.invalidate();
+            self.foreign_since = Some(now);
+        }
+        self.foreign_down = down;
+    }
+
+    /// Set whether any non-gesture key or mouse button is currently held.
+    ///
+    /// The adapter owns the physical-key set; this method only needs the
+    /// aggregate state to make a first gesture dirty.
     pub fn set_foreign_down(&mut self, down: bool) {
         if down && !self.foreign_down {
             self.invalidate();
+            self.foreign_since = Some(Instant::now());
         }
         self.foreign_down = down;
+    }
+
+    /// How long a `foreign_down` belief has stood, if one is standing.
+    ///
+    /// The age is measured against an explicit `now` rather than by calling
+    /// `Instant::elapsed()` internally, because every other transition in this
+    /// state machine is driven from a timestamp the caller supplies — the tests
+    /// advance a synthetic clock, and a real `elapsed()` would ignore that
+    /// entirely.
+    pub fn foreign_held_for(&self, now: Instant) -> Option<Duration> {
+        if !self.foreign_down {
+            return None;
+        }
+        // A belief with no stamp can only come from a path that did not supply a
+        // clock. Treating it as brand new means the recovery is driven by the
+        // caller, which is the only place that knows the timeline.
+        self.foreign_since
+            .map(|since| now.saturating_duration_since(since))
+    }
+
+    /// Drop a `foreign_down` belief that has lasted longer than a hold should.
+    ///
+    /// Returns whether it changed, so the adapter can also drop the physical-key
+    /// entries that no longer correspond to anything.
+    pub fn expire_stale_foreign(&mut self, now: Instant) -> bool {
+        let stale = self
+            .foreign_held_for(now)
+            .is_some_and(|held| held > TAP_HOLD_LIMIT);
+        if stale {
+            self.foreign_down = false;
+        }
+        stale
     }
 
     /// Record a non-gesture key/button press. It invalidates both a held
@@ -312,6 +370,10 @@ impl GestureState {
     /// Poll time-based transitions. The raw-input worker calls this on a short
     /// timer even when no keyboard event arrives.
     pub fn poll(&mut self, now: Instant) -> Vec<GestureAction> {
+        // Recover from a lost release before anything else, so the rest of this
+        // tick sees a coordinator that can still recognise a gesture.
+        self.expire_stale_foreign(now);
+
         if self.pending.is_some_and(|pending| {
             now.checked_duration_since(pending.released_at)
                 .unwrap_or_default()
@@ -676,5 +738,98 @@ mod tests {
             base + Duration::from_millis(80)
         )
         .is_empty());
+    }
+
+    #[test]
+    fn a_foreign_key_within_the_hold_limit_keeps_the_coordinator_dirty() {
+        // The positive half of the recovery below: a genuinely held key must
+        // still disarm the gesture, or the fix would be worse than the bug.
+        let base = Instant::now() + Duration::from_secs(1);
+        let mut state = GestureState::new();
+        state.set_foreign_down_at(true, base);
+        assert!(!state.expire_stale_foreign(base + Duration::from_millis(200)));
+        press(&mut state, GestureKey::LeftShift, base);
+        assert!(release(
+            &mut state,
+            GestureKey::LeftShift,
+            base + Duration::from_millis(80)
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn a_foreign_key_never_released_stops_disarming_every_gesture() {
+        // The defect this covers: a release lost to a re-armed hook or a dropped
+        // event left `foreign_down` true forever, and every later gesture key
+        // press was then "dirty" — so no shortcut worked for the rest of the
+        // session, with nothing in any log. A left Shift double-tap must recover.
+        let mut state = GestureState::new();
+        let base = Instant::now() + Duration::from_secs(1);
+        state.set_foreign_down_at(true, base);
+
+        // Nothing happens while the belief is fresh.
+        assert!(release(
+            &mut state,
+            GestureKey::LeftShift,
+            base + Duration::from_millis(80)
+        )
+        .is_empty());
+        assert!(!state.expire_stale_foreign(base + Duration::from_millis(200)));
+
+        // Once it has been held implausibly long, the belief is dropped.
+        let after = base + TAP_HOLD_LIMIT + Duration::from_millis(1);
+        assert!(state.expire_stale_foreign(after));
+        assert!(!state.foreign_down);
+
+        // And the gesture works again. Both taps, because the first one is only
+        // the pending half of a double-tap.
+        let start = after + Duration::from_millis(10);
+        assert!(
+            shift_tap(&mut state, GestureKey::LeftShift, start, Duration::ZERO).is_empty(),
+            "the first tap arms"
+        );
+        assert_eq!(
+            shift_tap(
+                &mut state,
+                GestureKey::LeftShift,
+                start,
+                Duration::from_millis(250)
+            ),
+            vec![GestureAction::Capture],
+            "the second tap captures"
+        );
+    }
+
+    #[test]
+    fn poll_recovers_from_a_stale_foreign_belief() {
+        // The recovery has to happen on the poll path, because that is the only
+        // thing that runs when no keyboard event arrives.
+        let base = Instant::now() + Duration::from_secs(1);
+        let mut state = GestureState::new();
+        state.set_foreign_down_at(true, base);
+        let recovered = base + TAP_HOLD_LIMIT + Duration::from_millis(1);
+        state.poll(recovered);
+        assert!(!state.foreign_down);
+
+        let start = recovered + Duration::from_millis(10);
+        assert!(shift_tap(&mut state, GestureKey::LeftShift, start, Duration::ZERO).is_empty());
+        assert_eq!(
+            shift_tap(
+                &mut state,
+                GestureKey::LeftShift,
+                start,
+                Duration::from_millis(250)
+            ),
+            vec![GestureAction::Capture]
+        );
+    }
+
+    #[test]
+    fn reset_clears_the_foreign_belief() {
+        let mut state = GestureState::new();
+        state.set_foreign_down(true);
+        state.reset();
+        assert!(!state.foreign_down);
+        assert!(state.foreign_held_for(Instant::now()).is_none());
     }
 }

@@ -32,9 +32,30 @@ pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Read a file Bard owns, with the same guards [`image_data`] applies.
+///
+/// The two functions consume the same DB-stored column, and only one of them
+/// checked. `set_image` reached `std::fs::read` with no containment test and no
+/// size cap, so it would read an arbitrarily large file into memory — and any
+/// future change that let a path reach `items.image_path` would turn it into an
+/// arbitrary-file-read-to-clipboard with no guard at all. One helper, so the two
+/// callers cannot drift apart again.
+fn owned_image_bytes(path: &str) -> Option<Vec<u8>> {
+    let root = crate::db::images_root()?;
+    let candidate = Path::new(path);
+    if !crate::hf::path_is_within(&root, candidate) {
+        return None;
+    }
+    let metadata = std::fs::metadata(candidate).ok()?;
+    if !metadata.is_file() || metadata.len() > 25 * 1024 * 1024 {
+        return None;
+    }
+    std::fs::read(candidate).ok()
+}
+
 pub fn set_image(app: &AppHandle, path: &str) -> Result<(), String> {
     crate::monitor::note_own_write(app);
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let bytes = owned_image_bytes(path).ok_or("That image is no longer available.")?;
     let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
@@ -59,16 +80,7 @@ pub fn set_image(app: &AppHandle, path: &str) -> Result<(), String> {
 
 pub fn image_data(app: &AppHandle, path: &str) -> Option<String> {
     let _ = app;
-    let root = crate::db::images_root()?;
-    let candidate = Path::new(path);
-    if !crate::hf::path_is_within(&root, candidate) {
-        return None;
-    }
-    let metadata = std::fs::metadata(candidate).ok()?;
-    if !metadata.is_file() || metadata.len() > 25 * 1024 * 1024 {
-        return None;
-    }
-    let bytes = std::fs::read(candidate).ok()?;
+    let bytes = owned_image_bytes(path)?;
     let format = image::guess_format(&bytes).ok()?;
     let decoded = image::load_from_memory_with_format(&bytes, format).ok()?;
     let (width, height) = decoded.dimensions();

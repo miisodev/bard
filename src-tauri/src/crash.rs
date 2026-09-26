@@ -38,6 +38,8 @@ const MAX_LOG_BYTES: usize = 512 * 1024;
 const MAX_LOG_FILES: usize = 5;
 const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
 const MAX_LIFECYCLE_BYTES: u64 = 256 * 1024;
+/// How many rotated lifecycle logs to keep alongside the current one.
+const MAX_LIFECYCLE_FILES: u32 = 4;
 const REPORT_TRUNCATION_MARKER: &str = "\n[truncated]\n";
 const READ_TRUNCATION_MARKER: &str = "\n[truncated while reading]\n";
 const PAYLOAD_TRUNCATION_MARKER: &str = "...[truncated]";
@@ -171,12 +173,65 @@ pub fn record_event(event: &str) {
         .unwrap_or(0)
         >= MAX_LIFECYCLE_BYTES
     {
-        let _ = fs::write(&path, "[lifecycle log truncated]\n");
-        return;
+        // Rotated, not destroyed. The previous behaviour overwrote the file with
+        // a single `[lifecycle log truncated]` line, which is indistinguishable
+        // from a dead app — so on any long-running install the one piece of
+        // evidence that could explain an input or monitor failure was erased by
+        // the act of logging. Rotation keeps the history, bounded the same way
+        // crash logs already are.
+        rotate_lifecycle_log(&path);
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = file.write_all(line.as_bytes());
     }
+}
+
+/// Move `lifecycle.log` aside and start a fresh one, keeping a bounded set.
+///
+/// `prune_logs` already does this for crash reports, so the naming and the
+/// retention bound match: `lifecycle.log` is always the current file and
+/// `lifecycle-<n>.log` are older ones, newest first.
+fn rotate_lifecycle_log(path: &Path) {
+    let Some(parent) = path.parent() else {
+        let _ = fs::write(path, "[lifecycle log truncated]\n");
+        return;
+    };
+
+    // Shift the numbered files up by one, oldest falling off the end.
+    for index in (1..MAX_LIFECYCLE_FILES).rev() {
+        let from = numbered_lifecycle_path(parent, index - 1);
+        let to = numbered_lifecycle_path(parent, index);
+        if from.exists() {
+            let _ = fs::rename(&from, &to);
+        }
+    }
+
+    let first = numbered_lifecycle_path(parent, 0);
+    if path.exists() {
+        if fs::rename(path, &first).is_err() {
+            // Could not keep the old contents, so do not pretend the file is
+            // bounded: drop it and note that, which is the honest state.
+            let _ = fs::write(path, "[lifecycle log truncated]\n");
+            return;
+        }
+    }
+
+    // Bound the set the same way crash logs are bounded.
+    let mut kept = 0;
+    for index in 0..MAX_LIFECYCLE_FILES {
+        let candidate = numbered_lifecycle_path(parent, index);
+        if !candidate.exists() {
+            continue;
+        }
+        kept += 1;
+        if kept > MAX_LIFECYCLE_FILES {
+            let _ = fs::remove_file(&candidate);
+        }
+    }
+}
+
+fn numbered_lifecycle_path(directory: &Path, index: u32) -> PathBuf {
+    directory.join(format!("lifecycle-{index}.log"))
 }
 
 fn create_crash_directory(directory: &Path) -> io::Result<()> {

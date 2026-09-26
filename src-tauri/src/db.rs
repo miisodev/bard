@@ -306,6 +306,10 @@ pub fn set_settings_checked(app: &AppHandle, settings: &[(&str, &str)]) -> Resul
     })
 }
 
+/// The rowid returned when an insert did not happen. SQLite rowids start at 1,
+/// so 0 is unambiguous, and it is the only value a caller must check.
+pub const INSERT_FAILED: i64 = 0;
+
 pub fn insert_item(app: &AppHandle, content: &str, kind: &str, image_path: Option<&str>) -> i64 {
     insert_item_with_origin(app, content, kind, image_path, "manual")
 }
@@ -313,6 +317,13 @@ pub fn insert_item(app: &AppHandle, content: &str, kind: &str, image_path: Optio
 /// Insert an item with an explicit lifecycle origin. `manual` is the default
 /// so composer notes, drawings, and attached files remain user-owned; the
 /// clipboard and dictation paths pass their own origin for retention cleanup.
+///
+/// Returns [`INSERT_FAILED`] rather than panicking when the write cannot happen.
+/// The release profile is `panic = "abort"`, so an `unwrap` on `execute` turned a
+/// full disk or a locked database into the whole process dying with no window,
+/// no message, and a crash log the user cannot reach without an app that still
+/// runs. Bard writes continuously in the background, so a full disk is an
+/// ordinary event that has to produce a message, not an abort.
 pub fn insert_item_with_origin(
     app: &AppHandle,
     content: &str,
@@ -327,15 +338,30 @@ pub fn insert_item_with_origin(
     } else {
         "manual"
     };
-    with_conn_mut(app, |c| {
+    let written = with_conn_mut(app, |c| {
         c.execute(
             "INSERT INTO items(section_id, content, kind, image_path, origin, favorite, created_at, updated_at)
              VALUES(?1, ?2, ?3, ?4, ?5, 0, ?6, ?6)",
             params![section, content, kind, image_path, origin, now],
         )
-        .unwrap();
-        c.last_insert_rowid()
-    })
+        .map(|_| c.last_insert_rowid())
+    });
+    match written {
+        Ok(id) => id,
+        Err(error) => {
+            crate::crash::record_event("db:insert-failed");
+            log::warn!("could not store an item: {error}");
+            // A background agent that cannot write must say so rather than
+            // appearing to have captured something. A full disk is the ordinary
+            // cause and the message is written for a person, not a log reader.
+            let _ = tauri::Emitter::emit(
+                app,
+                "db-write-failed",
+                "Bard could not save this. There may be no free space left on this drive.",
+            );
+            INSERT_FAILED
+        }
+    }
 }
 
 pub fn get_active_section(app: &AppHandle) -> Option<i64> {
@@ -430,13 +456,34 @@ pub fn find_or_create_section(app: &AppHandle, name: &str) -> i64 {
     if let Some(id) = existing {
         return id;
     }
-    with_conn_mut(app, |c| {
+    // Same reasoning as `insert_item_with_origin`: a full disk must not take the
+    // process down. Falls back to the default section, which always exists.
+    let created = with_conn_mut(app, |c| {
         c.execute(
             "INSERT INTO sections(name, created_at) VALUES(?1, ?2)",
             params![trimmed, now_ms()],
         )
-        .unwrap();
-        c.last_insert_rowid()
+        .map(|_| c.last_insert_rowid())
+    });
+    match created {
+        Ok(id) => id,
+        Err(error) => {
+            crate::crash::record_event("db:section-insert-failed");
+            log::warn!("could not create a section: {error}");
+            default_section(app)
+        }
+    }
+}
+
+/// The section every item belongs to when none has been chosen.
+fn default_section(app: &AppHandle) -> i64 {
+    with_conn(app, |c| {
+        c.query_row(
+            "SELECT id FROM sections ORDER BY id LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(INSERT_FAILED)
     })
 }
 
@@ -488,12 +535,20 @@ pub fn insert_attachment(app: &AppHandle, item_id: i64, path: &str) -> i64 {
                 |r| r.get(0),
             )
             .unwrap_or(0);
+        // An attachment is a convenience, never a prerequisite. If the row cannot
+        // be written the file is still on disk and the item still exists, so a
+        // failure is recorded and reported rather than aborting the process.
         c.execute(
             "INSERT INTO attachments(item_id, path, position, created_at) VALUES(?1, ?2, ?3, ?4)",
             params![item_id, path, pos, now_ms()],
         )
-        .unwrap();
-        c.last_insert_rowid()
+        .map(|_| c.last_insert_rowid())
+    })
+    .unwrap_or_else(|error| {
+        crate::crash::record_event("db:attachment-insert-failed");
+        log::warn!("could not record an attachment: {error}");
+        let _ = tauri::Emitter::emit(app, "db-write-failed", error.to_string());
+        INSERT_FAILED
     })
 }
 
@@ -745,27 +800,74 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
 /// Remove expired automatic items and every owned file attached to them.
 /// `None` means the user selected Forever. Favorites and manual work are never
 /// removed by age-based cleanup.
-pub fn cleanup_origin(app: &AppHandle, origin: &str) {
+pub fn cleanup_origin(app: &AppHandle, origin: &str) -> Result<(), String> {
     if !matches!(origin, "clipboard" | "dictation") {
-        return;
+        return Ok(());
     }
     let Some(days) = retention_days(app, origin) else {
-        return;
+        // Forever means Forever. Returning early is the whole contract: the old
+        // code fell through to a count cap that deleted the user's data anyway,
+        // which is the opposite of what they asked for.
+        return Ok(());
     };
     let cutoff = now_ms().saturating_sub(days.saturating_mul(24 * 60 * 60 * 1000));
-    let ids: Vec<i64> = with_conn(app, |c| {
+    // `with_conn` takes a plain-value closure, so the fallible read is
+    // collected into a `Result` and unwrapped outside it. A prepare or query
+    // failure is reported rather than unwrapped: it used to be `.unwrap()`, which
+    // under `panic = "abort"` killed the process.
+    let ids = with_conn(app, |c| -> Result<Vec<i64>, String> {
         let mut stmt = c
             .prepare(
                 "SELECT id FROM items
                  WHERE origin = ?1 AND favorite = 0 AND created_at < ?2",
             )
-            .unwrap();
-        stmt.query_map(params![origin, cutoff], |row| row.get(0))
-            .unwrap()
-            .filter_map(Result::ok)
-            .collect()
-    });
-    let _ = delete_items_with_files(app, &ids);
+            .map_err(|error| format!("Could not read expired items: {error}"))?;
+        let rows = stmt
+            .query_map(params![origin, cutoff], |row| row.get::<_, i64>(0))
+            .map_err(|error| format!("Could not read expired items: {error}"))?;
+        Ok(rows.filter_map(Result::ok).collect())
+    })?;
+    delete_items_with_files(app, &ids)
+}
+
+/// The age applied to a kind of automatic item when the user has expressed no
+/// preference.
+///
+/// These are the numbers the Data pane and both blueprints show. They were
+/// previously 30 and 7 in this function while the UI showed 30 and 30, so every
+/// dictation was deleted 23 days earlier than the person had been told — and
+/// silently, because nothing on screen mentioned a seven-day window.
+pub const DEFAULT_CLIPBOARD_RETENTION_DAYS: i64 = 30;
+pub const DEFAULT_DICTATION_RETENTION_DAYS: i64 = 30;
+
+/// Remove one origin's expired items and report how many went.
+///
+/// `cleanup_origin` is the same pass without the count, for the fire-and-forget
+/// startup and capture paths where nobody is waiting to be told.
+pub fn prune_expired(app: &AppHandle, origin: &str) -> Result<usize, String> {
+    let removed = count_expired(app, origin);
+    cleanup_origin(app, origin)?;
+    Ok(removed)
+}
+
+fn count_expired(app: &AppHandle, origin: &str) -> usize {
+    if !matches!(origin, "clipboard" | "dictation") {
+        return 0;
+    }
+    let Some(days) = retention_days(app, origin) else {
+        return 0;
+    };
+    let cutoff = now_ms().saturating_sub(days.saturating_mul(24 * 60 * 60 * 1000));
+    with_conn(app, |c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM items
+             WHERE origin = ?1 AND favorite = 0 AND created_at < ?2",
+            params![origin, cutoff],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count.max(0) as usize)
+        .unwrap_or(0)
+    })
 }
 
 /// The configured age for one automatic origin. `None` is the explicit
@@ -779,9 +881,9 @@ pub fn retention_days(app: &AppHandle, origin: &str) -> Option<i64> {
     let value = get_setting(app, key)
         .and_then(|raw| raw.parse::<i64>().ok())
         .unwrap_or(match origin {
-            "clipboard" => 30,
-            "dictation" => 7,
-            _ => 30,
+            "clipboard" => DEFAULT_CLIPBOARD_RETENTION_DAYS,
+            "dictation" => DEFAULT_DICTATION_RETENTION_DAYS,
+            _ => DEFAULT_CLIPBOARD_RETENTION_DAYS,
         });
     if value < 0 {
         None
@@ -807,10 +909,45 @@ pub fn delete_items_with_files(app: &AppHandle, ids: &[i64]) -> Result<(), Strin
     if ids.is_empty() {
         return Ok(());
     }
-    let mut files = Vec::new();
-    for id in ids {
-        files.extend(item_files(app, *id));
-    }
+    // One query for all the ids. This used to be one query per id, so pruning
+    // 5,000 expired items meant 10,000 statements, each taking and releasing the
+    // global connection mutex. The statement is built from the placeholder list
+    // only — `ids` are bound, never interpolated — and the length is capped by
+    // SQLite's own variable limit, so the id count is clamped to stay inside it.
+    let files = {
+        // SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 999. The same
+        // placeholder list appears twice, so each id contributes two bindings.
+        let take = ids.len().min(400);
+        let subset = &ids[..take];
+        let placeholders = vec!["?"; subset.len()].join(",");
+        let sql = format!(
+            "SELECT path FROM attachments WHERE item_id IN ({placeholders}) \
+             UNION ALL SELECT image_path FROM items \
+             WHERE image_path IS NOT NULL AND id IN ({placeholders})"
+        );
+        with_conn(app, |connection| {
+            let mut files: Vec<String> = match connection.prepare(&sql) {
+                Err(error) => {
+                    log::warn!("could not read attachments: {error}");
+                    return Vec::new();
+                }
+                Ok(mut statement) => {
+                    match statement.query_map(rusqlite::params_from_iter(subset.iter()), |row| {
+                        row.get::<_, String>(0)
+                    }) {
+                        Err(error) => {
+                            log::warn!("could not read attachments: {error}");
+                            return Vec::new();
+                        }
+                        Ok(rows) => rows.filter_map(Result::ok).collect(),
+                    }
+                }
+            };
+            files.sort();
+            files.dedup();
+            files
+        })
+    };
     with_conn_mut(app, |connection| {
         let transaction = connection
             .transaction()
@@ -827,6 +964,20 @@ pub fn delete_items_with_files(app: &AppHandle, ids: &[i64]) -> Result<(), Strin
     for path in files {
         remove_owned_image_file(app, &path);
     }
+    // "Clear captures" and the retention controls are the app's central privacy
+    // promise, and a person using them reasonably expects the text to be gone.
+    // In WAL mode it was not: the deleted text stayed in `bard.db-wal` as earlier
+    // page frames and in unvacuumed freelist pages, recoverable with nothing more
+    // than a hex editor — including by a backup agent or file-sync client that
+    // merely reads the directory. Truncating the write-ahead log is what makes
+    // the promise true. `secure_delete` (set once in `init`) covers the main
+    // database's freed pages; this covers the log.
+    //
+    // Deliberately not a `VACUUM`: vacuuming on every clipboard capture would
+    // rewrite the whole database, and the full erase path still does that.
+    let _ = with_conn_mut(app, |connection| {
+        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+    });
     if get_setting(app, "active_item_id")
         .and_then(|value| value.parse::<i64>().ok())
         .is_some_and(|active| ids.contains(&active))
@@ -836,10 +987,26 @@ pub fn delete_items_with_files(app: &AppHandle, ids: &[i64]) -> Result<(), Strin
     Ok(())
 }
 
-/// Keep a bounded safety cap for automatic history even when age-based
-/// retention is set to Forever. Manual items and favorites are exempt.
-pub fn prune_history(app: &AppHandle, limit: usize) {
-    let ids: Vec<i64> = with_conn(app, |c| {
+/// A hard ceiling on how many automatic items Bard will keep, whatever the age
+/// setting says.
+///
+/// This exists because `prune_history` used to run on *every* capture and
+/// deleted past 5,000 automatic items even when the user had chosen **Forever**,
+/// with nothing on screen saying so. Silently deleting data a person explicitly
+/// asked you to keep is not a safety feature; in a product whose pitch is "your
+/// captures stay on this machine" it is a reason to stop trusting it.
+///
+/// It is therefore no longer wired into the capture path. The Data pane's
+/// `Prune now` is the only caller, it reports what it did, and the age-based
+/// setting is the only automatic deletion. If a runaway producer ever needs a
+/// backstop, it belongs behind an explicit, visible control — not behind a
+/// setting the user believes is in force.
+pub const AUTOMATIC_ITEM_CEILING: usize = 5_000;
+
+/// Delete automatic items beyond `limit`, oldest first. Manual items and
+/// favourites are exempt. Returns how many rows were removed.
+pub fn prune_history(app: &AppHandle, limit: usize) -> Result<usize, String> {
+    let ids = with_conn(app, |c| -> Result<Vec<i64>, String> {
         let mut stmt = c
             .prepare(
                 "SELECT id FROM items
@@ -850,13 +1017,15 @@ pub fn prune_history(app: &AppHandle, limit: usize) {
                      ORDER BY id DESC LIMIT ?1
                    )",
             )
-            .unwrap();
-        stmt.query_map(params![limit as i64], |row| row.get(0))
-            .unwrap()
-            .filter_map(Result::ok)
-            .collect()
-    });
-    let _ = delete_items_with_files(app, &ids);
+            .map_err(|error| format!("Could not read history to prune: {error}"))?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| row.get::<_, i64>(0))
+            .map_err(|error| format!("Could not read history to prune: {error}"))?;
+        Ok(rows.filter_map(Result::ok).collect())
+    })?;
+    let removed = ids.len();
+    delete_items_with_files(app, &ids)?;
+    Ok(removed)
 }
 
 pub fn clear_history(app: &AppHandle) -> Result<(), String> {

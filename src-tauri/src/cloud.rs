@@ -15,15 +15,13 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::mpsc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use keyring::Entry;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::{Response, StatusCode};
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroize;
 
 /// The provider ID used by the settings/status layer.
 pub const PROVIDER_ID: &str = "openrouter";
@@ -41,7 +39,6 @@ pub const OPENROUTER_USER_MODELS_ENDPOINT: &str = "https://openrouter.ai/api/v1/
 
 /// The key is stored under this service/account in the OS credential store.
 /// It is deliberately not a SQLite setting key.
-pub const CREDENTIAL_SERVICE: &str = "com.miisodev.bard";
 pub const CREDENTIAL_USERNAME: &str = "openrouter-api-key";
 
 /// Settings keys are exposed for the caller that already owns `db::get_setting`
@@ -185,8 +182,14 @@ pub enum Error {
     InvalidConfiguration {
         reason: &'static str,
     },
+    /// The operating-system credential store could not be read or written.
+    ///
+    /// Distinct from a transport failure on purpose: the settings surface uses
+    /// this to say "Bard could not read your stored key" instead of "the
+    /// connection failed", because the two need different things from the
+    /// person. Collapsing it into a transport error would report a local
+    /// problem as a network one.
     CredentialStore {
-        operation: &'static str,
         message: String,
     },
     Provider(ProviderError),
@@ -284,8 +287,8 @@ impl fmt::Display for Error {
             Self::InvalidConfiguration { reason } => {
                 write!(f, "invalid OpenRouter configuration: {reason}")
             }
-            Self::CredentialStore { operation, message } => {
-                write!(f, "credential store {operation} failed: {message}")
+            Self::CredentialStore { message } => {
+                write!(f, "credential store: {message}")
             }
             Self::Provider(error) => error.fmt(f),
         }
@@ -318,29 +321,23 @@ impl Drop for Secret {
     }
 }
 
-/// Read and write the one OpenRouter credential. Same-entry operations are
-/// serialized because Windows Credential Manager is process-global and the
-/// settings surface may update the key while dictation is finishing.
-fn credential_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn credential_entry() -> Result<Entry, Error> {
-    Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_USERNAME)
-        .map_err(|error| credential_error("open", &error, None))
-}
-
+/// Read and write the one OpenRouter credential.
+///
+/// Windows Credential Manager is process-global, so these go through the shared
+/// worker in [`crate::credential`] rather than taking a lock of their own. The
+/// previous per-module mutex did not actually serialise anything against
+/// `license`'s, because they were two different locks guarding one store.
 fn get_api_key() -> Result<Option<Secret>, Error> {
-    let _guard = credential_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let entry = credential_entry()?;
-    match entry.get_password() {
-        Ok(value) if value.is_empty() => Ok(None),
-        Ok(value) => Ok(Some(Secret(value))),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(credential_error("read", &error, None)),
+    match crate::credential::read(CREDENTIAL_USERNAME, CREDENTIAL_READ_TIMEOUT) {
+        crate::credential::Read::Value(value) => Ok(Some(Secret(value))),
+        crate::credential::Read::Absent => Ok(None),
+        // Reported as a credential-store problem rather than a network one. The
+        // two are indistinguishable to a person otherwise, and they need
+        // different things: one is Bard's problem to retry, the other is theirs
+        // to look at their network.
+        crate::credential::Read::Unavailable => Err(Error::CredentialStore {
+            message: "Windows could not return the stored OpenRouter key in time.".to_owned(),
+        }),
     }
 }
 
@@ -357,20 +354,19 @@ fn get_api_key_bounded(timeout: Duration) -> PostprocessResult<Option<Secret>> {
 }
 
 pub(crate) fn set_api_key_bounded(api_key: String) -> Result<(), Error> {
-    let (sender, receiver) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let result = set_api_key(&api_key);
-        let mut api_key = api_key;
-        api_key.zeroize();
-        let _ = sender.send(result);
-    });
-    receiver
-        .recv_timeout(CREDENTIAL_READ_TIMEOUT)
-        .map_err(|_| {
-            Error::Provider(ProviderError::Transport {
-                kind: TransportKind::Timeout,
-            })
-        })?
+    if api_key.is_empty()
+        || api_key
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        return Err(Error::InvalidApiKey);
+    }
+    match crate::credential::write(CREDENTIAL_USERNAME, api_key, CREDENTIAL_READ_TIMEOUT) {
+        crate::credential::Done::Ok => Ok(()),
+        crate::credential::Done::Unavailable => Err(Error::CredentialStore {
+            message: "Windows could not store the OpenRouter key in time.".to_owned(),
+        }),
+    }
 }
 
 pub(crate) fn delete_api_key_bounded() -> Result<(), Error> {
@@ -387,40 +383,13 @@ pub(crate) fn delete_api_key_bounded() -> Result<(), Error> {
         })?
 }
 
-/// Store or replace the API key in Windows Credential Manager (or the native
-/// store selected by keyring on another supported platform).
-///
-/// The key is never returned, serialized, or written to a setting. The caller
-/// should persist its enabled flag separately and keep it disabled until the
-/// status surface reports a usable key/model pair.
-pub fn set_api_key(api_key: &str) -> Result<(), Error> {
-    let key = api_key.trim();
-    if key.is_empty()
-        || key
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace())
-    {
-        return Err(Error::InvalidApiKey);
-    }
-
-    let _guard = credential_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let entry = credential_entry()?;
-    entry
-        .set_password(key)
-        .map_err(|error| credential_error("write", &error, Some(key)))
-}
-
 /// Remove the stored key. Deleting an already-absent key is idempotent.
 pub fn delete_api_key() -> Result<(), Error> {
-    let _guard = credential_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let entry = credential_entry()?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(credential_error("delete", &error, None)),
+    match crate::credential::delete(CREDENTIAL_USERNAME, CREDENTIAL_READ_TIMEOUT) {
+        crate::credential::Done::Ok => Ok(()),
+        crate::credential::Done::Unavailable => Err(Error::CredentialStore {
+            message: "Windows could not remove the stored OpenRouter key in time.".to_owned(),
+        }),
     }
 }
 
@@ -536,6 +505,12 @@ async fn test_connection_inner(
     let api_key = get_api_key_bounded(CREDENTIAL_READ_TIMEOUT)?.ok_or(Error::MissingApiKey)?;
     let client = reqwest::Client::builder()
         .timeout(request_timeout)
+        // This client carries the user's API key as an Authorization header.
+        // Whether reqwest strips a sensitive header on a cross-host redirect is
+        // a crate-internal behaviour this project should not depend on, and the
+        // endpoints are fixed with no legitimate reason to redirect. Refusing to
+        // follow removes the question.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| {
             Error::Provider(ProviderError::Transport {
@@ -698,22 +673,6 @@ fn valid_model_id(model_id: &str) -> bool {
             .any(|character| character.is_control() || character.is_whitespace())
 }
 
-fn credential_error(
-    operation: &'static str,
-    error: &keyring::Error,
-    secret: Option<&str>,
-) -> Error {
-    // A platform error normally cannot contain the credential, but do not
-    // make that an implicit safety property. When the key is available (the
-    // write path), redact it; otherwise keep the underlying text out of the
-    // error entirely.
-    let message = match secret {
-        Some(secret) => bounded_text(&redact_secrets(&error.to_string(), secret), 256),
-        None => "the operating-system credential store returned an error".to_owned(),
-    };
-    Error::CredentialStore { operation, message }
-}
-
 /// Remove a known secret from diagnostic text. The escaped representation is
 /// removed too, because JSON error bodies can contain a key with escaped
 /// characters. Bearer authorization values are also removed as a second line of
@@ -848,6 +807,8 @@ async fn send_completion(
 ) -> PostprocessResult<String> {
     let client = reqwest::Client::builder()
         .timeout(timeout)
+        // See the note on the other client: this one also carries the API key.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| {
             Error::Provider(ProviderError::Transport {
@@ -1080,13 +1041,29 @@ mod tests {
         if std::env::var_os("BARD_TEST_KEYRING").is_none() {
             return;
         }
+        // Goes through the shared worker rather than opening an `Entry` directly,
+        // so this exercises the same path production uses — including the
+        // tri-state read, which is what `machine_id` depends on.
         let account = format!("bard-test-{}", std::process::id());
-        let entry = Entry::new(CREDENTIAL_SERVICE, &account).expect("credential entry");
-        let secret = "roundtrip-only";
-        entry.set_password(secret).expect("write test credential");
-        let read = entry.get_password().expect("read test credential");
-        assert_eq!(read, secret);
-        entry.delete_credential().expect("delete test credential");
+        let timeout = std::time::Duration::from_secs(5);
+        assert!(matches!(
+            crate::credential::write(&account, "roundtrip-only".to_owned(), timeout),
+            crate::credential::Done::Ok
+        ));
+        let read = crate::credential::read(&account, timeout);
+        let crate::credential::Read::Value(value) = read else {
+            panic!("expected the written value back");
+        };
+        assert_eq!(value, "roundtrip-only");
+        assert!(matches!(
+            crate::credential::delete(&account, timeout),
+            crate::credential::Done::Ok
+        ));
+        // Deleting again is the outcome the caller asked for, not a failure.
+        assert!(matches!(
+            crate::credential::delete(&account, timeout),
+            crate::credential::Done::Ok
+        ));
     }
 
     #[test]
@@ -1205,16 +1182,35 @@ mod tests {
     }
 
     #[test]
-    fn error_debug_and_display_do_not_contain_a_known_secret() {
-        let secret = "sk-do-not-leak";
-        let error = credential_error(
-            "write",
-            &keyring::Error::Invalid("secret".into(), secret.into()),
-            Some(secret),
-        );
-        let debug = format!("{error:?}");
-        let display = error.to_string();
-        assert!(!debug.contains(secret));
-        assert!(!display.contains(secret));
+    fn redaction_removes_the_raw_and_the_json_escaped_secret() {
+        // The credential store can no longer hand back a message that might carry
+        // the key, but this helper is still the only thing between a provider error
+        // body and a user's API key, so it keeps a test.
+        //
+        // The escaped branch only does work when JSON escaping actually differs
+        // from the raw form, which is why the secret here contains a character
+        // that gets escaped. A secret of plain alphanumerics would escape to
+        // itself and the assertion below would be vacuous.
+        let secret = "sk-do\"not-leak";
+        let escaped = serde_json::to_string(secret)
+            .unwrap()
+            .trim_matches('"')
+            .to_owned();
+        assert_ne!(escaped, secret, "the escaped form must differ to be a test");
+
+        let message = format!("provider said {secret} then {escaped} then Bearer {secret}");
+        let redacted = redact_secrets(&message, secret);
+        assert!(!redacted.contains(secret), "raw secret survived");
+        assert!(!redacted.contains(&escaped), "escaped secret survived");
+    }
+
+    #[test]
+    fn redaction_removes_a_bearer_value_on_a_utf8_boundary() {
+        // A key that ends mid-token must not leave a partial value behind that
+        // still identifies it.
+        let message = "authorization: Bearer sk-abc123XYZ and Bearer sk-other";
+        let redacted = redact_bearer_values(message);
+        assert!(!redacted.contains("sk-abc123XYZ"));
+        assert!(!redacted.contains("sk-other"));
     }
 }
