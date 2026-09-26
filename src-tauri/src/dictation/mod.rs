@@ -473,6 +473,10 @@ pub fn stop(app: &AppHandle) {
                     *state_lock() = DictState::Idle;
                     return;
                 }
+                // Bard just put this on the clipboard. The watcher must not
+                // capture it back as a second copy, or every dictated line
+                // appears twice in the timeline.
+                crate::monitor::note_own_text(&text);
                 match delivery(panel_focused) {
                     Delivery::Timeline => {
                         let item_id =

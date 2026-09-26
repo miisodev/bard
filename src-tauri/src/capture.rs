@@ -4,6 +4,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, RecvTimeoutError},
+        Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -15,7 +16,6 @@ use tauri::{AppHandle, Emitter};
 use crate::gesture::{GestureAction, GestureKey, GestureState};
 
 pub const SENTINEL: &str = "\u{200B}bard::capturing\u{200B}";
-static CAPTURING: AtomicBool = AtomicBool::new(false);
 static SYNTHETIC_INPUT: AtomicBool = AtomicBool::new(false);
 /// How many synthetic-input guards are live. See [`SyntheticInputGuard`].
 static SYNTHETIC_DEPTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -460,16 +460,27 @@ pub fn capture_selection(app: &AppHandle) {
         let _ = app.emit("license-restricted", error);
         return;
     }
-    if CAPTURING.swap(true, Ordering::SeqCst) {
-        return;
+    // The slot is a deadline, not just a flag. `do_capture` sleeps in 50 ms steps
+    // and returns on its own, so a normal capture is done in under a second — but
+    // a thread that never returns (a wedged clipboard, a filter driver holding the
+    // clipboard open) would hold the slot true for the rest of the session, and
+    // every later gesture would keep firing and doing nothing. Observed once in
+    // testing: five taps, five `gesture:capture` lines, no outcome, no insert.
+    if let Some(since) = CAPTURE_SLOT.held_for(Instant::now()) {
+        if since < CAPTURE_SLOT_LIMIT {
+            return;
+        }
+        crate::crash::record_event("capture:previous-capture-stuck");
+        let _ = app.emit(
+            "capture-failed",
+            "The last capture did not finish. Try again in a moment.",
+        );
     }
+    CAPTURE_SLOT.claim(Instant::now());
     let app = app.clone();
     thread::spawn(move || {
-        // The flag is cleared by a guard rather than by a statement after the
-        // call, so a panic inside `do_capture` cannot leave `CAPTURING` stuck
-        // true — which would wedge selection capture for the rest of the
-        // session, silently, since the gesture would keep firing and doing
-        // nothing.
+        // The slot is released by a guard rather than by a statement after the
+        // call, so a panic inside `do_capture` cannot leave it held.
         let _guard = CapturingGuard;
         do_capture(&app);
     });
@@ -480,9 +491,34 @@ struct CapturingGuard;
 
 impl Drop for CapturingGuard {
     fn drop(&mut self) {
-        CAPTURING.store(false, Ordering::SeqCst);
+        CAPTURE_SLOT.release();
     }
 }
+
+/// The single in-flight selection-capture slot.
+struct CaptureSlot(Mutex<Option<Instant>>);
+
+impl CaptureSlot {
+    fn held_for(&self, now: Instant) -> Option<Duration> {
+        let guard = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.map(|since| now.saturating_duration_since(since))
+    }
+
+    fn claim(&self, now: Instant) {
+        let mut guard = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(now);
+    }
+
+    fn release(&self) {
+        let mut guard = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = None;
+    }
+}
+
+/// How long a selection capture may hold the slot before it is assumed stuck.
+const CAPTURE_SLOT_LIMIT: Duration = Duration::from_secs(5);
+
+static CAPTURE_SLOT: CaptureSlot = CaptureSlot(Mutex::new(None));
 
 fn do_capture(app: &AppHandle) {
     // Every exit restores the person's real clipboard. The old code returned

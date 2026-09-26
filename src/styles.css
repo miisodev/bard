@@ -335,14 +335,12 @@ body {
               color var(--t-fast) var(--ease-out);
 }
 
+/* Lucide draws itself: the glyph carries its own 1.8 stroke and geometry, so
+   overriding fill and stroke here is what used to make it look hand-made next to
+   the header's icons. Only the size is ours. */
 .item-copy svg {
   width: var(--icon-glyph);
   height: var(--icon-glyph);
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .item-card:hover .item-copy,

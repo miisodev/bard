@@ -6,6 +6,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { Copy } from "lucide-react";
 import { renderInline } from "../markdown";
 import { api } from "../store";
 import type { Attachment, Item } from "../types";
@@ -288,10 +289,10 @@ export default function ItemCard({
           onCopyImage();
         }}
       >
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="5.5" y="5.5" width="8" height="8" rx="2" />
-          <path d="M10.5 3.5v-.25A1.75 1.75 0 0 0 8.75 1.5h-5.5A1.75 1.75 0 0 0 1.5 3.25v5.5A1.75 1.75 0 0 0 3.25 10.5h.25" />
-        </svg>
+        {/* Lucide, like every other icon in the product. This was hand-drawn at a
+            1.4 stroke beside 1.8 Lucide in the same 380px panel, and at 15px the
+            two rounded rectangles read muddy next to the header's crisp glyphs. */}
+        <Copy size={17} aria-hidden="true" />
       </button>
     </div>
   );

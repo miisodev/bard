@@ -63,6 +63,21 @@ fn content_hash(text: &str) -> u64 {
     hasher.finish()
 }
 
+/// Record content Bard put on the clipboard itself, so the watcher does not
+/// capture it back as if the person had copied it.
+///
+/// Dictation writes the transcript to the clipboard and then files it in the
+/// timeline, going through `insert_item_with_origin` rather than through
+/// `capture_text`. Without this the watcher had never seen that text, so every
+/// dictated line came back a moment later as a second `clipboard` row.
+pub fn note_own_text(text: &str) {
+    let digest = content_hash(text);
+    let mut guard = LAST_CONTENT_HASH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(digest);
+}
+
 pub fn capture_text(app: &AppHandle, text: &str) {
     if crate::license::require(app).is_err() {
         return;
@@ -100,6 +115,10 @@ pub fn capture_text(app: &AppHandle, text: &str) {
         // exists that is not in the timeline.
         return;
     }
+    // The happy path used to leave no breadcrumb at all, so the log could not tell
+    // a successful capture from a gesture that did nothing — the same gap
+    // `capture:no-selection` was written to close, still open here.
+    crate::crash::record_event("capture:stored");
     db::set_active_item(app, Some(id));
     // Age-based retention is the only automatic deletion. The old call to
     // `prune_history` here deleted the oldest automatic items past 5,000 on
@@ -149,6 +168,20 @@ pub fn start(app: AppHandle) {
                 if let Ok(text) = cb.get_text() {
                     let t = text.trim().to_string();
                     if t.is_empty() || t.contains(crate::capture::SENTINEL) {
+                        return;
+                    }
+                    // Re-read the sequence number *after* taking the content. The
+                    // first read and the content read are not atomic, so a write
+                    // landing between them — which is exactly what a dictation
+                    // finishing does — made the own-write guard miss, and the
+                    // clipboard watcher then captured Bard's own transcript as if
+                    // the person had copied it. Every dictated line appeared twice
+                    // in the timeline.
+                    let after = clip_seq();
+                    if after != seq {
+                        // Something wrote while we were reading. The value in hand
+                        // is already the newer one, so re-evaluate it on the next
+                        // poll rather than deciding on a torn pair.
                         return;
                     }
                     capture_text(&app, &t);
