@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertCircle, LoaderCircle, RotateCcw, X } from "lucide-react";
@@ -38,6 +44,13 @@ const SECTIONS = [
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
+const SECTION_STEP: Record<string, number> = {
+  ArrowDown: 1,
+  ArrowRight: 1,
+  ArrowUp: -1,
+  ArrowLeft: -1,
+};
+
 function errorText(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
   const text = String(error);
@@ -52,6 +65,33 @@ export default function SettingsWindow() {
   const [progress, setProgress] = useState<ModelProgress | null>(null);
   const [inventoryVersion, setInventoryVersion] = useState(0);
   const [section, setSection] = useState<SectionId>("general");
+  const nav = useRef<HTMLDivElement>(null);
+
+  /**
+   * A tablist: one Tab stop into the sidebar, arrow keys between sections, and
+   * the current one marked as selected rather than merely styled. It was eight
+   * buttons that each took a Tab press to reach pane content.
+   */
+  const moveSection = (next: number) => {
+    const index = (next + SECTIONS.length) % SECTIONS.length;
+    const id = SECTIONS[index].id;
+    setSection(id);
+    nav.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[index]?.focus();
+  };
+
+  const onSectionKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    const step = SECTION_STEP[event.key];
+    if (step) {
+      event.preventDefault();
+      moveSection(index + step);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      moveSection(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      moveSection(SECTIONS.length - 1);
+    }
+  };
 
   const loadState = useCallback(async () => {
     try {
@@ -212,22 +252,39 @@ export default function SettingsWindow() {
     <div className="settings-root companion">
       {close}
       {/* The sidebar is the handle: opened on its own, Settings moves by it. */}
-      <nav className="settings-nav" aria-label="Settings sections" data-tauri-drag-region>
+      <nav className="settings-nav" aria-label="Settings" data-tauri-drag-region>
         <p className="companion-title settings-nav-title" data-tauri-drag-region>Settings</p>
-        {SECTIONS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={section === item.id ? "on" : ""}
-            aria-current={section === item.id ? "page" : undefined}
-            onClick={() => setSection(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
+        <div role="tablist" aria-orientation="vertical" aria-label="Settings sections" ref={nav}>
+          {SECTIONS.map((item, index) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              id={`settings-tab-${item.id}`}
+              aria-controls={`settings-panel-${item.id}`}
+              aria-selected={section === item.id}
+              tabIndex={section === item.id ? 0 : -1}
+              className={section === item.id ? "on" : ""}
+              onClick={() => setSection(item.id)}
+              onKeyDown={(event) => onSectionKeyDown(event, index)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </nav>
       <main className="settings-content" key={section}>
-        {panes[section]}
+        {/* The pane is the tabpanel, and it holds the scroll so it stays
+            reachable by keyboard. `<main>` keeps its landmark: a tabpanel on
+            it would replace it. */}
+        <div
+          role="tabpanel"
+          id={`settings-panel-${section}`}
+          aria-labelledby={`settings-tab-${section}`}
+          tabIndex={0}
+        >
+          {panes[section]}
+        </div>
       </main>
     </div>
   );

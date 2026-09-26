@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ArrowRight, Download, LoaderCircle, RotateCcw } from "lucide-react";
+import { useEffect, useState, type CSSProperties } from "react";
+import { ArrowRight, ChevronLeft, Download, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "../store";
 import LicenseCard from "./LicenseCard";
 import type { AppState, ModelInfo, ModelProgress } from "../types";
@@ -11,6 +11,15 @@ const WAVE = (
     <rect x="28" y="12" width="7" height="18" rx="3.5" opacity="0.9" />
   </svg>
 );
+
+const STEPS = 4;
+
+/**
+ * The step you are on, in a lighter tint; the steps behind you are solid. The
+ * segments used to light for `index <= step`, so at the last step all four
+ * were lit and the current one could not be picked out.
+ */
+const CURRENT_STEP: CSSProperties = { background: "var(--accent-soft)", width: 30 };
 
 function errorText(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -152,18 +161,21 @@ export default function Onboarding({
       <div className="mark">{WAVE}</div>
       {step === 0 ? (
         <>
-          <h1>Bard</h1>
+          {/* The brand is the mark above this. The headline is the promise. */}
+          <h1>Capture. Dictate. Keep.</h1>
           <p>
-            Capture anything you copy. Dictate offline with your own voice. Captures stay
-            on this machine, and cloud text cleanup is always opt-in.
+            Bard catches anything you copy, turns your voice into text without
+            sending audio anywhere, and keeps both on this machine. Cloud text
+            cleanup is always opt-in.
           </p>
         </>
       ) : step === 1 ? (
         <>
           <h1>Offline voice</h1>
           <p>
-            Bard downloads one model, then transcribes audio locally. Nothing in this step
-            leaves your machine.
+            {model
+              ? `${model.name} runs here, on this machine. Nothing in this step leaves it.`
+              : "One model runs here, on this machine. Nothing in this step leaves it."}
           </p>
           <div className="model-card">
             <div className="name">{model?.name ?? (modelsLoading ? "Preparing model…" : "Voice model")}</div>
@@ -212,7 +224,11 @@ export default function Onboarding({
                 disabled={Boolean(activeProgress)}
               >
                 {displayInstallError ? <RotateCcw aria-hidden="true" /> : <Download aria-hidden="true" />}
-                {displayInstallError ? "Retry download" : `Download ${model.sizeMb} MB`}
+                {/* It activates as well as downloads, which "Download" alone
+                    did not say — the same wording the Models pane uses. */}
+                {displayInstallError
+                  ? "Retry download & use"
+                  : `Download & use ${model.sizeMb} MB`}
               </button>
             ) : null}
           </div>
@@ -255,24 +271,43 @@ export default function Onboarding({
         </>
       )}
 
+      {/*
+        The position is announced once, by the bar. The segments are pictures of
+        it, so they are hidden from assistive technology — and `aria-current`
+        was on a `<div>` with no role, which named nothing.
+      */}
       <div
         className="steps"
         role="progressbar"
-        aria-label={`Onboarding step ${step + 1} of 4`}
+        aria-label="Onboarding progress"
         aria-valuemin={1}
-        aria-valuemax={4}
+        aria-valuemax={STEPS}
         aria-valuenow={step + 1}
+        aria-valuetext={`Step ${step + 1} of ${STEPS}`}
       >
-        {[0, 1, 2, 3].map((index) => (
-          <div
+        {Array.from({ length: STEPS }, (_, index) => (
+          <span
             key={index}
-            className={`step${index <= step ? " on" : ""}`}
-            aria-current={index === step ? "step" : undefined}
+            className={`step${index < step ? " on" : ""}`}
+            aria-hidden="true"
+            style={index === step ? CURRENT_STEP : undefined}
           />
         ))}
       </div>
 
       <div className="actions">
+        {/* Every step after the first can be left the way it came, including the
+            one that downloads two hundred megabytes. */}
+        {step > 0 ? (
+          <button
+            className="btn"
+            onClick={() => setStep((current) => current - 1)}
+            disabled={working || finishing}
+          >
+            <ChevronLeft aria-hidden="true" />
+            Back
+          </button>
+        ) : null}
         {step === 0 ? (
           <button className="btn primary" onClick={() => setStep(1)}>
             Continue

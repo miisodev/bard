@@ -288,13 +288,19 @@ fn on_close(x: i32, y: i32) -> bool {
     (CLOSE_LEFT..CLOSE_RIGHT).contains(&css_x) && (CLOSE_TOP..CLOSE_BOTTOM).contains(&css_y)
 }
 
+/// Whether a live take may still hold clicks elsewhere. `elapsed_ms` is how long
+/// the phase on screen has been showing. Pure, so the watchdog's effect on the
+/// desktop's responsiveness is testable.
+fn holds_clicks(mode: u8, phase: u8, elapsed_ms: u64) -> bool {
+    mode == ACTIVE && (phase == LISTENING || elapsed_ms < WORKING_HOLD_LIMIT_MS)
+}
+
 fn holding_clicks() -> bool {
-    if MODE.load(Ordering::SeqCst) != ACTIVE {
-        return false;
-    }
-    PHASE.load(Ordering::SeqCst) == LISTENING
-        || (crate::db::now_ms() as u64).saturating_sub(PHASE_STARTED_MS.load(Ordering::SeqCst))
-            < WORKING_HOLD_LIMIT_MS
+    holds_clicks(
+        MODE.load(Ordering::SeqCst),
+        PHASE.load(Ordering::SeqCst),
+        (crate::db::now_ms() as u64).saturating_sub(PHASE_STARTED_MS.load(Ordering::SeqCst)),
+    )
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -638,6 +644,27 @@ mod tests {
         assert_eq!(judge(HIDDEN, false, Elsewhere, true, false), Verdict::Pass);
         // A press held while live keeps its release held after the take ends.
         assert_eq!(judge(HIDDEN, false, Elsewhere, false, true), Verdict::Hold);
+    }
+
+    #[test]
+    fn a_stalled_take_stops_holding_the_desktop_after_ninety_seconds() {
+        // Whatever the transcription watchdog allows, this is the bound on how
+        // long the user's own clicks are swallowed. A take that stalls must not
+        // turn into a desktop that will not respond to you.
+        assert_eq!(WORKING_HOLD_LIMIT_MS, 90_000);
+        // Listening holds indefinitely, because only the user ends it.
+        assert!(holds_clicks(ACTIVE, LISTENING, 0));
+        assert!(holds_clicks(ACTIVE, LISTENING, 10 * 60_000));
+        // Working holds until the watchdog, then stops.
+        assert!(holds_clicks(ACTIVE, WORKING, 0));
+        assert!(holds_clicks(ACTIVE, WORKING, WORKING_HOLD_LIMIT_MS - 1));
+        assert!(!holds_clicks(ACTIVE, WORKING, WORKING_HOLD_LIMIT_MS));
+        // A report holds nothing.
+        assert!(!holds_clicks(STALE, WORKING, 0));
+        assert!(!holds_clicks(HIDDEN, LISTENING, 0));
+        // And the click hold always ends sooner than the take ceiling, so a
+        // wedged take never becomes a wedged desktop.
+        assert!(crate::dictation::TAKE_DEADLINE_FLOOR > Duration::from_millis(WORKING_HOLD_LIMIT_MS));
     }
 
     #[test]

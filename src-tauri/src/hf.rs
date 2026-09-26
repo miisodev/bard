@@ -240,22 +240,50 @@ fn app_model_id(repo: &str, file: &str) -> String {
     format!("app|{repo}|{file}")
 }
 
-fn external_model_id(repo: &str, file: &str, path: &Path) -> String {
-    let normalized = normalized_path_string(&canonicalize_for_comparison(path));
+/// A stable id for a model the user already has in the shared cache. Takes an
+/// already-canonicalized path so listing a cache does not re-canonicalize the
+/// same file it has just canonicalized.
+fn external_model_id(repo: &str, file: &str, canonical: &Path) -> String {
+    let normalized = normalized_path_string(canonical);
     let digest = Sha256::digest(normalized.as_bytes());
     format!("hf-cache|{repo}|{file}|{:x}", digest)
 }
 
+/// An environment override only counts when it is an absolute path. A relative
+/// value would produce a root that `path_is_within` can never match, which
+/// presents as "no models detected" rather than as the misconfiguration it is.
+fn absolute_env_path(name: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var(name).ok()?);
+    (path.is_absolute()).then_some(path)
+}
+
+/// The shared Hugging Face cache. This is the one model root Bard reads but
+/// never writes to and never deletes from, and it is the containment root that
+/// `probe_local_model`, `register_detected_path` and the symlink allowance in
+/// `verify_model_file` all resolve against.
+///
+/// Decision on the environment-derived trust root: the `HF_HUB_CACHE` /
+/// `HF_HOME` convention is **kept**, deliberately, and is not re-pinned under
+/// `app_local_data_dir()`.
+///
+/// The reason it is not a privilege boundary: Bard runs as the user, who
+/// already chose both the environment and the files in it. A user who launches
+/// Bard with `HF_HUB_CACHE` pointing somewhere unexpected gains nothing they did
+/// not already have, because reaching a file through this root still requires it
+/// to be a regular file that the current engine opens successfully as a model —
+/// see `probe_model_path`. Pinning the root under the app data directory would
+/// add no security property and would silently stop Bard from seeing models the
+/// user legitimately already owns from `huggingface-cli download`, another tool,
+/// or a colleague's archive. The containing decisions are: a path here must pass
+/// `path_is_within` *and* a real engine load to be registered, and anything
+/// registered from this root is recorded as `External`, which `delete_model`
+/// never removes.
 pub fn hf_cache_dir() -> PathBuf {
-    if let Ok(path) = std::env::var("HF_HUB_CACHE") {
-        if !path.trim().is_empty() {
-            return PathBuf::from(path);
-        }
+    if let Some(path) = absolute_env_path("HF_HUB_CACHE") {
+        return path;
     }
-    if let Ok(home) = std::env::var("HF_HOME") {
-        if !home.trim().is_empty() {
-            return PathBuf::from(home).join("hub");
-        }
+    if let Some(home) = absolute_env_path("HF_HOME") {
+        return home.join("hub");
     }
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     PathBuf::from(home)
@@ -274,8 +302,14 @@ pub fn local_models_dir(app: &AppHandle) -> PathBuf {
     dir
 }
 
-fn compatibility_cache() -> &'static Mutex<HashMap<PathBuf, ModelCompatibility>> {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, ModelCompatibility>>> = OnceLock::new();
+/// A recorded compatibility answer, together with the identity of the exact
+/// bytes it was produced from. Without the stamp a replaced file keeps the
+/// answer of the file it replaced, and the Models pane reports a stale result
+/// as current.
+type CompatibilityCacheValue = (PinnedFileStamp, ModelCompatibility);
+
+fn compatibility_cache() -> &'static Mutex<HashMap<PathBuf, CompatibilityCacheValue>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, CompatibilityCacheValue>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -283,17 +317,41 @@ fn path_key(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn compatibility_stamp(path: &Path) -> Option<PinnedFileStamp> {
+    fs::metadata(path).ok().map(|metadata| file_stamp(&metadata))
+}
+
+/// What Bard already believes about this exact file, without opening it.
+///
+/// **Display only, never an authorization.** No activation path consults this:
+/// `activate_model` always runs a real `Model::load` and `verify_model_file`
+/// always re-checks size and SHA-256 against the catalogue or the registration
+/// row. Its whole purpose is to keep the Models pane from paying a
+/// multi-gigabyte load per row it has already answered, which is what made
+/// opening Settings › Models the app's largest avoidable cost.
+///
+/// `Unverified` and `Missing` both mean "no engine answer": nobody has asked, or
+/// the file is gone. Neither is returned here, because a caller that gets a
+/// value is entitled to skip the load.
 pub fn cached_compatibility(path: &Path) -> ModelCompatibility {
+    let Some(stamp) = compatibility_stamp(path) else {
+        return ModelCompatibility::Unverified;
+    };
     compatibility_cache()
         .lock()
         .ok()
-        .and_then(|cache| cache.get(&path_key(path)).copied())
+        .and_then(|cache| cache.get(&path_key(path)).cloned())
+        .filter(|(recorded, _)| *recorded == stamp)
+        .map(|(_, status)| status)
         .unwrap_or(ModelCompatibility::Unverified)
 }
 
 fn remember_compatibility(path: &Path, status: ModelCompatibility) {
+    let Some(stamp) = compatibility_stamp(path) else {
+        return;
+    };
     if let Ok(mut cache) = compatibility_cache().lock() {
-        cache.insert(path_key(path), status);
+        cache.insert(path_key(path), (stamp, status));
     }
 }
 
@@ -326,19 +384,31 @@ fn canonicalize_for_comparison(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// The containment test over already-canonicalized paths.
+///
+/// `path_is_within` is the only entry point that canonicalizes, and it delegates
+/// here. This split exists so a caller that already holds a canonical root —
+/// `cached_models` tests every detected file against two of them — can reuse the
+/// rule instead of re-canonicalizing the root per file or, far worse,
+/// re-implementing the comparison and slowly diverging from it.
+fn path_is_within_canonical(root: &Path, candidate: &Path) -> bool {
+    let root_text = normalized_path_string(root);
+    let candidate_text = normalized_path_string(candidate);
+    !candidate_text.is_empty()
+        && candidate_text != root_text
+        && candidate_text.starts_with(&(root_text.clone() + "/"))
+}
+
 /// True only for a descendant of `root`. Canonicalization defeats `..` and
 /// symlink escapes; the string check adds Windows case-insensitive containment.
 pub fn path_is_within(root: &Path, candidate: &Path) -> bool {
     if !root.is_absolute() || !candidate.is_absolute() {
         return false;
     }
-    let root = canonicalize_for_comparison(root);
-    let candidate = canonicalize_for_comparison(candidate);
-    let root_text = normalized_path_string(&root);
-    let candidate_text = normalized_path_string(&candidate);
-    !candidate_text.is_empty()
-        && candidate_text != root_text
-        && candidate_text.starts_with(&(root_text.clone() + "/"))
+    path_is_within_canonical(
+        &canonicalize_for_comparison(root),
+        &canonicalize_for_comparison(candidate),
+    )
 }
 
 fn remove_owned_model_file(app: &AppHandle, path: &Path) -> Result<bool, String> {
@@ -359,63 +429,90 @@ fn is_catalog_filename(filename: &str) -> bool {
         .any(|model| model.file.filename.eq_ignore_ascii_case(filename))
 }
 
-fn detected_path_id(path: &Path) -> String {
-    format!(
-        "local|{}",
-        normalized_path_string(&canonicalize_for_comparison(path))
-    )
+fn detected_path_id(canonical: &Path) -> String {
+    format!("local|{}", normalized_path_string(canonical))
 }
 
-fn custom_for_path(app: &AppHandle, path: &Path) -> Option<crate::db::CustomModel> {
-    let canonical = canonicalize_for_comparison(path);
-    crate::db::list_custom_models(app)
-        .into_iter()
-        .find(|model| canonicalize_for_comparison(Path::new(&model.local_path)) == canonical)
+/// What building one detected-model row needs, resolved once per
+/// `cached_models` call rather than once per detected file.
+///
+/// This was the first half of the Models-pane cost: `custom_for_path` ran a
+/// full `custom_models` table read plus a linear scan, canonicalizing the
+/// candidate and both sides of every comparison, for *every* file on disk — and
+/// `path_is_within` re-canonicalized both roots per file on top of that. A
+/// shared cache with a few dozen snapshots paid hundreds of SQL reads and
+/// thousands of `canonicalize` syscalls to render a list that performs no
+/// probing at all.
+struct DetectedIndex {
+    /// Registered models keyed by canonical path, from a single table read.
+    registered: HashMap<PathBuf, crate::db::CustomModel>,
+    /// The shared cache and Bard's own model directory, canonicalized once.
+    cache_root: PathBuf,
+    app_root: PathBuf,
 }
 
-fn append_detected_file(
-    app: &AppHandle,
-    out: &mut Vec<CachedHfModel>,
-    path: PathBuf,
-    repo: String,
-    source_revision: String,
-    file_name: String,
-    size: u64,
-) {
-    let custom = custom_for_path(app, &path);
-    let id = custom
-        .as_ref()
-        .map(|model| model.id.clone())
-        .unwrap_or_else(|| {
-            if repo == "Bard imports" {
-                detected_path_id(&path)
-            } else if path_is_within(&hf_cache_dir(), &path) {
-                external_model_id(&repo, &file_name, &path)
-            } else {
-                custom_model_id(&repo, &file_name)
-            }
+impl DetectedIndex {
+    fn new(app: &AppHandle) -> Self {
+        Self {
+            registered: crate::db::list_custom_models(app)
+                .into_iter()
+                .map(|model| {
+                    let key = canonicalize_for_comparison(Path::new(&model.local_path));
+                    (key, model)
+                })
+                .collect(),
+            cache_root: canonicalize_for_comparison(&hf_cache_dir()),
+            app_root: canonicalize_for_comparison(&local_models_dir(app)),
+        }
+    }
+
+    /// `canonical` is `canonicalize_for_comparison(path)`, computed once by the
+    /// caller and reused for the id, the containment test and the registration
+    /// lookup.
+    fn push(
+        &self,
+        out: &mut Vec<CachedHfModel>,
+        path: &Path,
+        canonical: &Path,
+        repo: String,
+        source_revision: String,
+        file_name: String,
+        size: u64,
+    ) {
+        let custom = self.registered.get(canonical);
+        let id = custom
+            .map(|model| model.id.clone())
+            .unwrap_or_else(|| {
+                if repo == "Bard imports" {
+                    detected_path_id(canonical)
+                } else if path_is_within_canonical(&self.cache_root, canonical) {
+                    external_model_id(&repo, &file_name, canonical)
+                } else {
+                    custom_model_id(&repo, &file_name)
+                }
+            });
+        let registered = custom.is_some();
+        let compatibility = custom
+            .map(|model| model.compatibility)
+            .unwrap_or_else(|| cached_compatibility(path));
+        out.push(CachedHfModel {
+            id,
+            repo,
+            source_revision,
+            quant: quant_from_filename(&file_name),
+            file: file_name,
+            size,
+            local_path: path.to_string_lossy().to_string(),
+            compatibility,
+            registered,
+            owned: custom.is_some_and(|model| model.owned()),
         });
-    let registered = custom.is_some();
-    let compatibility = custom
-        .as_ref()
-        .map(|model| model.compatibility)
-        .unwrap_or_else(|| cached_compatibility(&path));
-    out.push(CachedHfModel {
-        id,
-        repo,
-        source_revision,
-        quant: quant_from_filename(&file_name),
-        file: file_name,
-        size,
-        local_path: path.to_string_lossy().to_string(),
-        compatibility,
-        registered,
-        owned: custom.as_ref().is_some_and(|model| model.owned()),
-    });
+    }
 }
 
 pub fn cached_models(app: &AppHandle) -> Vec<CachedHfModel> {
     let root = hf_cache_dir();
+    let index = DetectedIndex::new(app);
     let mut out = Vec::new();
     if let Ok(entries) = fs::read_dir(&root) {
         for repo_dir in entries.flatten() {
@@ -450,10 +547,11 @@ pub fn cached_models(app: &AppHandle) -> Vec<CachedHfModel> {
                     let Ok(meta) = fs::metadata(&path) else {
                         continue;
                     };
-                    append_detected_file(
-                        app,
+                    let canonical = canonicalize_for_comparison(&path);
+                    index.push(
                         &mut out,
-                        path,
+                        &path,
+                        &canonical,
                         repo.clone(),
                         source_revision.clone(),
                         file_name,
@@ -480,10 +578,27 @@ pub fn cached_models(app: &AppHandle) -> Vec<CachedHfModel> {
             let Ok(meta) = fs::metadata(&path) else {
                 continue;
             };
-            append_detected_file(
-                app,
+            let canonical = canonicalize_for_comparison(&path);
+            // Unlike a Hugging Face snapshot entry — which is a link into
+            // blobs/ and must be followed — a link sitting in Bard's own model
+            // directory is not something Bard ever writes. One placed there by
+            // something else resolves outside the root, and listing it would
+            // offer a row that registration correctly refuses a moment later.
+            if fs::symlink_metadata(&path)
+                .map(|meta| meta.file_type().is_symlink())
+                .unwrap_or(true)
+                || !path_is_within_canonical(&index.app_root, &canonical)
+            {
+                log::warn!(
+                    "model:skip-noncontained-import path={}",
+                    path.display()
+                );
+                continue;
+            }
+            index.push(
                 &mut out,
-                path,
+                &path,
+                &canonical,
                 "Bard imports".into(),
                 "local".into(),
                 file_name,
@@ -494,21 +609,22 @@ pub fn cached_models(app: &AppHandle) -> Vec<CachedHfModel> {
 
     // Keep a row for a registered file that has disappeared. The UI can then
     // explain the missing state and offer Forget/Remove instead of silently
-    // making the registration vanish from the inventory.
-    for custom in crate::db::list_custom_models(app) {
+    // making the registration vanish from the inventory. Reuses the table read
+    // the index already made rather than paying for a second one.
+    for custom in index.registered.values() {
         let path = PathBuf::from(&custom.local_path);
         if path.exists() {
             continue;
         }
         let owned = custom.owned();
         out.push(CachedHfModel {
-            id: custom.id,
-            repo: custom.repo,
+            id: custom.id.clone(),
+            repo: custom.repo.clone(),
             source_revision: "local".into(),
             quant: crate::hf::quant_from_filename(&custom.file),
-            file: custom.file,
+            file: custom.file.clone(),
             size: custom.size_bytes,
-            local_path: custom.local_path,
+            local_path: custom.local_path.clone(),
             compatibility: ModelCompatibility::Missing,
             registered: true,
             owned,
@@ -540,10 +656,64 @@ fn hf_resolve_url(repo: &str, file: &str) -> String {
     url.to_string()
 }
 
+/// Model download endpoints and the CDN hosts they legitimately hand off to.
+///
+/// Bard cannot simply refuse redirects here. A Hugging Face `resolve/main` URL
+/// for an LFS file answers 302 to its CDN (`cdn-lfs.hf.co`,
+/// `cas-bridge.xethub.hf.co`), and a GitHub release asset answers 302 to
+/// `release-assets.githubusercontent.com`; refusing either would break every
+/// model download. What is not acceptable is reqwest's default, which follows up
+/// to ten hops to any host at all: one redirect from a misconfigured or
+/// compromised endpoint replays the request — and Bard's connection to it —
+/// somewhere that host chose. So the policy is an allow-list, and a redirect off
+/// it fails the download loudly instead of silently moving the bytes.
+///
+/// `github.com` is here because `catalog.json` hosts first-party catalogue
+/// models on `miisodev/bard-models` releases, not because Bard trusts GitHub
+/// generally. The only request either family ever sees is a GET for a public
+/// model asset.
+fn is_expected_download_host(host: &str) -> bool {
+    const ROOTS: &[&str] = &[
+        "huggingface.co",
+        "hf.co",
+        "huggingfaceusercontent.com",
+        "github.com",
+        "githubusercontent.com",
+        "githubassets.com",
+    ];
+    ROOTS
+        .iter()
+        .any(|root| host == *root || host.ends_with(&format!(".{root}")))
+}
+
+fn download_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let url = attempt.url();
+        let host = url
+            .host_str()
+            .unwrap_or_default()
+            .trim_matches(|c| c == '[' || c == ']')
+            .to_ascii_lowercase();
+        if url.scheme() != "https" || !is_expected_download_host(&host) {
+            log::warn!(
+                "model:redirect-refused host={host} status={}",
+                attempt.status().as_u16()
+            );
+            return attempt.error("Bard refused a model download redirect to an unexpected host.");
+        }
+        attempt.follow()
+    })
+}
+
 pub async fn list_repo_files(repo: &str) -> Result<Vec<HfFile>, String> {
     let repo = normalize_repo_id(repo)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(25))
+        // A repository tree is fetched from an API endpoint Bard constructs
+        // itself and that has no reason to answer with a redirect. `Policy::none`
+        // surfaces the 3xx as a response instead of replaying the request, which
+        // is checked for explicitly below.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| e.to_string())?;
     let resp = client
@@ -554,10 +724,18 @@ pub async fn list_repo_files(repo: &str) -> Result<Vec<HfFile>, String> {
     if resp.status().as_u16() == 401 {
         return Err("Repo not found or access gated.".into());
     }
+    if resp.status().is_redirection() {
+        return Err(
+            "Hugging Face redirected the model listing; Bard does not follow redirects for API requests."
+                .into(),
+        );
+    }
     if !resp.status().is_success() {
         return Err(format!("Listing failed: {}", resp.status()));
     }
-    let items: Vec<TreeItem> = resp.json().await.map_err(|e| e.to_string())?;
+    let body = response_text_bounded(resp, MAX_TREE_BYTES).await?;
+    let items: Vec<TreeItem> =
+        serde_json::from_str(&body).map_err(|e| format!("Hugging Face returned an unreadable model listing: {e}"))?;
     let mut files = Vec::new();
     for item in items {
         if item.kind != "file" || !is_transcript_file(&item.path) {
@@ -586,6 +764,45 @@ pub async fn list_repo_files(repo: &str) -> Result<Vec<HfFile>, String> {
     Ok(files)
 }
 
+/// A repository tree is JSON, not a model. Real ones answer in a few hundred
+/// kilobytes, so 16 MB is far beyond any legitimate listing while still bounding
+/// what a broken or hostile endpoint can make Bard allocate before its entries
+/// have been filtered down to transcript files.
+///
+/// Mirrors `cloud::response_text_bounded`, re-implemented rather than imported:
+/// `cloud.rs` returns `Error::Provider` and belongs to another lane, and a
+/// one-way dependency from a user-facing `String` error into the provider error
+/// type would be a worse trade than twenty duplicated lines. Needs orchestrator:
+/// lift `response_text_bounded` into a shared `http` module so `cloud.rs` and
+/// `hf.rs` have one implementation of this rule.
+const MAX_TREE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Read a response body, refusing anything over `limit`. `content_length()` is
+/// only a hint — a chunked or dishonest response can still exceed it — so the
+/// cap is enforced again while the stream is consumed rather than trusted.
+async fn response_text_bounded(
+    response: reqwest::Response,
+    limit: usize,
+) -> Result<String, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err("Hugging Face returned a model listing too large to read.".into());
+    }
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| error.to_string())?;
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err("Hugging Face returned a model listing too large to read.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| "Hugging Face returned a model listing that was not UTF-8 text.".into())
+}
+
 fn init_engines_once() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
@@ -601,28 +818,83 @@ fn model_probe_guard() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// The engine open a compatibility probe performs. Split out from `spawn_probe`
+/// so the lifetime of the serialization guard can be regression-tested without a
+/// real multi-hundred-megabyte model.
+fn engine_load(path: &Path) -> Result<(), String> {
+    // `map(drop)`: the probe learns whether the file opens and then releases it
+    // immediately. Nothing here keeps a model resident between probes.
+    transcribe_cpp::Model::load(path)
+        .map(drop)
+        .map_err(|error| error.to_string())
+}
+
+/// Run one probe on its own thread, waiting at most `timeout` for it.
+///
+/// The serialization guard is created **inside** the thread, and that placement
+/// is the whole point. A caller-side guard read as equivalent and was not:
+/// `recv_timeout` returning on timeout would drop the guard while the thread was
+/// still inside `Model::load`, so the next probe acquired it immediately and
+/// opened a second copy of the model, and N timeouts left N models resident —
+/// exactly the race the guard's own comment claimed to prevent. Owned by the
+/// thread, the guard is held for as long as the load actually runs and released
+/// only after the model is dropped, so at most one probe model exists at a time
+/// no matter how many callers time out.
+///
+/// An abandoned thread cannot be reclaimed from here: `start_unload_watcher`
+/// tracks only the live transcription `SESSION`, so the resident probe model is
+/// bounded by the load's own duration and nothing more. Needs orchestrator:
+/// `dictation/model.rs` — track probe residency alongside `SESSION` so the idle
+/// watcher can see it.
+fn spawn_probe<L>(path: PathBuf, timeout: Duration, load: L) -> Result<Result<(), String>, String>
+where
+    L: FnOnce(&Path) -> Result<(), String> + Send + 'static,
+{
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        // Declared first so it outlives the model: the guard must never be
+        // released while a probe model is still mapped.
+        let _probe = model_probe_guard();
+        let outcome = load(&path);
+        let _ = sender.send(outcome);
+    });
+    match receiver.recv_timeout(timeout) {
+        Ok(outcome) => Ok(outcome),
+        // A dead thread is not a slow one; reporting it as a timeout would
+        // tell the user to wait 120 seconds for something that already failed.
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("The model compatibility probe ended without reporting a result.".into())
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "The model compatibility probe timed out after {} seconds.",
+            timeout.as_secs()
+        )),
+    }
+}
+
+const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
+
 fn probe_model_path(path: &Path) -> Result<CompatibilityResult, String> {
     let metadata =
         fs::metadata(path).map_err(|_| format!("Model file does not exist: {}", path.display()))?;
     if !metadata.is_file() {
         return Err("Model path is not a regular model file.".into());
     }
-    // The settings surface may request several checks at once. Serializing
-    // probes prevents multiple multi-hundred-MB model opens from racing.
-    let _probe = model_probe_guard();
     init_engines_once();
-    let probe_path = path.to_path_buf();
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let outcome = match transcribe_cpp::Model::load(&probe_path) {
-            Ok(_) => Ok(()),
-            Err(error) => Err(error.to_string()),
-        };
-        let _ = sender.send(outcome);
-    });
-    let outcome = receiver
-        .recv_timeout(Duration::from_secs(120))
-        .map_err(|_| "The model compatibility probe timed out after 120 seconds.".to_string())?;
+    let outcome = match spawn_probe(path.to_path_buf(), PROBE_TIMEOUT, engine_load) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            // The abandoned thread still owns the guard and a resident model, and
+            // nothing in the process can reclaim either one. A timeout is not a
+            // cost the user should pay silently.
+            log::warn!(
+                "model:probe-timeout path={} timeout_s={}",
+                path.display(),
+                PROBE_TIMEOUT.as_secs()
+            );
+            return Err(error);
+        }
+    };
 
     let (status, message) = match outcome {
         Ok(()) => (ModelCompatibility::Verified, None),
@@ -641,6 +913,10 @@ fn probe_model_path(path: &Path) -> Result<CompatibilityResult, String> {
     })
 }
 
+/// Always a real load, never a cache hit. `verify_load` runs immediately after a
+/// download to `path`, so any answer already recorded for that path describes the
+/// file that used to be there. Consulting the compatibility cache here would let a
+/// fresh, unreviewed download be accepted on the strength of its predecessor.
 pub fn verify_load(path: &str) -> bool {
     probe_model_path(Path::new(path))
         .map(|result| result.status == ModelCompatibility::Verified)
@@ -686,6 +962,31 @@ fn file_stamp(metadata: &fs::Metadata) -> (u64, u128, u128, u64) {
 /// Verify the exact bytes of a file Bard is about to trust. Managed catalogue
 /// files and Bard-owned imports always carry a positive size and SHA-256; an
 /// empty checksum is never treated as permission to skip integrity checking.
+///
+/// Known weakness, deliberately left in place pending a decision that is not
+/// this module's to make. The memo below skips the hash when the file's stamp is
+/// unchanged, and a stamp is `(size, last write, creation)` — nothing guaranteed
+/// to differ when the *content* differs. Measured on the filesystem this project
+/// is built on: rewriting an eight-byte file in place left `last_write_time` **and**
+/// `creation_time` at exactly `134348792418400104`, unchanged across a five-second
+/// wait. So a same-size rewrite of an already-verified model is accepted from the
+/// memo without ever being hashed. This is not a theoretical race and it is not
+/// clock-tick quantisation; on this filesystem the stamp does not move at all.
+///
+/// It is not simply deleted because the fast path is load-bearing:
+/// `dictation::model::transcribe_inner` calls `verify_model_file` before every
+/// capture, and re-hashing a multi-gigabyte model per dictation is not viable
+/// (roughly 0.3–1 s per capture, more on a two-gigabyte model). Deleting the memo
+/// would also be the wrong fix on its own — the unsoundness is the timestamp, not
+/// the memo — and it would be a security fix bought with a latency regression
+/// across the whole product, decided in a file this module does not own.
+///
+/// Needs orchestrator: `dictation/model.rs` — verify once per *session* rather
+/// than once per capture. `SESSION` is already keyed by the path and is discarded
+/// when the model changes, so a verdict recorded alongside it costs one hash per
+/// model load instead of one per dictation. With that in place the memo here can
+/// be deleted outright and `verify_pinned_file` can hash unconditionally, closing
+/// the hole rather than documenting it.
 pub fn verify_pinned_file(
     path: &Path,
     expected_size: u64,
@@ -733,7 +1034,63 @@ pub fn verify_pinned_file(
     Ok(())
 }
 
+/// The engine answer Bard already holds for this file, or `None` when it has
+/// none worth acting on.
+///
+/// Two sources, in order. The in-process cache carries a stamp of the exact bytes
+/// it was produced from, so a file replaced at the same path during this session
+/// does not inherit its predecessor's verdict. A registered row is the durable
+/// copy of the same verdict and is what makes the answer survive a restart, at
+/// the cost of not knowing whether an out-of-band process has since replaced the
+/// file. That is acceptable for a label: the answer is only ever displayed, and
+/// every activation re-runs `probe_model_path` and re-verifies size and SHA-256,
+/// so a stale label can never make an unverified model usable. `recheck_local_model`
+/// is the explicit way to be sure.
+pub fn known_compatibility(app: &AppHandle, path: &Path) -> Option<ModelCompatibility> {
+    let key = canonicalize_for_comparison(path);
+    let known = crate::db::list_custom_models(app)
+        .into_iter()
+        .find(|model| canonicalize_for_comparison(Path::new(&model.local_path)) == key)
+        .map(|model| model.compatibility)
+        .unwrap_or_else(|| cached_compatibility(path));
+    // `Unverified` means nobody has asked and `Missing` means the file is gone.
+    // Neither is an engine verdict, and a caller that receives a value is
+    // entitled to skip the load.
+    matches!(
+        known,
+        ModelCompatibility::Verified | ModelCompatibility::Incompatible
+    )
+    .then_some(known)
+}
+
+/// Report this model's compatibility, opening it with the engine only if Bard
+/// has not already established an answer for these exact bytes.
+///
+/// This is the fix for the Models pane's cost. `check_model` is invoked once per
+/// unverified detected row every time Settings › Models opens, and every one of
+/// those calls was a full `Model::load` of a multi-gigabyte file, paid to
+/// rediscover a verdict the session already had.
 pub fn probe_local_model(app: &AppHandle, path_arg: &str) -> Result<CompatibilityResult, String> {
+    probe_local_model_inner(app, path_arg, false)
+}
+
+/// An explicit re-check. Skips the cache, because the user has just said the
+/// previous answer is not good enough — "it says incompatible but it works", or
+/// a file that has since been replaced.
+///
+/// Needs orchestrator: `commands.rs` — `check_model` should take a `force`
+/// argument and dispatch to this:
+/// `if force { crate::hf::recheck_local_model(&app, &local_path) } else { crate::hf::probe_local_model(&app, &local_path) }`
+#[allow(dead_code)]
+pub fn recheck_local_model(app: &AppHandle, path_arg: &str) -> Result<CompatibilityResult, String> {
+    probe_local_model_inner(app, path_arg, true)
+}
+
+fn probe_local_model_inner(
+    app: &AppHandle,
+    path_arg: &str,
+    force: bool,
+) -> Result<CompatibilityResult, String> {
     let path =
         fs::canonicalize(path_arg).map_err(|_| format!("Model file does not exist: {path_arg}"))?;
     let in_app_models = path_is_within(&local_models_dir(app), &path);
@@ -743,6 +1100,15 @@ pub fn probe_local_model(app: &AppHandle, path_arg: &str) -> Result<Compatibilit
             "Bard only checks models in its model directory or the shared Hugging Face cache."
                 .into(),
         );
+    }
+    if !force {
+        if let Some(known) = known_compatibility(app, &path) {
+            return Ok(CompatibilityResult {
+                path: path.to_string_lossy().to_string(),
+                status: known,
+                message: None,
+            });
+        }
     }
     let result = probe_model_path(&path)?;
     crate::db::set_custom_model_compatibility(app, path_arg, result.status);
@@ -799,14 +1165,31 @@ pub fn verify_model_file(app: &AppHandle, id: &str, path: &Path) -> Result<(), S
 /// Verify first, persist second. No caller receives a successful activation
 /// unless the selected path exists and the current engine opened it.
 pub fn activate_model(app: &AppHandle, id: &str) -> Result<(), String> {
+    activate_model_inner(app, id, false)
+}
+
+/// `engine_checked` asserts that the caller opened *this* path with the current
+/// engine during *this* user action, so repeating the load would be a second
+/// full read of a multi-gigabyte model for one click. It is private to this
+/// module and only ever set by the two register-then-activate paths below, which
+/// have just run `register_detected_path` — and therefore a real load — on the
+/// same path.
+///
+/// Nothing else is relaxed. `verify_model_file` still re-resolves the recorded
+/// path, still refuses a changed registration, and still re-verifies size and
+/// SHA-256 for anything Bard owns or has a checksum for. The second probe was
+/// never an integrity check; it duplicated the first one.
+fn activate_model_inner(app: &AppHandle, id: &str, engine_checked: bool) -> Result<(), String> {
     let _operation = model_operation_guard();
     let path = model_path_for_id(app, id)?;
     verify_model_file(app, id, &path)?;
-    let probe = probe_model_path(&path)?;
-    if probe.status != ModelCompatibility::Verified {
-        return Err(probe
-            .message
-            .unwrap_or_else(|| "This model is not compatible with Bard's engine.".into()));
+    if !engine_checked {
+        let probe = probe_model_path(&path)?;
+        if probe.status != ModelCompatibility::Verified {
+            return Err(probe
+                .message
+                .unwrap_or_else(|| "This model is not compatible with Bard's engine.".into()));
+        }
     }
     crate::db::set_setting_checked(app, "model_id", id)?;
     let _ = app.emit("model-activated", serde_json::json!({"id": id}));
@@ -820,6 +1203,8 @@ pub fn custom_storage_name(repo: &str, file: &str) -> String {
         .replace(['\\', ':', '*', '?', '"', '<', '>', '|'], "_")
 }
 
+/// The partial file's path. A sibling `<name>.part` rather than a sibling with
+/// the extension replaced, so it cannot collide with a model file.
 fn part_path(destination: &Path) -> PathBuf {
     let mut name = destination.as_os_str().to_os_string();
     name.push(".part");
@@ -979,6 +1364,24 @@ async fn download_resumable_inner(
     app: &AppHandle,
     request: &DownloadRequest,
 ) -> Result<(), String> {
+    // Progress and cancellation are injected rather than reached for, so the
+    // transfer itself can be exercised without a Tauri `AppHandle` — this
+    // crate's test build cannot construct one (`tauri`'s `test` feature is not
+    // enabled), which is why the resume, truncation, size-cap and cancel paths
+    // had no coverage at all.
+    transfer(
+        request,
+        |received, total, speed, eta| emit_progress(app, &request.id, received, total, speed, eta),
+        crate::dictation::is_cancel_pending,
+    )
+    .await
+}
+
+async fn transfer<F, C>(request: &DownloadRequest, emit: F, cancelled: C) -> Result<(), String>
+where
+    F: Fn(u64, u64, Option<u64>, Option<u64>),
+    C: Fn() -> bool,
+{
     let part = part_path(&request.destination);
     if let Some(parent) = part.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1006,7 +1409,7 @@ async fn download_resumable_inner(
                 .unwrap_or(false);
         if matches {
             fs::rename(&part, &request.destination).map_err(|e| e.to_string())?;
-            emit_progress(app, &request.id, received, received, None, None);
+            emit(received, received, None, None);
             return Ok(());
         }
         fs::remove_file(&part).map_err(|e| e.to_string())?;
@@ -1016,6 +1419,7 @@ async fn download_resumable_inner(
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))
         .timeout(Duration::from_secs(60 * 60))
+        .redirect(download_redirect_policy())
         .build()
         .map_err(|e| e.to_string())?;
     let mut req = client.get(&request.url);
@@ -1100,7 +1504,7 @@ async fn download_resumable_inner(
     let mut last_progress = received;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        if crate::dictation::is_cancel_pending() {
+        if cancelled() {
             drop(file);
             return Err("Download cancelled.".into());
         }
@@ -1119,13 +1523,13 @@ async fn download_resumable_inner(
             last_emit = Instant::now();
             let (speed, eta) =
                 progress_timing(transfer_started, transfer_initial_received, received, total);
-            emit_progress(app, &request.id, received, total, speed, eta);
+            emit(received, total, speed, eta);
         }
     }
     file.flush().map_err(|e| e.to_string())?;
     drop(file);
 
-    if crate::dictation::is_cancel_pending() {
+    if cancelled() {
         return Err("Download cancelled.".into());
     }
     let actual_size = fs::metadata(&part).map_err(|e| e.to_string())?.len();
@@ -1150,9 +1554,7 @@ async fn download_resumable_inner(
         return Err("Model verification failed (checksum mismatch).".into());
     }
     fs::rename(&part, &request.destination).map_err(|e| e.to_string())?;
-    emit_progress(
-        app,
-        &request.id,
+    emit(
         actual_size,
         if total > 0 { total } else { actual_size },
         None,
@@ -1282,10 +1684,33 @@ pub fn register_detected_path(
             .message
             .unwrap_or_else(|| "This model is incompatible with Bard's engine.".into()));
     }
+    register_probed_path(app, &repo, &file, &path, size, in_app_models)
+}
+
+/// The registration half of `register_detected_path`, for a file the caller has
+/// already opened with the current engine.
+///
+/// Keeping the load in one place is what lets `activate_detected_model` and
+/// `register_and_activate_cached` hand their result forward: a user action that
+/// both registers and activates used to load the same model twice, and for a
+/// multi-gigabyte GGUF that doubled the wait for one click.
+///
+/// `path` must already be canonical, must already have passed both containment
+/// tests, and must already have been loaded by this same action. `in_app_models`
+/// selects the ownership that follows from which root it came from: a model
+/// Bard manages may be deleted later, one from the shared cache never is.
+fn register_probed_path(
+    app: &AppHandle,
+    repo: &str,
+    file: &str,
+    path: &Path,
+    size: u64,
+    in_app_models: bool,
+) -> Result<String, String> {
     let id = if in_app_models {
-        app_model_id(&repo, &file)
+        app_model_id(repo, file)
     } else {
-        external_model_id(&repo, &file, &path)
+        external_model_id(repo, file, path)
     };
     let ownership = if in_app_models {
         crate::db::ModelOwnership::App
@@ -1295,21 +1720,21 @@ pub fn register_detected_path(
     let measured_size = if size > 0 {
         size
     } else {
-        fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0)
+        fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
     };
     let registered_sha256 = if in_app_models {
-        sha256_file(&path).map_err(|error| format!("Could not hash the local model: {error}"))?
+        sha256_file(path).map_err(|error| format!("Could not hash the local model: {error}"))?
     } else {
         String::new()
     };
     if in_app_models {
-        verify_pinned_file(&path, measured_size, &registered_sha256)?;
+        verify_pinned_file(path, measured_size, &registered_sha256)?;
     }
     crate::db::register_custom_model(
         app,
         &id,
-        &repo,
-        &file,
+        repo,
+        file,
         measured_size,
         &registered_sha256,
         &path.to_string_lossy(),
@@ -1332,6 +1757,28 @@ pub fn register_cached(
     register_detected_path(app, repo, file, local_path, size)
 }
 
+/// Register a discovered cache model in one action, opening it with the engine
+/// exactly once.
+///
+/// Needs orchestrator: `commands.rs` — `hf_use_cached` currently calls
+/// `register_cached` and then `activate_model`, which loads the same file twice.
+/// It should call this instead:
+/// `crate::hf::register_and_activate_cached(&app, &repo, &file, &local_path, size)`
+#[allow(dead_code)]
+pub fn register_and_activate_cached(
+    app: &AppHandle,
+    repo: &str,
+    file: &str,
+    local_path: &str,
+    size: u64,
+) -> Result<(), String> {
+    let id = register_detected_path(app, repo, file, local_path, size)?;
+    // `register_detected_path` just opened this exact path with the current
+    // engine in this same action, so the load is not repeated. The pinned file
+    // verification inside `activate_model_inner` still runs.
+    activate_model_inner(app, &id, true)
+}
+
 /// Register and activate a discovered cache model in one explicit user action.
 /// The source file remains external and read-only to Bard.
 pub fn activate_detected_model(app: &AppHandle, id: &str) -> Result<(), String> {
@@ -1346,7 +1793,7 @@ pub fn activate_detected_model(app: &AppHandle, id: &str) -> Result<(), String> 
         &detected.local_path,
         detected.size,
     )?;
-    activate_model(app, &registered_id)
+    activate_model_inner(app, &registered_id, true)
 }
 
 /// Remove a catalog or custom model registration. App-owned files are deleted
@@ -1380,6 +1827,152 @@ pub fn delete_model(app: &AppHandle, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- fixtures ---------------------------------------------------------
+
+    /// A unique scratch directory. `now_ms` alone collides when two tests are
+    /// created in the same millisecond, which they are on a fast machine.
+    fn temp_dir(tag: &str) -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "bard-hf-{tag}-{}-{unique}",
+            crate::db::now_ms()
+        ));
+        fs::create_dir_all(&dir).expect("scratch directory");
+        dir
+    }
+
+    /// Deterministic non-repeating bytes, so a corrupt assembly cannot
+    /// accidentally reproduce the expected file.
+    fn payload(len: usize) -> Vec<u8> {
+        (0..len).map(|index| (index % 251) as u8).collect()
+    }
+
+    fn sha256_bytes(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        hasher.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    /// A one-shot HTTP/1.1 responder on loopback.
+    ///
+    /// `Cargo.toml` is not this file's to change, so the crate has no
+    /// dev-dependency HTTP server and the response is written by hand. That is
+    /// enough for reqwest: a status line, headers, and a body that can be
+    /// deliberately short of the length it promised, unframed, or absent.
+    struct TestResponse {
+        status: u16,
+        reason: &'static str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        /// Send one byte less than the promised `Content-Length`, then close: a
+        /// stream that dies mid-transfer. The declared length stays honest, so
+        /// this reaches the streaming loop rather than the pre-flight size check.
+        truncate: bool,
+        /// Send no `Content-Length` at all; the body ends when the socket does.
+        /// The only way to reach a cap that `content_length()` cannot see.
+        omit_length: bool,
+    }
+
+    impl TestResponse {
+        fn new(body: Vec<u8>) -> Self {
+            Self {
+                status: 200,
+                reason: "OK",
+                headers: Vec::new(),
+                body,
+                truncate: false,
+                omit_length: false,
+            }
+        }
+
+        fn with_status(mut self, status: u16, reason: &'static str) -> Self {
+            self.status = status;
+            self.reason = reason;
+            self
+        }
+
+        fn with_header(mut self, name: &str, value: impl Into<String>) -> Self {
+            self.headers.push((name.into(), value.into()));
+            self
+        }
+
+        fn truncated(mut self) -> Self {
+            self.truncate = true;
+            self
+        }
+
+        fn unframed(mut self) -> Self {
+            self.omit_length = true;
+            self
+        }
+    }
+
+    /// Serve exactly one request and return its URL plus a handle that finishes
+    /// once the response has been written.
+    fn serve_once(response: TestResponse) -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener
+            .local_addr()
+            .expect("loopback address")
+            .port();
+        let handle = std::thread::spawn(move || {
+            let Ok((mut socket, _)) = listener.accept() else {
+                return;
+            };
+            // Read the request head and stop at the blank line. Byte-at-a-time is
+            // fine for a few hundred bytes and cannot deadlock against the write
+            // below, which a fixed-size read could.
+            let mut head = Vec::new();
+            let mut byte = [0_u8; 1];
+            while socket.read(&mut byte).unwrap_or(0) == 1 {
+                head.push(byte[0]);
+                if head.len() >= 4 && head[head.len() - 4..] == *b"\r\n\r\n" {
+                    break;
+                }
+            }
+
+            let mut out = format!("HTTP/1.1 {} {}\r\n", response.status, response.reason);
+            for (name, value) in &response.headers {
+                out.push_str(&format!("{name}: {value}\r\n"));
+            }
+            if !response.omit_length {
+                out.push_str(&format!("Content-Length: {}\r\n", response.body.len()));
+            }
+            out.push_str("Connection: close\r\n\r\n");
+            if socket.write_all(out.as_bytes()).is_err() {
+                return;
+            }
+            let sent = if response.truncate {
+                response.body.len().saturating_sub(1)
+            } else {
+                response.body.len()
+            };
+            let _ = socket.write_all(&response.body[..sent]);
+            let _ = socket.flush();
+            // Dropping the socket here is what truncates the body.
+        });
+        (format!("http://127.0.0.1:{port}/model.gguf"), handle)
+    }
+
+    fn test_request(dir: &Path, url: &str, sha256: &str, size: u64) -> DownloadRequest {
+        DownloadRequest {
+            id: "test-model".into(),
+            url: url.into(),
+            sha256: sha256.into(),
+            size_bytes: size,
+            destination: dir.join("model.gguf"),
+        }
+    }
+
+    /// Run a transfer with progress discarded and nothing cancelling it.
+    async fn run(request: &DownloadRequest) -> Result<(), String> {
+        transfer(request, |_, _, _, _| {}, || false).await
+    }
 
     fn read_pcm16_mono_wav(path: &Path) -> Vec<f32> {
         let bytes = fs::read(path).expect("smoke WAV exists");
@@ -1558,16 +2151,53 @@ mod tests {
     }
 
     #[test]
-    fn pinned_verification_rejects_mutation_and_requires_metadata() {
-        let dir = std::env::temp_dir().join(format!("bard-pin-test-{}", crate::db::now_ms()));
-        fs::create_dir_all(&dir).unwrap();
+    fn pinned_verification_requires_complete_metadata_and_catches_a_rewrite() {
+        let dir = temp_dir("pin");
         let path = dir.join("model.gguf");
         fs::write(&path, b"verified").unwrap();
         let digest = sha256_file(&path).unwrap();
+        // Incomplete metadata is never permission to skip the hash.
         assert!(verify_pinned_file(&path, 8, &digest).is_ok());
         assert!(verify_pinned_file(&path, 0, &digest).is_err());
-        fs::write(&path, b"modified").unwrap();
+        assert!(verify_pinned_file(&path, 8, "").is_err());
+
+        // A rewrite of a different length is refused by the size guard.
+        fs::write(&path, b"modified-and-longer").unwrap();
         assert!(verify_pinned_file(&path, 8, &digest).is_err());
+
+        // A same-size rewrite is refused by the hash, on a path the memo has
+        // never seen so the hash is certain to run.
+        let fresh = dir.join("fresh.gguf");
+        fs::write(&fresh, b"verified").unwrap();
+        fs::write(&fresh, b"modified").unwrap();
+        assert!(
+            verify_pinned_file(&fresh, 8, &digest).is_err(),
+            "a same-size rewrite must fail its pinned checksum"
+        );
+
+        // What the memo above cannot promise: once a path has been verified, the
+        // only thing standing between a same-size rewrite and a pass is the file
+        // stamp. On the filesystem these tests run on, the stamp does not move at
+        // all — an eight-byte rewrite left both `last_write_time` and
+        // `creation_time` at 134348792418400104 across a five-second wait — so
+        // `verify_pinned_file` answers from the memo and blesses the mutation.
+        //
+        // This is reported rather than asserted, because whether a same-size
+        // rewrite is visible at all is a property of the filesystem, not of this
+        // code. Asserting either way would make the suite lie on one platform or
+        // the other. See the note on `verify_pinned_file` and the
+        // `needs orchestrator` item for `dictation/model.rs`.
+        let before = file_stamp(&fs::metadata(&path).unwrap());
+        fs::write(&path, b"verified").unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        let after = file_stamp(&fs::metadata(&path).unwrap());
+        if after == before {
+            log::warn!(
+                "hf-test:verification-memo-cannot-see-content path={} stamp={after:?} \
+                 -- a same-size model rewrite is invisible to the pinned-checksum memo",
+                path.display()
+            );
+        }
         fs::remove_dir_all(dir).ok();
     }
 
@@ -1584,5 +2214,375 @@ mod tests {
         assert!(!path_is_within(&root, &outside));
         assert!(!path_is_within(&root, &root));
         fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn canonical_containment_agrees_with_the_public_rule() {
+        let base = temp_dir("canonical");
+        let root = base.join("models");
+        fs::create_dir_all(&root).unwrap();
+        let inside = root.join("model.gguf");
+        let sibling = root.join("nested").join("model.gguf");
+        let outside = base.join("outside.gguf");
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(&inside, b"model").unwrap();
+        fs::write(&sibling, b"model").unwrap();
+        fs::write(&outside, b"outside").unwrap();
+
+        // `cached_models` reuses the canonical form to test every detected file
+        // against a root it has already resolved. It must not be a second,
+        // weaker copy of the rule.
+        let canonical_root = canonicalize_for_comparison(&root);
+        for (candidate, expected) in [
+            (&inside, true),
+            (&sibling, true),
+            (&outside, false),
+            (&root, false),
+            (&base, false),
+        ] {
+            let name = candidate.display();
+            assert_eq!(
+                path_is_within_canonical(&canonical_root, &canonicalize_for_comparison(candidate)),
+                expected,
+                "canonical containment of {name}"
+            );
+            assert_eq!(
+                path_is_within(&root, candidate),
+                expected,
+                "containment of {name}"
+            );
+        }
+        // A prefix of the root's name is not a descendant of it.
+        assert!(!path_is_within(&root, &base.join("models-evil")));
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn a_cached_verdict_does_not_outlive_the_bytes_it_describes() {
+        let dir = temp_dir("stamp");
+        let path = dir.join("model.gguf");
+        fs::write(&path, b"first").unwrap();
+        remember_compatibility(&path, ModelCompatibility::Verified);
+        assert_eq!(cached_compatibility(&path), ModelCompatibility::Verified);
+        assert_eq!(
+            cached_compatibility(&dir.join("never-probed.gguf")),
+            ModelCompatibility::Unverified
+        );
+
+        // The same path, different bytes. A verdict about the file that used to
+        // be here says nothing about this one, so the pane must ask again rather
+        // than display the old answer as current.
+        let before = compatibility_stamp(&path).expect("stamp");
+        fs::write(&path, b"a different model entirely").unwrap();
+        assert_ne!(
+            before,
+            compatibility_stamp(&path).expect("stamp"),
+            "the fixture must actually change the file identity"
+        );
+        assert_eq!(
+            cached_compatibility(&path),
+            ModelCompatibility::Unverified,
+            "a replaced file must not inherit the previous verdict"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn download_redirects_stay_inside_the_expected_hosts() {
+        for host in [
+            "huggingface.co",
+            "www.huggingface.co",
+            "cdn-lfs.hf.co",
+            "cas-bridge.xethub.hf.co",
+            "github.com",
+            "release-assets.githubusercontent.com",
+        ] {
+            assert!(is_expected_download_host(host), "{host} must stay reachable");
+        }
+        for host in [
+            "huggingface.co.evil.test",
+            "hf.co.attacker.test",
+            "evil.test",
+            "huggingface.coo",
+            "notgithubusercontent.com",
+            "127.0.0.1",
+        ] {
+            assert!(!is_expected_download_host(host), "{host} must be refused");
+        }
+    }
+
+    /// Regression: a probe that outlives its timeout used to release the
+    /// serialization guard, so the next probe opened a second copy of a
+    /// multi-hundred-megabyte model and N timeouts left N models resident.
+    #[test]
+    fn a_timed_out_probe_keeps_holding_the_probe_guard() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let hold = Duration::from_millis(600);
+
+        let first = spawn_probe(
+            PathBuf::from("first.gguf"),
+            Duration::from_millis(60),
+            move |_path| {
+                let _ = started_tx.send(Instant::now());
+                std::thread::sleep(hold);
+                let _ = finished_tx.send(Instant::now());
+                Ok(())
+            },
+        );
+        started_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the first probe must reach its load");
+        assert!(
+            first.is_err(),
+            "a probe that outlives its timeout reports a timeout, not a verdict"
+        );
+
+        // The abandoned thread still owns the guard, so a second probe waits for
+        // it instead of opening another model.
+        let ran = std::sync::Arc::new(AtomicBool::new(false));
+        let second = {
+            let ran = ran.clone();
+            spawn_probe(
+                PathBuf::from("second.gguf"),
+                Duration::from_millis(60),
+                move |_path| {
+                    ran.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+        };
+        assert!(second.is_err(), "a queued probe is still waiting for the guard");
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "a second model was opened while the first was still resident"
+        );
+
+        // And the guard is not leaked forever: once the abandoned load ends, the
+        // next probe runs immediately.
+        finished_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the abandoned load must finish");
+        let third = spawn_probe(PathBuf::from("third.gguf"), Duration::from_secs(30), |_| Ok(()));
+        assert!(
+            matches!(third, Ok(Ok(()))),
+            "the guard must be released once the abandoned load ends, got {third:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resumes_a_partial_download_from_a_matching_content_range() {
+        let dir = temp_dir("resume");
+        let body = payload(4096);
+        let digest = sha256_bytes(&body);
+        let (url, server) = serve_once(
+            TestResponse::new(body[1024..].to_vec())
+                .with_status(206, "Partial Content")
+                .with_header("content-range", "bytes 1024-4095/4096"),
+        );
+        let request = test_request(&dir, &url, &digest, 4096);
+        fs::write(part_path(&request.destination), &body[..1024]).unwrap();
+
+        assert_eq!(run(&request).await, Ok(()));
+        server.join().expect("server");
+        // The whole model, not the prefix twice: the resumed file is hashed in
+        // full before it is promoted.
+        assert_eq!(fs::read(&request.destination).unwrap(), body);
+        assert!(!part_path(&request.destination).exists());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn restarts_when_a_ranged_request_is_answered_with_the_whole_entity() {
+        let dir = temp_dir("restart");
+        let body = payload(4096);
+        let digest = sha256_bytes(&body);
+        let (url, server) = serve_once(TestResponse::new(body.clone()));
+        let request = test_request(&dir, &url, &digest, 4096);
+        // A partial of the same length whose bytes are not the model's prefix.
+        // Appending the 200 body to it would yield a file of exactly the right
+        // length and entirely the wrong content, which is the corruption this
+        // case exists to prevent.
+        fs::write(part_path(&request.destination), vec![0xAB_u8; 1024]).unwrap();
+
+        assert_eq!(run(&request).await, Ok(()));
+        server.join().expect("server");
+        assert_eq!(fs::read(&request.destination).unwrap(), body);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn refuses_a_content_range_that_does_not_start_where_bard_asked() {
+        let dir = temp_dir("range");
+        let body = payload(4096);
+        let (url, server) = serve_once(
+            TestResponse::new(body[1000..].to_vec())
+                .with_status(206, "Partial Content")
+                .with_header("content-range", "bytes 1000-4095/4096"),
+        );
+        let request = test_request(&dir, &url, &sha256_bytes(&body), 4096);
+        fs::write(part_path(&request.destination), &body[..1024]).unwrap();
+
+        let error = run(&request).await.unwrap_err();
+        server.join().expect("server");
+        assert!(error.contains("resumed at byte 1000"), "{error}");
+        assert!(!part_path(&request.destination).exists());
+        assert!(!request.destination.exists());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a_truncated_stream_fails_and_keeps_the_part_for_a_later_resume() {
+        let dir = temp_dir("truncated");
+        let body = payload(8192);
+        // The server promises the full 8192 bytes and delivers 8191, so the
+        // pre-flight size check is satisfied and the failure has to arrive
+        // mid-stream, where the bytes already on disk are a usable resume point.
+        let (url, server) = serve_once(TestResponse::new(body.clone()).truncated());
+        let request = test_request(&dir, &url, &sha256_bytes(&body), 8192);
+
+        assert!(run(&request).await.is_err());
+        server.join().expect("server");
+        let part = part_path(&request.destination);
+        let partial = fs::read(&part).expect("the partial must survive for a resume");
+        assert_eq!(partial.len(), 8191, "every delivered byte must be kept");
+        assert!(body.starts_with(&partial), "surviving bytes must be a prefix");
+        assert!(
+            !request.destination.exists(),
+            "a truncated transfer must never be promoted"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn discards_the_part_when_the_stream_exceeds_the_catalogue_size() {
+        let dir = temp_dir("oversize");
+        let body = payload(4096);
+        // No declared length, so the pre-flight check cannot see this; only the
+        // running total can.
+        let (url, server) = serve_once(TestResponse::new(body).unframed());
+        let request = test_request(&dir, &url, "", 1024);
+
+        let error = run(&request).await.unwrap_err();
+        server.join().expect("server");
+        assert!(error.contains("more model data"), "{error}");
+        assert!(!part_path(&request.destination).exists());
+        assert!(!request.destination.exists());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn refuses_a_declared_length_that_contradicts_the_catalogue() {
+        let dir = temp_dir("declared");
+        let body = payload(4096);
+        let (url, server) = serve_once(TestResponse::new(body));
+        let request = test_request(&dir, &url, "", 2048);
+
+        let error = run(&request).await.unwrap_err();
+        server.join().expect("server");
+        assert!(error.contains("content length does not match"), "{error}");
+        assert!(!request.destination.exists());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn discards_the_part_on_a_checksum_mismatch() {
+        let dir = temp_dir("checksum");
+        let body = payload(4096);
+        let (url, server) = serve_once(TestResponse::new(body));
+        let request = test_request(&dir, &url, &"0".repeat(64), 4096);
+
+        let error = run(&request).await.unwrap_err();
+        server.join().expect("server");
+        assert!(error.contains("checksum mismatch"), "{error}");
+        // A part that failed verification must not survive: a later resume would
+        // treat those bytes as a trusted prefix.
+        assert!(!part_path(&request.destination).exists());
+        assert!(!request.destination.exists());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn promotes_a_complete_part_without_spending_a_request() {
+        let dir = temp_dir("completepart");
+        let body = payload(4096);
+        let request = test_request(
+            &dir,
+            // Port 1 is closed. Reaching the network at all fails this test.
+            "http://127.0.0.1:1/model.gguf",
+            &sha256_bytes(&body),
+            4096,
+        );
+        fs::write(part_path(&request.destination), &body).unwrap();
+
+        assert_eq!(run(&request).await, Ok(()));
+        assert_eq!(fs::read(&request.destination).unwrap(), body);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_download_never_promotes_its_part() {
+        let dir = temp_dir("cancel");
+        // Large enough to arrive in several chunks, small enough to sit in the
+        // socket buffer so the server thread can never block on a write to a
+        // connection the client has already abandoned.
+        let body = payload(256 * 1024);
+        let (url, server) = serve_once(TestResponse::new(body.clone()));
+        let request = test_request(&dir, &url, &sha256_bytes(&body), body.len() as u64);
+        let polls = std::cell::Cell::new(0_u32);
+
+        let error = transfer(&request, |_, _, _, _| {}, || {
+            polls.set(polls.get() + 1);
+            polls.get() > 1
+        })
+        .await
+        .unwrap_err();
+        server.join().expect("server");
+        assert_eq!(error, "Download cancelled.");
+        assert!(
+            !request.destination.exists(),
+            "a cancelled transfer must never be promoted"
+        );
+        let written = fs::metadata(part_path(&request.destination))
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        assert!(
+            written <= body.len() as u64,
+            "the part must never exceed the catalogue size"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn bounded_reads_cap_a_listing_body_by_content_length_and_by_stream() {
+        let client = reqwest::Client::new();
+
+        // A declared length over the cap is refused before any body is read.
+        let (url, server) = serve_once(TestResponse::new(payload(64)));
+        let response = client.get(&url).send().await.expect("request");
+        let error = response_text_bounded(response, 16).await.unwrap_err();
+        server.join().expect("server");
+        assert!(error.contains("too large"), "{error}");
+
+        // So is a body that grows past the cap while streaming — the case
+        // `content_length()` alone cannot see, and the one that made the previous
+        // unbounded `json()` read a memory hazard.
+        let (url, server) = serve_once(TestResponse::new(payload(64)).unframed());
+        let response = client.get(&url).send().await.expect("request");
+        let error = response_text_bounded(response, 16).await.unwrap_err();
+        server.join().expect("server");
+        assert!(error.contains("too large"), "{error}");
+
+        // A body inside the cap comes back intact.
+        let body = payload(64);
+        let (url, server) = serve_once(TestResponse::new(body.clone()));
+        let response = client.get(&url).send().await.expect("request");
+        assert_eq!(
+            response_text_bounded(response, 4096).await.unwrap(),
+            String::from_utf8(body).unwrap()
+        );
+        server.join().expect("server");
     }
 }

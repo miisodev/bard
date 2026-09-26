@@ -7,7 +7,7 @@ keyboard-first panel: an advanced clipboard manager and local voice dictation
 — inspired by shadcn's Copper and built as something Apple would ship for
 Windows.
 
-- **Capture** — double-tap `Shift` to grab a selection (text or images),
+- **Capture** — double-tap `Left Shift` to grab a selection (text or images),
   and everything you copy anywhere lands in a searchable timeline. Sections,
   favorites, multi-select, inline edit, mixed notes (images attached to
   text), Markdown export.
@@ -16,9 +16,9 @@ Windows.
   another `Ctrl` `Ctrl` stops it. Bard uses a local `transcribe-cpp` GGUF model:
   choose Bard Fast, Bard English, or Bard Multilingual in **Settings → Models**.
   Audio capture and local transcription stay on this device. Optional text-only
-  post-processing runs only after local transcription when enabled in
-  **Post-processing**; it sends only the finished transcript to OpenRouter and
-  otherwise uses the local result. The text pastes into the app you're using, or
+  Refine runs only after local transcription when switched on in
+  **Settings → Refine**; it sends only the finished transcript to OpenRouter
+  and otherwise uses the local result. The text pastes into the app you're using, or
   is retained in the local timeline according to the Dictation lifespan setting. Esc cancels; the model unloads
   after five idle minutes. A single take can run for up to 20 minutes. In
   **Settings → Dictation**, the recording pill can sit at the top or bottom of
@@ -46,13 +46,18 @@ Shortcuts are fixed. The same-key gestures and the Right Shift item-paste sequen
 
 ## Licence
 
-Bard includes a 14-day local trial. A paid licence is $20 per 365-day term,
-supports three activated Windows machines, and is renewed through the signed
-miiso.dev account flow. The raw key is stored in Windows Credential Manager;
-Bard keeps a short signed offline lease so a network outage does not discard a
-valid entitlement. When the lease and paid term expire, existing captures remain
-readable/exportable while new capture, dictation, drawing, and editing are
-paused until renewal.
+**One payment. Nothing renews, and there is no subscription and no account.**
+
+Bard includes a 14-day local trial that needs no account and no key. A licence
+costs **US$20 once** and runs for **365 days from the day you first activate
+it**, on up to **three** activated Windows computers. When those 365 days are
+over the licence ends: nothing is charged again, there is no renewal step, and
+there is no account to sign into. Buy again to carry on.
+
+The raw key is stored in Windows Credential Manager, and Bard keeps a signed
+offline lease so a network outage does not discard a valid entitlement. When
+the paid term ends, existing captures stay readable and exportable while new
+capture, dictation, drawing, and editing are paused.
 
 ## Building
 
@@ -63,15 +68,35 @@ installer can bootstrap it when a clean machine needs it).
 ```sh
 bun install
 bun run tauri dev      # develop
-bun run tauri build    # local NSIS installer + updater signature (unsigned)
 bun run build:msix     # Store MSIX validation package
 ```
 
-Bard ships as a signed NSIS installer from miiso.dev and as an MSIX package
-through the Microsoft Store — no downloadable MSIX. The signed direct release is
-built with `scripts/build-release.ps1`, which signs inside the Tauri build using
-a hardware-held certificate; the Store package takes its identity from Partner
-Center and is signed by Microsoft. See `docs/RELEASE_RUNBOOK.md`.
+A local release — the NSIS installer plus its updater signature — is built by
+`scripts/build-release.ps1`, not by a bare `tauri build`:
+
+```powershell
+.\scripts\build-release.ps1 -Unsigned   # ships unsigned, by decision
+```
+
+Bard ships in two ways, and only one of them is signed.
+
+- **Direct download from miiso.dev — an NSIS installer that is deliberately
+  unsigned.** No publicly trusted code-signing certificate is bought for Bard,
+  so the installer is not Authenticode-signed and Windows shows a SmartScreen
+  "Windows protected your PC" prompt the first time you run it. The prompt is
+  the expected result, not a corrupt download. Click **More info →
+  Run anyway**, or install from the Microsoft Store instead and skip it. Every
+  other protection is intact and independently checked: the installer carries
+  an Ed25519 updater signature, `scripts/verify-release.ps1` verifies that
+  signature against the public key embedded in the app before anything is
+  published, and the Store copy is signed by Microsoft. The signing path for a
+  future certificate is still in the script and the runbook, unused.
+- **Microsoft Store — an MSIX package signed by Microsoft** after
+  certification. There is no downloadable MSIX: a sideloaded copy would carry a
+  different identity from the Store copy, install beside it, and never receive
+  an update. The package takes its identity from Partner Center.
+
+See `docs/RELEASE_RUNBOOK.md`.
 
 The three model roles are pinned to the hash-verified
 `https://github.com/miisodev/bard-models` release `models-v2`:
@@ -102,9 +127,23 @@ Tauri 2 (Rust + React/TS/Vite), SQLite as the single source of truth:
 
 ```sh
 bun run build
+bun audit
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 cargo check --locked --manifest-path src-tauri/Cargo.toml
+cargo audit --file src-tauri/Cargo.lock   # cargo install cargo-audit
 ```
+
+`cargo audit` is the Rust half of the dependency gate and reads
+`src-tauri/Cargo.lock` explicitly — there is no `Cargo.lock` at the repository
+root, so a bare `cargo audit` looks at the wrong place. As of 2026-09-26 it
+reports 0 vulnerabilities and 8 warnings over 682 locked packages; three of those
+crates (`glib`, `memmap2`, `proc-macro-error`) are in the lockfile but are never
+compiled for Windows, which
+`cargo tree --target x86_64-pc-windows-msvc -i <crate>` will confirm. CI runs the
+same command through `rustsec/audit-check`, pinned to a commit; a critical
+advisory fails the job and an informational one is reported on a Check.
 
 The exact model release gate is documented in `docs/BUILD.md`. Set
 `BARD_SMOKE_MODELS` (and `BARD_SMOKE_WAV` for transcription) only when running

@@ -54,17 +54,30 @@ is the pattern to follow.
 
 ## Where we actually stand
 
-Measured 2026-09-24. The original 2026-09-19 inventory remains in the dated log
-as a baseline; these figures describe the current working tree.
+The bard column was **re-measured 2026-09-26**; the cooper and Handy columns are
+the earlier 2026-09-24 measurement and have not been retaken, so only the bard
+column is current. The original 2026-09-19 inventory remains in the dated log
+as a baseline.
+
+**How the LOC figure is measured, because the old one did not say and that is
+what made it useless:** non-blank lines in `src/**/*.{ts,tsx,css}` and
+`src-tauri/src/**/*.rs`, excluding lines whose first non-space characters are a
+comment marker (`//`, `#`, `/*`, `*`, `<!--`, `--`). That is **21,492** code
+lines, or **24,343** counting comments. Both are stated because they disagree by
+2,851 and a single unlabelled number is not checkable. `cloc`/`tokei` are not on
+this machine, so the filter above is the definition, and it is reproducible.
+The previous `11,069` carried no method at all and cannot be compared with
+either figure.
 
 | | bard | cooper | Handy |
 | --- | --- | --- | --- |
-| Source LOC | 11,069 | 6,393 | 43,952 |
-| Tauri commands | 64 | 40 | 53 |
-| User-facing settings panes | **8** | ~15 | **62** |
+| Source LOC | **21,492** code / 24,343 with comments (2026-09-26) | 6,393 (2026-09-24) | 43,952 (2026-09-24) |
+| Tauri commands | **87** | 40 (2026-09-24) | 53 (2026-09-24) |
+| User-facing settings panes | **8** | ~15 (2026-09-24) | **62** (2026-09-24) |
+| Rust packages locked | **682** (328 compiled for Windows x64) | — | — |
 
 bard is larger than the 2026-09-19 skeleton while still owing the surface of
-both references. The model and post-processing paths have code
+both references. The model and Refine paths have code
 implementations; the current product mandate adds a separate set of licence,
 surface, lifecycle and release rows below. Blueprint reconciliation changes the
 contract, not the implementation status: no row is `done` because a document was
@@ -88,7 +101,7 @@ Verified against the Copper demo videos and cooper's source.
 | A8 | **Composer plus-menu** — "Attach" only | **done** | The composer plus-menu offers **Attach** only; drawing lives behind the persistent header Draw icon. Verified in the installed build 2026-09-24 |
 | A9 | **Click thumbnail to copy image to clipboard** | **done** | The row was wrong: `copy_item` already handled images, only the click affordance was missing. Card images and attachment thumbnails now copy on click |
 | A10 | **Copy as List** — multi-select to Markdown list (`Ctrl+Shift+M`) | **verify** | The list-copy action is implemented and keyboard-complete; the final shortcut collision and installed interaction still need a receipt. |
-| A11 | **Shortcuts sheet** (`Ctrl+/`) and fixed shortcut reference | **done** | Settings → Shortcuts is a read-only reference for fixed gestures and panel keys; the customizable chord editor, persisted bindings, and global-shortcut registration layer have been removed. |
+| A11 | **Shortcuts sheet** (`Ctrl+/`) and fixed shortcut reference | **in progress** | Two surfaces, and neither is settled. Settings → Shortcuts is a read-only reference for the fixed gestures and panel keys; the customizable chord editor, persisted bindings, and global-shortcut registration layer have been removed. The in-panel sheet is being rebuilt (2026-09-26): the version that stood until then listed Enter, Ctrl+Shift+M, Ctrl+K, Right Shift, Right Alt, Left Alt, F11, Space and Esc — **it omitted the Capture and Dictate gestures entirely**, so the two things Bard exists to do were not in the sheet a user opens to find them. The replacement is a modal with a scrim, a focus trap and focus restoration, and its `Gestures` group now carries Left Shift ×2 (Capture) and Ctrl ×2 (Dictate). It is `in progress` and not `done` because it has no installed receipt yet, and because the old `done` was recorded against a sheet that did not say what the row claimed. |
 | A12 | **Focus hand-back** — Esc returns focus to the previous app | **verify** | `panel.rs` remembers and restores the previous foreground window; still untested by hand |
 | A13 | **Right-Shift x2 toggles panel** (Left-Shift x2 captures) | **done** | One shared raw-input coordinator, same-side timing/dirty rules, synthetic-input guard, and deterministic gesture tests; packaged Windows runtime remained responsive through both gestures |
 | A14 | **Obsidian export** — vault detection, one file per section | **missing** | cooper has all three commands |
@@ -123,7 +136,7 @@ Every row is a user-visible capability.
 | B4 | **Discover models already on the machine** | **verify** | The shared HF cache scan follows snapshot links, checks the exact file with the engine, and supports explicit Use; Forget unregisters an external file without deleting it. No live cache discovery and Use round trip has been recorded. |
 | B5 | **Non-whisper architectures** (parakeet, nemotron, moonshine, canary, sensevoice, gigaam, qwen3, voxtral, granite…) | **partial** | `transcribe-cpp` is the sole engine, and the final catalogue now includes `parakeet` and `qwen3_asr` alongside `whisper`, all as single GGUF files. The three selected defaults passed exact-blob Windows load/transcription; the broader Handy architecture catalogue is not present. |
 | B6 | **Transcription history** + independent retention period | **partial** | Dictation inserts carry a `dictation` origin, persist only after verified clipboard output, and use the independent 30-day default/lifespan control; the full real-speech and retention matrix remains. |
-| B7 | **Post-processing via LLM** — provider, base URL, API key, model, prompt library | **partial** | The fixed OpenRouter text-only service, bounded/cancellable metadata test, keyring v1 Windows Credential Manager storage, separate Post-processing pane, first explicit model ID, non-streaming request, no-fallback provider routing, response identity checks, and local fallback are implemented. A disposable Windows Credential Manager round-trip and a live metadata-only request passed; the full transcript post-processing round trip remains pending. There is no user-editable endpoint or prompt library. |
+| B7 | **Refine via LLM** — provider, base URL, API key, model, prompt library | **partial** | The fixed OpenRouter text-only service, bounded/cancellable metadata test, keyring v1 Windows Credential Manager storage, a separate **Refine** pane, first explicit model ID, non-streaming request, no-fallback provider routing, response identity checks, and local fallback are implemented. A disposable Windows Credential Manager round-trip and a live metadata-only request passed; the full transcript Refine round trip remains pending. There is no user-editable endpoint or prompt library. (The pane is labelled **Refine** everywhere in the build — `SettingsWindow` section id `postprocessing`, display name `Refine`, and the pane's own title is `Refine`. Rows and prose here that still say "Post-processing" for this pane are stale; the rename is recorded in the 2026-09-24 log entry.) |
 | B8 | **VAD** — enable, backend selector (earshot/silero), smoothing | **partial** | `dictation/vad.rs` exists; no settings |
 | B9 | **Paste method / clipboard handling / paste delay / reliable paste** | **partial** | Clipboard writes are verified before recording own-write suppression or pasting; text/image selection capture restores the prior text/HTML/image/file snapshot. Full custom-format and locked-clipboard Windows matrix remains. |
 | B10 | **Auto-submit** (+ key) | **missing** | |
@@ -170,8 +183,8 @@ Neither reference does this; it is the reason bard is one app and not two.
 | D5 | **Real-audio verification** — the mic has never been exercised | **verify** | CPAL start, bounded recording, VAD silence stop, and no-speech fast exit were exercised on Windows; a human speech transcript round trip remains to be recorded. |
 | D6 | **Visual QA of every surface** | **in progress** | Fresh local captures now cover the four-step onboarding shell, panel, exact-height Settings companion, About/licence entry, masked key input and explicit update confirmation. Installed/light-dark/150% and remaining state receipts are still required. |
 | D7 | **Accessibility** — keyboard reachability, focus restoration, menu/list semantics, live announcements, contrast, screen reader | **partial** | Required panel chords, active-item navigation, shortcut sheet, menu typeahead/focus restoration, labelled copy, live status, reduced motion and corrected AA token values are implemented; NVDA/200% and installed focus passes remain. |
-| D8 | **Empty / error / loading / restricted states everywhere** | **partial** | Onboarding, trial/licence, update confirmation, retention/prune, model, overlay, panel and native restricted commands now have explicit copy and controls; the complete surface matrix is not yet visually verified. |
-| D11 | **Licence and trial surfaces** — onboarding, About, active/offline/revalidation/restricted/machine-limit states | **partial** | Four-step onboarding, explicit trial start, masked activation, release/deactivate, revalidation, offline-lease and restricted copy are implemented; the real Polar key lifecycle and machine-limit states still need end-to-end evidence. |
+| D8 | **Empty / error / loading / restricted states everywhere** | **partial** | Walked against the build on 2026-09-26 rather than asserted, because this row previously claimed a completeness it had not earned. Present with explicit copy and controls: onboarding (`Onboarding.tsx:181-215`, `:270` — catalogue loading, catalogue failure, install failure, finish failure), models (`Models.tsx:622-637`, `:800-815` — catalogue and local-scan loading / failure / empty, plus per-action errors), licence and trial (`LicenseCard.tsx:89-113` — active, trial, trial-available, restricted, unavailable), update confirmation (`About.tsx:65`, `role="alertdialog"`), retention and prune (`Data.tsx:125-156` — loading, error, in-flight label), the panel empty state (A18) and its toast. **Still missing, and named rather than implied:** an offline-lease state (D11 — it exists in no surface), a machine-limit state (D11), a panel *load* failure distinct from a toast, and any error state on the native recording overlay, which is B21's still-open "hidden-panel error delivery". The matrix has not been walked visually in every state at 100% and 150%. |
+| D11 | **Licence and trial surfaces** — onboarding, About, active/offline/revalidation/restricted/machine-limit states | **partial** | Four-step onboarding, explicit trial start, masked activation, release/deactivate, revalidation and restricted copy are implemented. Two states in this row's own name **do not exist**, and the previous note claimed otherwise: there is no `Offline licence · n days left` state anywhere. `LicenseStatus.state` is `trial_available \| trial \| active \| restricted \| unavailable` (`license.rs:81`, `types.ts:164-165`) and there is no offline value in it; the only offline signal is a `message` string — `"Offline licence check pending."` — shown on a licence whose next check is due (`license.rs:494-497`), which is a note on an active licence, not a state. **Nor is there a machine-limit state.** The three-activation limit is enforced by the broker, so a fourth machine can only arrive as an activation error string; nothing in the app renders a machine-limit surface. The real Polar key lifecycle and machine-limit evidence remain open, and the two missing surfaces are now the gap rather than a footnote. |
 
 ## E. Ship
 
@@ -181,8 +194,8 @@ Neither reference does this; it is the reason bard is one app and not two.
 | E8 | **Host our own models** | **done** | The catalogue points all three final defaults at the pinned, hash-verified `miisodev/bard-models` release `models-v2`, with exact asset URLs, conversion provenance, model-specific notices, byte sizes, and SHA-256 values. The public release assets match the staged hashes, support `Range` requests, and each exact file passed a Windows `transcribe-cpp` load/transcription smoke test. |
 | E9 | **A release panic is a silent death** | **partial** | A local panic hook is installed before Tauri startup, writes bounded timestamped crash logs, preserves the previous hook, and exposes a latest-log reader; the Data pane can load the newest report. A secret-free lifecycle log now records console interrupts, gesture outcomes, audio failures, model phases, and cloud test boundaries. A release-profile probe confirmed the hook writes before abort and captures a backtrace. Native/WebView2 process failures and the operator artifact-retention/field workflow remain unverified. |
 | E1 | **One-time licence** — US$20 once, 365 days from first activation, 14-day local trial, three paid activations, signed 30-day offline lease, bounded revalidation | **partial** | CSPRNG installation identity, Credential Manager key/lease storage, replay and temporal checks, key rotation, explicit trial, terminal revocation handling, scheduled bounded refresh, Polar broker routes and activation/deactivation UI are implemented. The Polar product is one-time with a licence-key benefit and no Polar-side expiry; the broker stamps `expiresAt = now + 365 days` at first activation. Live four-device, refund and checkout evidence remain. |
-| E2 | Code signing (SmartScreen) | **partial** | Signing happens inside the Tauri build (`scripts/build-release.ps1`): a certificate thumbprint for a token or store certificate, or a cloud signer's sign command, so `bard.exe`, the installer and its uninstaller are signed before the updater signature is written. The previous post-build PFX script could never have worked — code-signing keys are hardware-bound since June 2023 — and would have shipped an installer holding the unsigned `bard.exe`. No certificate is being bought: 0.1.2 ships unsigned by decision, the page tells buyers how to dismiss the SmartScreen notice, and the signing path stays intact for anyone who later holds such a key |
-| E3 | Auto-update channel + signed releases | **partial** | The Tauri updater endpoint, embedded public key, cryptographically verified updater artifact, user-invoked confirmed check/install flow, release workflow and updater signature verification exist, and the public feed serves the newest release. Authenticode is not part of this row: the artifacts ship unsigned by decision. An immutable public manifest, live upgrade and rollback receipt remain. |
+| E2 | Code signing (SmartScreen) | **partial** | Signing happens inside the Tauri build (`scripts/build-release.ps1`): a certificate thumbprint for a token or store certificate, or a cloud signer's sign command, so `bard.exe`, the installer and its uninstaller are signed before the updater signature is written. The previous post-build PFX script could never have worked — code-signing keys are hardware-bound since June 2023 — and would have shipped an installer holding the unsigned `bard.exe`. No certificate is being bought: 0.1.2 ships unsigned by decision, the page tells buyers how to dismiss the SmartScreen notice, and the signing path stays intact for anyone who later holds such a key. Note what did **not** change here: Authenticode still has to be made inside the build, because `bard.exe` must be signed before the installer is assembled around it. Only the *updater* signature was decoupled (E3), and that is a trust boundary, not a preference |
+| E3 | Auto-update channel + signed releases | **partial** | The Tauri updater endpoint, embedded public key, cryptographically verified updater artifact, user-invoked confirmed check/install flow, release workflow and updater signature verification exist, and the public feed serves the newest release. Authenticode is not part of this row: the artifacts ship unsigned by decision. An immutable public manifest, live upgrade and rollback receipt remain. **The updater key no longer enters the build (2026-09-26).** It used to be set in the environment that runs `bun run tauri build`, which hands that environment to bun, to the JavaScript in `node_modules/@tauri-apps/cli`, to every npm lifecycle script, to cargo, and to every `build.rs` in the graph. One compromised transitive dependency with a build hook could therefore have read it, and a signature produced that way is *genuinely valid* — `tauri-plugin-updater` would accept its replacement installer on every installed client and nothing would ever report it. The build now runs with `bundle.createUpdaterArtifacts` off and the three `TAURI_SIGNING_*` variables scrubbed from its environment; `scripts/tauri-sign.mjs` signs the finished installer afterwards, dlopening the native Tauri CLI so no JavaScript from `node_modules` is evaluated in the process that can read the key. Established on 2026-09-26 without a release build: a standalone signature and a bundled one carry the same envelope (`untrusted comment: signature from tauri secret key` and `trusted comment: timestamp:…\tfile:…`, both of which `verify-release.ps1` requires), and `examples/verify_updater.rs` accepts the standalone signature, rejects a single flipped byte in the artefact, and rejects a signature made with a different key. |
 | E4 | miiso.dev purchase + download page | **partial** | The authenticated Bard storefront, the one-time Polar product and its licence-key benefit, secure entitlement retrieval, broker routes, legal pages and NSIS/MSIX download paths are implemented. Production is live, not fail-closed: the page sells the one-time $20 licence, Polar checkout issues the key by email, and the site's Terms carry the same one-time 365-day model. Outstanding: the first real purchase receipt. The expiry-reminder sweep (`/api/bard/licence-reminders`, daily 07:00 UTC) is live |
 | E5 | Microsoft Store packaging | **partial** | `scripts/build-msix.ps1 -Store` packages the release binary under the Partner Center identity with a `windows.startupTask`; Microsoft signs it after certification. The app detects its package identity and stands its updater down. The validation package builds; the name is reserved, the listing assets are ready, and submission 1 of Store ID `9N37XJJS1F3H` is in certification — its public page still returns 410 until certification completes, and `NEXT_PUBLIC_BARD_STORE_URL` waits on that |
 | E10 | **NSIS consumer package** | **partial** | **One direct package: the NSIS installer** with embedded WebView2 bootstrapper, Send to Bard hook and updater signature, distributed unsigned by decision. The downloadable MSIX is dropped (a sideloaded copy would carry a different identity from the Store copy and never update). Clean install/upgrade/uninstall, the SmartScreen notice the product page tells buyers to dismiss, and legal-notice packaging remain |
@@ -721,3 +734,90 @@ focus kept in Notepad through a held click. Physically confirmed by Miiso:
 Alt × 2 gestures. The Store screenshots then caught one more: shapes drawn in ink kept
 their dark colour when the page turned dark and vanished; ink shapes now paint in
 the page's ink on screen and in exports (0.1.1).
+
+**2026-09-26 — a documentation correction pass, and the signing key came out of
+the build.** Three things happened, and the first one is the reason the other two
+were worth doing.
+
+**The blueprint library left the repository** (`docs/blueprints/**`, deleted in
+`54b1e0f`). This log and several rows still cite it — "the five blueprints now
+specify…", "Design System §4", "Technology §2" — and those citations now point at
+nothing. The header of this file already repointed intent at the workspace
+`Blueprints/`, so the log entries are left exactly as written and are read as
+history. Two rows that cited a blueprint as authority had to be re-grounded on
+the build, because with the source gone the only checkable home for a fact is the
+code and this ledger.
+
+**One blueprint contradiction, resolved against the build.** The design system
+said the panel header has *three* trailing controls with the fourth called
+**More**; the surfaces blueprint said *four*, the fourth being **Sort**. The build
+has four: `Draw`, `Settings`, `Clear completed`, `Sort` (`Panel.tsx:677-716`) —
+the surfaces list, exactly. **The surfaces reading is canonical and the design
+system's "three / More" is retired**, because that is what shipped and because the
+2026-09-24 log entry above already records the change that caused it: Clear
+completed moved out of the overflow into the header, and the overflow became
+Sort. The design system's own rule — one canonical home per fact — is the tie,
+and the home is `04-surfaces.md`'s list.
+
+**The updater signing key was in the build's environment.** `build-release.ps1`
+and the release workflow both set `TAURI_SIGNING_PRIVATE_KEY` and its password and
+then ran `bun run tauri build`. That environment reaches bun, the JavaScript in
+`node_modules/@tauri-apps/cli`, every npm lifecycle script, cargo, and every
+`build.rs` in the graph. The consequence is worse than a leaked password: a
+signature made with that key is *valid*, so a single compromised transitive
+dependency could ship an installer that `tauri-plugin-updater` accepts on every
+installed client, silently, forever. The build now runs with
+`bundle.createUpdaterArtifacts` off and the `TAURI_SIGNING_*` variables scrubbed;
+`scripts/tauri-sign.mjs` signs the finished installer afterwards and loads the
+Tauri CLI as a native addon, so no JavaScript from `node_modules` runs in the
+process that can read the key. The Authenticode certificate stays inside the
+build, because `bard.exe` has to be signed before the installer is assembled
+around it (E2). The release job is behind a GitHub environment and no longer
+leaves a checkout credential in `.git/config` for the whole run.
+
+**And the ledger was wrong in seven places, which is the part worth recording.**
+Every figure below was re-measured against the tree rather than carried forward:
+
+- `Tauri commands | 64` was **87** — `main.rs:317-405` registers 87, and the
+  count was two years of command additions out of date.
+- `Source LOC | 11,069` was **21,492** code lines, or 24,343 with comments. The
+  old number recorded no measurement method, which is why nobody could tell it
+  was stale; the method is now written into the table above.
+- A11 was `done` against a shortcuts sheet that **omitted the Capture and Dictate
+  gestures** — the two things Bard exists to do were missing from the sheet a user
+  opens to find them. The sheet is being rebuilt and the row is `in progress`.
+- B7 said "Post-processing pane". The pane is **Refine** everywhere in the build
+  (`SettingsWindow.tsx:33`, and the pane's own `title="Refine"`). Three documents
+  disagreed with the blueprint and the build; the build wins.
+- D8 asserted a completeness nobody had walked. It is now an inventory with
+  `file:line` behind each claim and the four states that genuinely do not exist.
+- D11 claimed offline-lease copy was implemented. `LicenseStatus.state` has no
+  offline value (`license.rs:81`, `types.ts:164-165`) and no surface anywhere says
+  `Offline licence · n days left`; the only offline signal is a message string on
+  an *active* licence. There is no machine-limit state either.
+- E4's "Outstanding: the expiry-reminder job" was already stale in the other
+  direction — the sweep is live — so nothing was changed there.
+
+**Two log entries contradict the current host decision and are left in place.**
+The 2026-09-23 entry ends "E10 now retires every consumer format except signed
+NSIS", and this file's own §What bard is says the direct installer is
+unsigned-by-decision. Both were true on their dates; the mandate moved on
+2026-09-24. The 2026-09-23 entry also says the blueprints "now specify the US$20
+**recurring annual licence**" — a superseded mandate, and it contradicts the
+blueprint it claims to reconcile. The rule this file already states is the
+answer: the historical entries stay, and the live decision lives in the rows.
+Rewriting a dated entry to match today is how a build ledger stops being evidence.
+
+**CI's Rust dependency audit was pointed at nothing.** `rustsec/audit-check` runs
+`cargo audit --file <working-directory>/Cargo.lock`, `working-directory`
+defaults to `.`, and there is no `Cargo.lock` at the repository root — the crate
+is in `src-tauri/`. The step was failing on every run, which is the worst kind of
+gate: it looks like a gate. It is now pinned to a commit, pointed at
+`src-tauri`, and given the `checks: write` it needs to report. Measured with
+`cargo audit --file src-tauri/Cargo.lock`: **682 locked packages, 328 compiled
+for Windows x64, 0 vulnerabilities, 8 warnings** (6 unmaintained, 2 unsound).
+Three of those crates — `glib`, `memmap2`, `proc-macro-error` — are in the
+lockfile only; `cargo tree --target x86_64-pc-windows-msvc -i <crate>` prints
+nothing for them. The five `unic-*` warnings are real and reach the build through
+`urlpattern → tauri-utils`. A critical advisory fails the job; an informational
+one annotates a Check — the same shape as the `bun audit` step above it.

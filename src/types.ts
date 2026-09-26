@@ -170,6 +170,20 @@ export interface LicenseStatus {
   expiresAt: number | null;
   lastCheckedAt: number | null;
   message: string | null;
+  /**
+   * Activations in use, and the ceiling. A licence is three Windows
+   * computers — a headline term of a $20 purchase that was nowhere in the
+   * product — so the backend reports the count when it can and the card shows
+   * it when it arrives. Optional because the backend does not report it yet:
+   * absent means "not reported", never "zero used".
+   */
+  activationCount?: number | null;
+  activationLimit?: number | null;
+  /**
+   * Days left on the signed offline lease. The backend's own "Offline licence
+   * check pending." message is rendered; this is the number behind it.
+   */
+  offlineLeaseDaysLeft?: number | null;
 }
 
 export interface UpdateInfo {

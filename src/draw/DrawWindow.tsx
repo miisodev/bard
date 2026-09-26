@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Maximize2, Minimize2, Redo2, Undo2, X } from "lucide-react";
+import {
+  ArrowRight,
+  Circle,
+  Maximize2,
+  Minimize2,
+  Minus,
+  MousePointer2,
+  Pen,
+  Redo2,
+  Square,
+  Type,
+  Undo2,
+  X,
+} from "lucide-react";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
 import { DRAW_CANVAS, drawCanvasFor, inkFor, isHexColor, type BackgroundMode } from "../appearance";
@@ -19,19 +32,60 @@ import {
 
 const win = getCurrentWindow();
 
-/** The first swatch is the ink: dark on a light page, light on a dark one. */
-const HUES = ["#2f6fed", "#e5484d", "#2c9e5b", "#e8a33d"];
 const WIDTHS = [2, 4, 8];
 
-const TOOLS: { tool: Tool; label: string; icon: JSX.Element }[] = [
-  { tool: "select", label: "Select", icon: <path d="M4 3l8.5 6.2-3.7.6L11 14l-1.7.8-1.9-3.7L4.6 13z" /> },
-  { tool: "pen", label: "Draw", icon: <path d="M3 13l1-3.2 6.4-6.4a1.3 1.3 0 0 1 1.9 0l.3.3a1.3 1.3 0 0 1 0 1.9L6.2 12 3 13z" /> },
-  { tool: "line", label: "Line", icon: <path d="M3.5 12.5L12.5 3.5" /> },
-  { tool: "arrow", label: "Arrow", icon: <path d="M3.5 12.5L12.5 3.5M12.5 3.5H8M12.5 3.5V8" /> },
-  { tool: "rect", label: "Rectangle", icon: <rect x="3" y="4" width="10" height="8" rx="1.5" /> },
-  { tool: "ellipse", label: "Ellipse", icon: <ellipse cx="8" cy="8" rx="5.2" ry="4.2" /> },
-  { tool: "text", label: "Text", icon: <path d="M4 4h8M8 4v9" /> },
+/*
+  One icon family. The seven tools used to be hand-drawn inline SVG at a
+  different stroke weight from the Lucide Undo and Redo beside them, in the
+  same 28px button: two icon systems, one toolbar.
+*/
+const TOOLS: { tool: Tool; label: string; Icon: typeof MousePointer2 }[] = [
+  { tool: "select", label: "Select", Icon: MousePointer2 },
+  { tool: "pen", label: "Pen", Icon: Pen },
+  { tool: "line", label: "Line", Icon: Minus },
+  { tool: "arrow", label: "Arrow", Icon: ArrowRight },
+  { tool: "rect", label: "Rectangle", Icon: Square },
+  { tool: "ellipse", label: "Ellipse", Icon: Circle },
+  { tool: "text", label: "Text", Icon: Type },
 ];
+
+/*
+  The swatches are drawing inks, and the first of them is the page's own ink:
+  dark on a light page, light on a dark one, so a stroke in ink stays readable
+  when the page turns. The three hues beside it are the theme's own accent,
+  danger and success read at render time — the toolbar used to hold the light
+  theme's values as literals, which put a light blue swatch beside a dark
+  theme's blue selection ring, two blues 2px apart.
+*/
+const HUE_FALLBACK = ["#2f6fed", "#e5484d", "#2c9e5b"] as const;
+
+/**
+ * Amber has no token. It is a drawing ink, and a mid amber reads on a light
+ * page and a dark one alike, so it stays a literal here — a `--warning` token
+ * in tokens.css would be the correct home for it.
+ */
+const AMBER_INK = "#e8a33d";
+
+function tokenInk(property: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(property).trim();
+  return value || fallback;
+}
+
+/** The theme's inks, re-read whenever the resolved theme can have changed. */
+function useHues(themeKey: string): string[] {
+  const [hues, setHues] = useState<string[]>([...HUE_FALLBACK, AMBER_INK]);
+  useEffect(() => {
+    // Runs after `useTheme`'s own effect has written the new theme, so this
+    // reads the tokens the window is actually painted with.
+    setHues([
+      tokenInk("--accent", HUE_FALLBACK[0]),
+      tokenInk("--danger", HUE_FALLBACK[1]),
+      tokenInk("--success", HUE_FALLBACK[2]),
+      AMBER_INK,
+    ]);
+  }, [themeKey]);
+  return hues;
+}
 
 /*
   The canvas is driven imperatively.
@@ -49,9 +103,11 @@ export default function DrawWindow() {
   const [canvasPreview, setCanvasPreview] = useState<string | null>(null);
   const page = canvasPreview ?? (appearance ? drawCanvasFor(appearance) : DRAW_CANVAS.light);
   const ink = inkFor(page);
-  const colors = [ink, ...HUES];
+  const hues = useHues(`${appearance?.theme ?? ""}:${appearance?.systemDark ?? ""}`);
+  const colors = [ink, ...hues];
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const shapesRef = useRef<Shape[]>([]);
   const draftRef = useRef<Shape | null>(null);
   const dragRef = useRef<{ id: number; last: Point } | null>(null);
@@ -64,6 +120,8 @@ export default function DrawWindow() {
   const canvasWell = useRef<HTMLInputElement>(null);
   const canvasChoice = useRef<HTMLDivElement>(null);
   const penCustom = !colors.includes(color);
+  /** The colour a stroke would actually take: an ink follows the page. */
+  const paintColor = INKS.includes(color) ? ink : color;
 
   // The ink follows the page: a stroke in ink stays readable when the page
   // turns from light to dark, while a chosen hue is left exactly as chosen.
@@ -75,6 +133,27 @@ export default function DrawWindow() {
   const [saving, setSaving] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [empty, setEmpty] = useState(true);
+  // Undo used to be disabled and Redo never was, because the redo stack lives
+  // in a ref and nothing in state said whether it held anything.
+  const [redoCount, setRedoCount] = useState(0);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [discard, setDiscard] = useState(false);
+  const [textField, setTextField] = useState<{ at: Point; left: number; top: number; value: string } | null>(null);
+  const textSize = Math.max(14, width * 5);
+  const [savedOnce, setSavedOnce] = useState(false);
+  const savedIdRef = useRef<number | null>(null);
+
+  /**
+   * A drawing that has not been saved. Save puts it in Bard and closes the
+   * window, so this is "there is something on the page that Bard has not got"
+   * — and the two ways out of a dirty window have to ask first.
+   */
+  const dirty = !empty && !savedOnce;
+  const dirtyRef = useRef(dirty);
+
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  }, [dirty]);
 
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
@@ -129,6 +208,7 @@ export default function DrawWindow() {
     if (s) {
       shapesRef.current = [...shapesRef.current, s];
       undoneRef.current = [];
+      setRedoCount(0);
       setEmpty(false);
     }
     draftRef.current = null;
@@ -140,22 +220,49 @@ export default function DrawWindow() {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
 
+  /**
+   * Open the text tool's field where the click landed. The shape's own point is
+   * canvas-relative; the field's is relative to the surface the field is a
+   * child of, so the two are kept apart rather than converted at commit time.
+   */
+  const openTextField = (p: Point) => {
+    const pageBox = canvasRef.current?.getBoundingClientRect();
+    const surface = surfaceRef.current?.getBoundingClientRect();
+    setTextField({
+      at: p,
+      left: p.x + (pageBox?.left ?? 0) - (surface?.left ?? 0),
+      top: p.y + (pageBox?.top ?? 0) - (surface?.top ?? 0),
+      value: "",
+    });
+  };
+
+  /** Enter, or clicking away with something typed, keeps the text. */
+  const commitText = () => {
+    const draft = textField;
+    setTextField(null);
+    if (!draft) return;
+    const text = draft.value.trim();
+    if (!text) return;
+    commit({ kind: "text", id: newId(), color, size: textSize, at: draft.at, text });
+  };
+
+  const cancelText = () => setTextField(null);
+
   const onPointerDown = (e: React.PointerEvent) => {
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const p = at(e);
+
+    // Before the capture: a field is a field, and the pointer belongs to it.
+    if (tool === "text") {
+      openTextField(p);
+      return;
+    }
+
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 
     if (tool === "select") {
       const hit = hitTest(shapesRef.current, p);
       setSelected(hit?.id ?? null);
       dragRef.current = hit ? { id: hit.id, last: p } : null;
-      return;
-    }
-
-    if (tool === "text") {
-      const text = window.prompt("Text");
-      if (text && text.trim()) {
-        commit({ kind: "text", id: newId(), color, size: Math.max(14, width * 5), at: p, text: text.trim() });
-      }
       return;
     }
 
@@ -203,6 +310,7 @@ export default function DrawWindow() {
     if (!last) return;
     shapesRef.current = shapesRef.current.slice(0, -1);
     undoneRef.current.push(last);
+    setRedoCount(undoneRef.current.length);
     setSelected(null);
     setEmpty(shapesRef.current.length === 0);
     paint();
@@ -212,6 +320,7 @@ export default function DrawWindow() {
     const s = undoneRef.current.pop();
     if (!s) return;
     shapesRef.current = [...shapesRef.current, s];
+    setRedoCount(undoneRef.current.length);
     setEmpty(false);
     paint();
   };
@@ -226,19 +335,61 @@ export default function DrawWindow() {
 
   const save = async (alsoCopy: boolean) => {
     const canvas = canvasRef.current;
-    if (!canvas || saving) return;
+    // Read the shapes from the ref, not from `empty`: the key handler closes
+    // over whichever render registered it, and a stale `empty` there silently
+    // swallowed Ctrl+Enter.
+    if (!canvas || saving || shapesRef.current.length === 0) return;
     setSaving(true);
+    setSaveError(null);
     try {
-      const b64 = exportPng(shapesRef.current, canvas.clientWidth, canvas.clientHeight, 2, page);
-      if (b64) {
-        const id = await api.addImage(b64, "png");
-        if (alsoCopy && id) await api.copyItem(id);
+      let id = savedIdRef.current;
+      if (id == null) {
+        const b64 = exportPng(shapesRef.current, canvas.clientWidth, canvas.clientHeight, 2, page);
+        if (!b64) throw new Error("The page could not be rendered.");
+        id = await api.addImage(b64, "png");
+        // The drawing is in Bard from here: it is no longer unsaved work, so
+        // closing stops having to ask before throwing it away.
+        savedIdRef.current = id || null;
+        setSavedOnce(true);
+      }
+      if (alsoCopy && id) {
+        try {
+          await api.copyItem(id);
+        } catch {
+          // In Bard, not on the clipboard. Worth saying, and not worth a
+          // second copy of the same drawing in the timeline if Save is pressed
+          // again — hence the id remembered above.
+          setSaveError("Saved to Bard, but Bard could not copy it to the clipboard.");
+          return;
+        }
       }
       await win.close();
+    } catch {
+      // Previously an unhandled rejection: the drawing was never saved, nothing
+      // said so, and closing the window took it with it.
+      setSaveError("Couldn't save this drawing. Try again.");
     } finally {
       setSaving(false);
     }
   };
+
+  /** Set once the user has answered the discard question, so it is asked once. */
+  const discardAgreed = useRef(false);
+
+  const closeNow = useCallback(() => {
+    discardAgreed.current = true;
+    void win.close();
+  }, []);
+
+  /**
+   * Both ways out of a dirty window — the × and Esc, and the window's own close
+   * request — come through here, so a drawing is never thrown away without
+   * being asked about first.
+   */
+  const requestClose = useCallback(() => {
+    if (dirtyRef.current && !discardAgreed.current) setDiscard(true);
+    else closeNow();
+  }, [closeNow]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -250,6 +401,8 @@ export default function DrawWindow() {
         void toggleFullscreen();
         return;
       }
+      // An open text field owns the keyboard; its own handler stops the event.
+      if (textField) return;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
         e.shiftKey ? redo() : undo();
@@ -260,9 +413,10 @@ export default function DrawWindow() {
         }
       } else if (e.key === "Escape") {
         if (canvasOpen) setCanvasOpen(false);
+        else if (discard) setDiscard(false);
         else if (selected != null) setSelected(null);
         else if (fullscreen) void toggleFullscreen();
-        else void win.close();
+        else requestClose();
       } else if (mod && e.key === "Enter") {
         e.preventDefault();
         void save(false);
@@ -270,7 +424,23 @@ export default function DrawWindow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, saving, fullscreen, canvasOpen, toggleFullscreen]);
+  }, [selected, saving, fullscreen, canvasOpen, discard, textField, requestClose, toggleFullscreen]);
+
+  // The taskbar, Alt+F4 and any other close request arrive here rather than
+  // through the × in the header.
+  useEffect(() => {
+    const pending = win.onCloseRequested((event) => {
+      if (discardAgreed.current || !dirtyRef.current) return;
+      event.preventDefault();
+      setDiscard(true);
+    });
+    return () => {
+      void pending.then((unlisten) => unlisten()).catch(() => undefined);
+    };
+  }, []);
+
+  /** A discard that has been answered yes: the next close request is honoured. */
+  const confirmDiscard = closeNow;
 
   // The canvas choice closes when you click anywhere else.
   useEffect(() => {
@@ -306,7 +476,10 @@ export default function DrawWindow() {
       {/* The header is the handle: an ordinary window can be moved by it. */}
       <header className="draw-head" data-tauri-drag-region>
         <div className="draw-head-lead" data-tauri-drag-region>
-          <p className="companion-title" data-tauri-drag-region>Draw</p>
+          <p className="companion-title" data-tauri-drag-region>
+            Draw
+            {dirty ? <span className="draw-dirty" title="Unsaved drawing" aria-hidden="true" /> : null}
+          </p>
           <div className="canvas-choice" ref={canvasChoice}>
             <button
               type="button"
@@ -380,13 +553,13 @@ export default function DrawWindow() {
             className="draw-head-action"
             aria-label="Close"
             title="Close"
-            onClick={() => void win.close()}
+            onClick={requestClose}
           >
             <X aria-hidden="true" strokeWidth={2} />
           </button>
         </div>
       </header>
-      <div className="draw-surface">
+      <div className="draw-surface" ref={surfaceRef}>
         <canvas
           ref={canvasRef}
           className={`draw-canvas tool-${tool}`}
@@ -396,27 +569,75 @@ export default function DrawWindow() {
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
         />
+        {textField ? (
+          <input
+            className="draw-text-input"
+            aria-label="Text on the drawing"
+            autoFocus
+            value={textField.value}
+            style={{
+              left: textField.left,
+              top: textField.top,
+              color: paintColor,
+              background: page,
+              fontSize: `${textSize}px`,
+            }}
+            onChange={(event) =>
+              setTextField((current) => (current ? { ...current, value: event.target.value } : current))
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.stopPropagation();
+                commitText();
+              } else if (event.key === "Escape") {
+                // Reached before the window handler, which would close Draw.
+                event.preventDefault();
+                event.stopPropagation();
+                cancelText();
+              } else {
+                event.stopPropagation();
+              }
+            }}
+            onBlur={commitText}
+          />
+        ) : null}
       </div>
+
+      {saveError ? (
+        <p className="draw-notice" role="alert">
+          {saveError}
+        </p>
+      ) : null}
+      {discard ? (
+        <div className="draw-confirm" role="alert">
+          <span>Discard this drawing?</span>
+          <div className="draw-confirm-actions">
+            <button type="button" className="btn" onClick={() => setDiscard(false)} autoFocus>
+              Cancel
+            </button>
+            <button type="button" className="btn danger" onClick={confirmDiscard}>
+              Discard
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="draw-toolbar">
         <div className="draw-group">
-          {TOOLS.map((t) => (
+          {TOOLS.map(({ tool: id, label, Icon }) => (
             <button
-              key={t.tool}
-              className={`draw-tool${tool === t.tool ? " on" : ""}`}
-              title={t.label}
-              aria-label={t.label}
-              aria-pressed={tool === t.tool}
+              key={id}
+              className={`draw-tool${tool === id ? " on" : ""}`}
+              title={label}
+              aria-label={label}
+              aria-pressed={tool === id}
               onClick={() => {
-                setTool(t.tool);
-                if (t.tool !== "select") setSelected(null);
+                setTool(id);
+                if (id !== "select") setSelected(null);
               }}
             >
-              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"
-                   fill="none" stroke="currentColor" strokeWidth="1.4"
-                   strokeLinecap="round" strokeLinejoin="round">
-                {t.icon}
-              </svg>
+              <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
             </button>
           ))}
         </div>
@@ -475,7 +696,13 @@ export default function DrawWindow() {
           <button className="draw-tool" onClick={undo} disabled={empty} title="Undo · Ctrl+Z" aria-label="Undo">
             <Undo2 size={16} strokeWidth={1.8} aria-hidden="true" />
           </button>
-          <button className="draw-tool" onClick={redo} title="Redo · Ctrl+Shift+Z" aria-label="Redo">
+          <button
+            className="draw-tool"
+            onClick={redo}
+            disabled={redoCount === 0}
+            title="Redo · Ctrl+Shift+Z"
+            aria-label="Redo"
+          >
             <Redo2 size={16} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>

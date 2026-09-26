@@ -1,4 +1,11 @@
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { renderInline } from "../markdown";
 import { api } from "../store";
 import type { Attachment, Item } from "../types";
@@ -11,16 +18,41 @@ import type { Attachment, Item } from "../types";
   else a card can do is reachable from the keyboard or the context menu, which
   keeps the list scannable at a glance and stops the chrome competing with the
   content. Resist adding affordances here — the empty space is the design.
+
+  The row is one tab stop in the timeline, not one per card: the listbox owns
+  the cursor, `tabIndex` roves, and the buttons inside stay in the tab order so
+  a card's own commands are one Tab away. The row therefore handles no key
+  itself — every command on it is the panel's, and duplicating them here is
+  what used to make Space both select and complete.
 */
+
+/** Long enough to identify a card, short enough to be read out loud. */
+const PREVIEW_CHARS = 48;
+
+/**
+ * What a screen reader should call this card, and what the Copy button should
+ * say it is copying. Nine cards all reading "Copy text" is nine identical
+ * controls; the preview is what the button actually acts on, so it belongs in
+ * the name. A captured image carries no text at all — it is stored with an
+ * empty body and a path — so it is named for what it is until a caption gives
+ * it something to be called.
+ */
+function preview(item: Item): string {
+  const text = item.content.replace(/\s+/g, " ").trim();
+  if (!text) return item.kind === "image" ? "image" : "empty note";
+  return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…` : text;
+}
+
 export default function ItemCard({
   item,
   attachments,
   selected,
   active = false,
+  fresh = false,
   editing,
   search,
   onClick,
-  onActivate,
+  onFocus,
   onContextMenu,
   onOpenContextMenu,
   onToggleDone,
@@ -32,11 +64,15 @@ export default function ItemCard({
   item: Item;
   attachments: Attachment[];
   selected: boolean;
+  /** The roving tab stop and the keyboard cursor. Exactly one card at a time. */
   active?: boolean;
+  /** A capture that has not been on screen before; it alone animates in. */
+  fresh?: boolean;
   editing: boolean;
   search: string;
   onClick: (e: ReactMouseEvent) => void;
-  onActivate: () => void;
+  /** The row — or anything inside it — took DOM focus. */
+  onFocus: () => void;
   onContextMenu: (e: ReactMouseEvent) => void;
   onOpenContextMenu: (e: ReactKeyboardEvent<HTMLDivElement>) => void;
   onToggleDone: () => void;
@@ -49,6 +85,8 @@ export default function ItemCard({
   const [imageMissing, setImageMissing] = useState(false);
   const [draft, setDraft] = useState(item.content);
   const [thumbUrls, setThumbUrls] = useState<Map<number, string>>(new Map());
+  const [clamped, setClamped] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   const done = item.done !== 0;
 
@@ -72,6 +110,19 @@ export default function ItemCard({
     setDraft(item.content);
   }, [item.content]);
 
+  // The six-line clamp hides the rest of a note with nothing to say so. CSS
+  // cannot tell a clamped box from a short one, so the fade is measured: once
+  // per content change, and again only when the box itself changes size.
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const measure = () => setClamped(body.scrollHeight > body.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [item.content, search]);
+
   const commitEdit = () => {
     const v = draft.trim();
     if (v !== item.content) {
@@ -83,24 +134,26 @@ export default function ItemCard({
 
   return (
     <div
-      className={`item-card${selected ? " selected" : ""}${active ? " active" : ""}${done ? " done" : ""}`}
+      className={`item-card${selected ? " selected" : ""}${active ? " active" : ""}${done ? " done" : ""}${
+        fresh ? " fresh" : ""
+      }`}
       role="option"
-      tabIndex={0}
+      // Roving: one card is in the tab order, the rest are reached by arrow keys.
+      tabIndex={active ? 0 : -1}
       aria-selected={selected}
-      aria-label={item.kind === "image" ? "Captured image" : item.content.slice(0, 160)}
+      aria-label={preview(item)}
       data-item-id={item.id}
       data-item-kind={item.kind}
-      aria-current={active ? "true" : undefined}
       onClick={onClick}
+      onFocus={onFocus}
       onContextMenu={onContextMenu}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onActivate();
-          return;
-        }
+        // Only the context-menu key belongs to the row. Escape, arrows, Space,
+        // Enter and Delete are the panel's, and handling them here as well
+        // meant each of them ran twice against two different items.
         if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
           event.preventDefault();
+          event.stopPropagation();
           onOpenContextMenu(event);
         }
       }}
@@ -158,25 +211,48 @@ export default function ItemCard({
             onBlur={commitEdit}
           />
         ) : (
-          <div className="item-body" onDoubleClick={item.kind === "text" ? onEdit : undefined}>
+          <div
+            ref={bodyRef}
+            className={`item-body${clamped ? " clamped" : ""}`}
+            // Only where text is actually hidden: a tooltip that repeats what
+            // the card already shows is noise on every row in the list.
+            title={clamped ? item.content : undefined}
+            onDoubleClick={item.kind === "text" ? onEdit : undefined}
+          >
             {renderInline(item.content, search)}
           </div>
         )}
 
         {attachments.length > 0 ? (
           <div className="thumb-row">
-            {attachments.map((a) => {
+            {attachments.map((a, index) => {
               const url = thumbUrls.get(a.id);
               return (
                 <span key={a.id} className="thumb">
-                  {url ? <img src={url} alt="Attachment" onClick={(e) => {
-                    e.stopPropagation();
-                    void api.copyAttachment(a.id);
-                  }} /> : null}
+                  {/* Copying an attachment is only reachable by clicking it, so
+                      it is a real control: named, focusable, and it stops the
+                      click before the card turns it into a selection. */}
+                  {url ? (
+                    <button
+                      type="button"
+                      className="thumb-img"
+                      aria-label={`Copy attachment ${index + 1}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void api.copyAttachment(a.id);
+                      }}
+                    >
+                      <img src={url} alt="" />
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="thumb-x"
-                    aria-label="Remove attachment"
+                    aria-label={
+                      attachments.length > 1
+                        ? `Remove attachment ${index + 1} of ${attachments.length}`
+                        : "Remove attachment"
+                    }
                     onClick={(e) => {
                       e.stopPropagation();
                       void api.detachAttachment(a.id);
@@ -195,7 +271,7 @@ export default function ItemCard({
       <button
         type="button"
         className="item-copy"
-        aria-label={`Copy ${item.kind === "image" ? "image" : "text"}`}
+        aria-label={`Copy ${preview(item)}`}
         title="Copy"
         onClick={(e) => {
           e.stopPropagation();

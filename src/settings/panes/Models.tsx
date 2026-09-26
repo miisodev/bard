@@ -29,6 +29,7 @@ import type { PaneProps } from "../SettingsWindow";
 import {
   Button,
   Group,
+  InlineConfirm,
   Meter,
   Note,
   Pane,
@@ -38,7 +39,29 @@ import {
   formatBytes,
 } from "../ui";
 
-const ROLE_LABELS = ["Fast multilingual", "Best English", "Best multilingual"] as const;
+/*
+  The three curated roles, keyed by model id.
+
+  This used to fall back to the model's *position* in the catalogue, so a
+  reordered or re-released catalogue confidently labelled a multilingual model
+  "Best English". Identity is the only stable thing here; an unrecognised model
+  gets no role rather than a borrowed one.
+*/
+const ROLE_BY_ID: Record<string, string> = {
+  "whisper-small": "Fast multilingual",
+  "whisper-medium": "Best English",
+  "whisper-turbo": "Best multilingual",
+};
+
+/** The same three roles, read from the catalogue's own `role` token. */
+const ROLE_BY_TOKEN: [string, string][] = [
+  ["fast", "Fast multilingual"],
+  ["english", "Best English"],
+  ["multilingual", "Best multilingual"],
+];
+
+/** The catalogue is three curated first-party models; a fourth is not one. */
+const CURATED_LIMIT = 3;
 
 type CompatibilityState = {
   compatibility: ModelCompatibility;
@@ -86,12 +109,12 @@ function compatibilityFrom(
   };
 }
 
-function roleLabel(role: string | undefined, index: number): string {
-  const normalized = role?.toLowerCase() ?? "";
-  if (normalized.includes("fast")) return ROLE_LABELS[0];
-  if (normalized.includes("english")) return ROLE_LABELS[1];
-  if (normalized.includes("multilingual")) return ROLE_LABELS[2];
-  return ROLE_LABELS[index] ?? ROLE_LABELS[0];
+/** What this model is for, or "" when the catalogue does not say. */
+function roleLabel(model: ModelInfo): string {
+  const byId = ROLE_BY_ID[model.id];
+  if (byId) return byId;
+  const role = model.role?.toLowerCase() ?? "";
+  return ROLE_BY_TOKEN.find(([token]) => role.includes(token))?.[1] ?? "";
 }
 
 function firstPartyModels(models: ModelInfo[]): FirstPartyModel[] {
@@ -113,10 +136,9 @@ function firstPartyModels(models: ModelInfo[]): FirstPartyModel[] {
   const candidates =
     explicitlyFirstParty.length > 0 ? explicitlyFirstParty : compatibleWithOlderBackends;
 
-  return candidates.slice(0, ROLE_LABELS.length).map((model, index) => ({
-    ...model,
-    roleLabel: roleLabel(model.role, index),
-  }));
+  return candidates
+    .slice(0, CURATED_LIMIT)
+    .map((model) => ({ ...model, roleLabel: roleLabel(model) }));
 }
 
 function modelSize(model: ModelInfo): string {
@@ -223,9 +245,15 @@ function ProgressDetails({
   const phase = progress.phase ?? (progress.error ? "Download failed" : "Downloading");
 
   return (
-    <div className={`model-progress${progress.error ? " has-error" : ""}`}>
-      <div className="progress-copy" aria-live="polite">
-        <span>{progress.message ?? phase}</span>
+    <div className="model-progress">
+      {/*
+        The live region is the phase alone, and the phase alone is constant
+        while bytes move. It used to wrap the byte counter too, so a 200 MB
+        download pushed a screen reader's polite buffer several times a second
+        for as long as it took. The failure text is the danger-toned line below.
+      */}
+      <div className="progress-copy">
+        <span role="status">{phase}</span>
         <span className="progress-measure">
           {[bytes, speed, eta].filter(Boolean).join(" · ")}
         </span>
@@ -589,7 +617,7 @@ export default function ModelsPane({
     <Pane title="Models" description="Choose what Bard uses for local transcription.">
       <Group
         title="Bard models"
-        note="Three curated first-party choices. Quality and speed are relative to this list, not benchmark scores."
+        note="Three curated first-party choices. Quality and speed are relative to this list, not benchmark scores, and appear only where the catalogue scores them."
       >
         {modelsLoading && models.length === 0 ? (
           <div className="loading-row" role="status">
@@ -615,13 +643,16 @@ export default function ModelsPane({
             const active = state.modelId === model.id;
             const downloading = progress?.id === model.id;
             const error = actionErrors[model.id];
+            const licence = model.license ?? model.source?.license?.name;
             return (
               <article key={model.id} className={`model${active ? " active" : ""}`}>
                 <div className="model-top">
                   <div className="model-id">
                     <div className="model-title-line">
                       <span className="model-name">{model.name}</span>
-                      <span className="role-label">{model.roleLabel}</span>
+                      {model.roleLabel ? (
+                        <span className="role-label">{model.roleLabel}</span>
+                      ) : null}
                     </div>
                     <div className="model-badges">
                       <Tag
@@ -632,8 +663,35 @@ export default function ModelsPane({
                         Hosted
                       </Tag>
                       {active ? <Tag tone="success">Active</Tag> : null}
+                      {model.downloaded ? <Tag tone="success">Installed</Tag> : null}
                     </div>
                     <p className="model-desc">{model.description}</p>
+                    <div className="model-fields">
+                      <span>{modelSize(model)}</span>
+                      <span>
+                        {model.languages === 1
+                          ? "English"
+                          : model.languages > 1
+                            ? `${model.languages} languages`
+                            : "Language coverage not supplied"}
+                      </span>
+                      {model.parameters ? <span>{model.parameters} parameters</span> : null}
+                      {model.quantization ?? model.quant ? (
+                        <span>{model.quantization ?? model.quant}</span>
+                      ) : null}
+                      {licence ? (
+                        <a
+                          className="model-license-link"
+                          href={model.source?.license?.url ?? model.source?.url ?? model.host?.url ?? "https://miiso.dev/terms"}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Open model licence and source details"
+                        >
+                          <span>{licence}</span>
+                          <ExternalLink size={11} aria-hidden="true" />
+                        </a>
+                      ) : null}
+                    </div>
                     <div
                       className="model-source ellipsis"
                       title={model.source?.url ?? model.host?.url}
@@ -642,42 +700,21 @@ export default function ModelsPane({
                       {model.source?.repo ? ` · ${model.source.repo}` : ""}
                     </div>
                   </div>
+                  {/*
+                    Each meter is gated on its own score. Gating the pair on
+                    `accuracy > 0 || speed > 0` drew a 0% bar captioned
+                    "Relative quality: Low" for a model the catalogue never
+                    scored, which is a claim, not a gap.
+                  */}
                   {model.accuracy > 0 || model.speed > 0 ? (
                     <div className="model-meters" aria-label="Relative model characteristics">
-                      <Meter label="Quality" value={model.accuracy} />
-                      <Meter label="Speed" value={model.speed} />
+                      {model.accuracy > 0 ? <Meter label="Quality" value={model.accuracy} /> : null}
+                      {model.speed > 0 ? <Meter label="Speed" value={model.speed} /> : null}
                     </div>
                   ) : null}
                 </div>
 
                 <div className="model-meta-row">
-                  <div className="model-tags" aria-label="Model details">
-                    <Tag>{modelSize(model)}</Tag>
-                    <Tag>
-                      {model.languages === 1
-                        ? "English"
-                        : model.languages > 1
-                          ? `${model.languages} languages`
-                          : "Language coverage not supplied"}
-                    </Tag>
-                    {model.parameters ? <Tag>{model.parameters} parameters</Tag> : null}
-                    {model.quantization ?? model.quant ? (
-                      <Tag>{model.quantization ?? model.quant}</Tag>
-                    ) : null}
-                    {model.license ?? model.source?.license?.name ? (
-                      <a
-                        className="model-license-link"
-                        href={model.source?.license?.url ?? model.source?.url ?? model.host?.url ?? "https://miiso.dev/terms"}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="Open model licence and source details"
-                      >
-                        <Tag>{model.license ?? model.source?.license?.name}</Tag>
-                        <ExternalLink size={11} aria-hidden="true" />
-                      </a>
-                    ) : null}
-                    {model.downloaded ? <Tag tone="success">Installed</Tag> : null}
-                  </div>
                   <div className="model-actions" aria-label={`Actions for ${model.name}`}>
                     {!model.downloaded ? (
                       <>
@@ -726,25 +763,14 @@ export default function ModelsPane({
                 </div>
 
                 {removeConfirmId === model.id ? (
-                  <div className="remove-confirm" role="alert">
-                    <span>Remove {model.name} from Bard?</span>
-                    <div className="remove-confirm-actions">
-                      <Button
-                        onClick={() => setRemoveConfirmId(null)}
-                        disabled={Boolean(busyAction) || checkingDetected}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        variant="danger"
-                        onClick={() => void removeFirstParty(model)}
-                        disabled={Boolean(busyAction) || checkingDetected}
-                        ariaBusy={busyAction === `${model.id}:remove`}
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
+                  <InlineConfirm
+                    onCancel={() => setRemoveConfirmId(null)}
+                    onConfirm={() => void removeFirstParty(model)}
+                    confirming={busyAction === `${model.id}:remove`}
+                    confirmLabel="Remove"
+                  >
+                    Remove {model.name} from Bard?
+                  </InlineConfirm>
                 ) : null}
                 {downloading ? (
                   <ProgressDetails

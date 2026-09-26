@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, ReactNode } from "react";
+import { useEffect, useRef, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from "react";
 
 /*
   Settings primitives.
@@ -44,18 +44,30 @@ export function Group({ title, note, children }: {
   );
 }
 
-/** One setting: a label, an optional explanation, and its control. */
-export function Row({ label, hint, children, stacked }: {
+/**
+ * One setting: a label, an optional explanation, and its control.
+ *
+ * `htmlFor` makes the label a real `<label>` for the control it names, so
+ * clicking "OpenRouter API key" puts the caret in the field. Without it the
+ * label is a `<div>` that only looks like one.
+ */
+export function Row({ label, hint, children, stacked, htmlFor }: {
   label: ReactNode;
   hint?: ReactNode;
   children?: ReactNode;
   /** Put the control on its own line — for anything wider than a toggle. */
   stacked?: boolean;
+  /** The id of the control in this row, so the label can name it. */
+  htmlFor?: string;
 }) {
   return (
     <div className={`row${stacked ? " stacked" : ""}`}>
       <div className="row-text">
-        <div className="row-label">{label}</div>
+        {htmlFor ? (
+          <label className="row-label" htmlFor={htmlFor}>{label}</label>
+        ) : (
+          <div className="row-label">{label}</div>
+        )}
         {hint ? <div className="row-hint">{hint}</div> : null}
       </div>
       {children ? <div className="row-control">{children}</div> : null}
@@ -84,6 +96,19 @@ export function Toggle({ checked, onChange, label, disabled = false }: {
   );
 }
 
+const SEGMENT_STEP: Record<string, number> = {
+  ArrowRight: 1,
+  ArrowDown: 1,
+  ArrowLeft: -1,
+  ArrowUp: -1,
+};
+
+/**
+ * A radiogroup, which means more than the markup: one Tab stop, arrow keys to
+ * move between options, and selection following focus. It was `role="radiogroup"`
+ * with every option its own tab stop, so reaching "Forever" in the retention
+ * rows cost six Tab presses and no arrow key did anything.
+ */
 export function Segmented<T extends string>({ value, options, onChange, label, disabled = false }: {
   value: T;
   options: { value: T; label: string }[];
@@ -91,17 +116,47 @@ export function Segmented<T extends string>({ value, options, onChange, label, d
   label: string;
   disabled?: boolean;
 }) {
+  const group = useRef<HTMLDivElement>(null);
+  const selected = options.findIndex((o) => o.value === value);
+  // With nothing selected — a value the control does not offer, which is what a
+  // pane shows when it could not read the setting — the group still needs one
+  // reachable option, or it is a keyboard dead end.
+  const active = selected < 0 ? 0 : selected;
+
+  const move = (next: number) => {
+    if (options.length === 0) return;
+    const index = (next + options.length) % options.length;
+    onChange(options[index].value);
+    group.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[index]?.focus();
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const step = SEGMENT_STEP[event.key];
+    if (step) {
+      event.preventDefault();
+      move(index + step);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      move(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      move(options.length - 1);
+    }
+  };
+
   return (
-    <div className="segmented" role="radiogroup" aria-label={label}>
-      {options.map((o) => (
+    <div className="segmented" role="radiogroup" aria-label={label} ref={group}>
+      {options.map((o, index) => (
         <button
           key={o.value}
           type="button"
           role="radio"
           aria-checked={value === o.value}
+          tabIndex={index === active ? 0 : -1}
           className={value === o.value ? "on" : ""}
           disabled={disabled}
           onClick={() => onChange(o.value)}
+          onKeyDown={(event) => onKeyDown(event, index)}
         >
           {o.label}
         </button>
@@ -299,5 +354,69 @@ export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "—";
   const gb = bytes / 1024 ** 3;
   if (gb >= 1) return `${Math.round(gb * 10) / 10} GB`;
-  return `${Math.round(bytes / 1024 ** 2)} MB`;
+  const mb = bytes / 1024 ** 2;
+  // Rounding to whole megabytes reported "0 MB" for anything under half a
+  // megabyte, so a 400 KB capture and a 2 MB one both claimed to be nothing.
+  if (mb >= 1) return `${Math.round(mb * 10) / 10} MB`;
+  const kb = bytes / 1024;
+  if (kb >= 1) return `${Math.round(kb)} KB`;
+  return `${Math.round(bytes)} B`;
 }
+
+/**
+ * The one confirmation an irreversible action gets.
+ *
+ * It was `window.confirm` in the two places that mattered — clearing the whole
+ * timeline and releasing a licence activation — which is an OS-drawn, locale-
+ * varying, unstyleable dialog in a product that has decided not to use one, and
+ * which cannot carry the sentence explaining what is about to happen.
+ *
+ * Escape cancels. `stopPropagation` matters: the settings window closes itself
+ * on Escape, and a confirmation that closes the window it is asking about is
+ * not a confirmation.
+ */
+export function InlineConfirm({
+  children,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+  confirming = false,
+}: {
+  children: ReactNode;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  confirming?: boolean;
+}) {
+  const bar = useRef<HTMLDivElement>(null);
+
+  // The bar takes focus when it appears, so a keyboard user is told the
+  // question exists rather than discovering it by tabbing into the answer.
+  useEffect(() => {
+    bar.current?.focus();
+  }, []);
+
+  return (
+    <div
+      ref={bar}
+      className="remove-confirm"
+      role="alert"
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+      }}
+    >
+      <span>{children}</span>
+      <div className="remove-confirm-actions">
+        <Button onClick={onCancel} disabled={confirming}>Cancel</Button>
+        <Button variant="danger" onClick={onConfirm} disabled={confirming} ariaBusy={confirming}>
+          {confirmLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
+

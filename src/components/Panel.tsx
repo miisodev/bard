@@ -1,11 +1,18 @@
-import { ArrowUpDown, ListChecks, Paintbrush, Search, Settings2 } from "lucide-react";
+import { ArrowUpDown, ListChecks, Paintbrush, Search, Settings2, X } from "lucide-react";
 import { playCue } from "../audio";
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DictationState } from "../App";
 import { api } from "../store";
-import type { AppState, Item, Section, SortOrder } from "../types";
+import type { AppState, Attachment, Item, Section, SortOrder } from "../types";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
 import ItemCard from "./ItemCard";
 import Menu from "./Menu";
@@ -34,6 +41,18 @@ const RESIZE_DIRS: [string, ResizeDir][] = [
   ["rb", "SouthEast"],
 ];
 
+/** A confirmation is a receipt. An error is the app reporting a failure. */
+export type ToastTone = "info" | "error";
+
+/** What every message in the panel goes through, however it was raised. */
+type Notify = (text: string, tone?: ToastTone) => void;
+
+/** The `bard-toast` payload: a bare string is a confirmation. */
+export interface ToastDetail {
+  text: string;
+  tone?: ToastTone;
+}
+
 export default function Panel({
   state,
   dictation,
@@ -55,7 +74,7 @@ export default function Panel({
   const [showOverflow, setShowOverflow] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [composerMenu, setComposerMenu] = useState<{ x: number; y: number } | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; tone: ToastTone } | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -66,11 +85,159 @@ export default function Panel({
   const [editingId, setEditingId] = useState<number | null>(null);
   // Which companions are out, so their header buttons read as pressed.
   const [companions, setCompanions] = useState({ draw: false, settings: false });
+  // The one capture that has not been on screen yet, so only it animates in.
+  const [freshId, setFreshId] = useState<number | null>(null);
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
+  // The last id the backend was told about, so focus, clicks and arrow keys all
+  // cost one write between them rather than one each.
+  const activeReported = useRef<number | null>(activeItemId);
+  const seenIds = useRef<Set<number> | null>(null);
+  /** Timeline position to focus once the list next renders — set by a delete. */
+  const focusAfterRender = useRef<number | null>(null);
+
+  /*
+    Everything the timeline draws is derived from `state.items` and `query`,
+    and both change identity on every `refresh` — which fires after every
+    click, keypress, capture and sort change. Derived in the body, that meant
+    re-filtering, re-grouping and re-counting the whole timeline per render,
+    and O(items × attachments) on top of it, 20 times a second during a
+    dictation take. Each one is a memo now, on its own real inputs.
+  */
+  const attachmentsByItem = useMemo(() => {
+    const index = new Map<number, Attachment[]>();
+    for (const attachment of state.attachments) {
+      const list = index.get(attachment.itemId);
+      if (list) list.push(attachment);
+      else index.set(attachment.itemId, [attachment]);
+    }
+    return index;
+  }, [state.attachments]);
+
+  const visible = useMemo(() => filterItems(state.items, query), [state.items, query]);
+
+  /** Visible order, by id. Every arrow key and every range is a lookup here. */
+  const order = useMemo(() => {
+    const index = new Map<number, number>();
+    visible.forEach((item, position) => index.set(item.id, position));
+    return index;
+  }, [visible]);
+
+  const grouped = useMemo(
+    () => groupBySection(visible, state.sections, state.activeSectionId),
+    [visible, state.sections, state.activeSectionId],
+  );
+
+  const doneCount = useMemo(
+    () => state.items.reduce((count, item) => (item.done !== 0 ? count + 1 : count), 0),
+    [state.items],
+  );
+
+  /**
+   * Roving tabindex: the row the arrows are pointing at is the timeline's only
+   * tab stop. When the active item has been filtered out, or has never been set,
+   * the first visible row takes it — a list whose tab stop is missing cannot be
+   * tabbed into at all.
+   */
+  const rovingId = useMemo(() => {
+    if (activeItemId !== null && order.has(activeItemId)) return activeItemId;
+    return visible[0]?.id ?? null;
+  }, [activeItemId, order, visible]);
+
+  useEffect(() => {
+    const seen = seenIds.current;
+    if (seen === null) {
+      seenIds.current = new Set(state.items.map((item) => item.id));
+      return;
+    }
+    const added = state.items.find((item) => !seen.has(item.id)) ?? null;
+    for (const item of state.items) seen.add(item.id);
+    if (added) setFreshId(added.id);
+  }, [state.items]);
+
+  useEffect(() => {
+    activeReported.current = activeItemId;
+  }, [activeItemId]);
+
+  const refresh = useCallback(() => void api.getState().then(onState), [onState]);
+
+  const markActive = useCallback(
+    (id: number | null) => {
+      if (activeReported.current === id) return;
+      activeReported.current = id;
+      onActiveItemChange?.(id);
+      void api.setActiveItem(id);
+    },
+    [onActiveItemChange],
+  );
+
+  /** Move DOM focus to a row, and keep it on screen. */
+  const focusCard = useCallback((id: number) => {
+    const card = timelineRef.current?.querySelector<HTMLElement>(`[data-item-id="${id}"]`);
+    if (!card) return;
+    card.focus();
+    card.scrollIntoView({ block: "nearest" });
+  }, []);
+
+  const notify = useCallback((text: string, tone: ToastTone = "info") => {
+    setToast({ text, tone });
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    // A confirmation has done its job in under three seconds. An error does
+    // not: a licence refusal or a copy that did not land has to stay up until
+    // it is read and dismissed, and it carries the control to dismiss it.
+    if (tone === "info") {
+      toastTimer.current = window.setTimeout(() => setToast(null), 2600);
+    }
+  }, []);
+
+  const dismissToast = useCallback(() => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    setToast(null);
+  }, []);
+
+  // Every overlay takes a stable close: the menus and the shortcut sheet restore
+  // focus and re-focus their first row when `onClose` changes, so a new closure
+  // on each render makes them thrash.
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const closeOverflow = useCallback(() => setShowOverflow(false), []);
+  const closeComposerMenu = useCallback(() => setComposerMenu(null), []);
+  const closeSwitcher = useCallback(() => setShowSwitcher(false), []);
+  const closeShortcuts = useCallback(() => setShowShortcuts(false), []);
+
+  /*
+    One delete path. Three call sites each used to do the same five things, and
+    each of them dropped the cursor on the floor: the focused card unmounted,
+    focus fell to the document, and the next Tab restarted at the search field.
+    The position is recorded here and the neighbour is focused once the shorter
+    list has actually rendered.
+  */
+  const deleteItems = useCallback(
+    (ids: number[]) => {
+      if (ids.length === 0) return;
+      const first = order.get([...ids].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))[0]);
+      focusAfterRender.current = first ?? 0;
+      for (const id of ids) void api.deleteItem(id);
+      setSelectedIds(new Set());
+      if (activeItemId !== null && ids.includes(activeItemId)) markActive(null);
+      refresh();
+    },
+    [order, markActive, refresh, activeItemId],
+  );
+
+  useEffect(() => {
+    const position = focusAfterRender.current;
+    if (position === null) return;
+    focusAfterRender.current = null;
+    const cards = timelineRef.current?.querySelectorAll<HTMLElement>("[data-item-id]");
+    if (!cards || cards.length === 0) return;
+    const neighbour = cards[Math.min(position, cards.length - 1)];
+    neighbour.focus();
+    neighbour.scrollIntoView({ block: "nearest" });
+  }, [visible]);
 
   useEffect(() => {
     void api.getState().then(onState);
@@ -85,11 +252,10 @@ export default function Panel({
   }, []);
 
   useEffect(() => {
-    const onToast = (e: Event) => {
-      const msg = (e as CustomEvent).detail as string;
-      setToast(msg);
-      if (toastTimer.current) window.clearTimeout(toastTimer.current);
-      toastTimer.current = window.setTimeout(() => setToast(null), 2600);
+    const onToast = (event: Event) => {
+      const detail = (event as CustomEvent).detail as string | ToastDetail;
+      if (typeof detail === "string") notify(detail);
+      else if (detail && typeof detail.text === "string") notify(detail.text, detail.tone ?? "info");
     };
     const onCaptured = () => {
       if (soundOnCapture) playCue("capture");
@@ -99,8 +265,9 @@ export default function Panel({
     return () => {
       window.removeEventListener("bard-toast", onToast);
       window.removeEventListener("bard-captured", onCaptured);
+      if (toastTimer.current) window.clearTimeout(toastTimer.current);
     };
-  }, [soundOnCapture]);
+  }, [soundOnCapture, notify]);
 
   useEffect(() => {
     const unlisteners: Promise<() => void>[] = [];
@@ -150,11 +317,35 @@ export default function Panel({
         }
         return;
       }
-      const flat = flatFiltered(state, query);
-      const idx = (id: number) => flat.indexOf(id);
+
+      /*
+        The acted-on item is the focused one, never the selection this render
+        happened to capture. A Space or Enter on a card used to run the card's
+        own handler, which changed the selection, and then bubble to here and
+        act on the *previous* selection — so the keys read on the timeline were
+        not the keys that took effect.
+      */
+      const row = target instanceof Element ? target.closest<HTMLElement>("[data-item-id]") : null;
+      const focusedId = row?.dataset.itemId ? Number(row.dataset.itemId) : null;
+      // A control inside a card keeps its own Space and Enter; the panel only
+      // claims them where nothing else will.
+      const onControl =
+        target instanceof Element &&
+        target.closest('button, a[href], [role="button"], input, textarea, select') !== null;
+      const idx = (id: number) => order.get(id) ?? -1;
       const sel = [...selectedIds].sort((a, b) => idx(a) - idx(b));
-      const activeInFlat = activeItemId !== null && idx(activeItemId) >= 0 ? activeItemId : null;
-      const actionSel = sel.length > 0 ? sel : activeInFlat ? [activeInFlat] : [];
+      const lead = focusedId ?? sel[0] ?? activeItemId;
+      const actionSel =
+        focusedId !== null
+          ? sel.includes(focusedId)
+            ? sel
+            : [focusedId]
+          : sel.length > 0
+            ? sel
+            : activeItemId !== null && order.has(activeItemId)
+              ? [activeItemId]
+              : [];
+
       if (e.ctrlKey || e.metaKey) {
         const key = e.key.toLowerCase();
         if (key === "k") {
@@ -169,12 +360,12 @@ export default function Panel({
         }
         if (key === "c" && actionSel.length > 0) {
           e.preventDefault();
-          copySelection(state, actionSel, setToast);
+          copySelection(state, actionSel, notify);
           return;
         }
         if (key === "m" && e.shiftKey && actionSel.length > 0) {
           e.preventDefault();
-          copyAsList(state, actionSel, setToast);
+          copyAsList(state, actionSel, notify);
           return;
         }
       }
@@ -182,32 +373,34 @@ export default function Panel({
         case "ArrowDown":
         case "ArrowUp": {
           e.preventDefault();
-          if (flat.length === 0) break;
+          if (visible.length === 0) break;
           const delta = e.key === "ArrowDown" ? 1 : -1;
+          const at = idx(rovingId ?? -1);
           let next: number;
-          if (sel.length === 0 && activeInFlat === null) {
-            next = delta > 0 ? flat[0] : flat[flat.length - 1];
+          if (at < 0) {
+            next = delta > 0 ? visible[0].id : visible[visible.length - 1].id;
           } else {
-            const lead = e.shiftKey && anchorId !== null ? anchorId : sel[0] ?? activeInFlat!;
-            const cur = idx(lead);
-            const target = Math.min(flat.length - 1, Math.max(0, cur + delta));
-            next = flat[target];
+            next = visible[Math.min(visible.length - 1, Math.max(0, at + delta))].id;
           }
-          if (e.shiftKey && anchorId !== null) {
+          if (e.shiftKey && anchorId !== null && idx(anchorId) >= 0) {
             const a = idx(anchorId);
             const b = idx(next);
-            setSelectedIds(new Set(flat.slice(Math.min(a, b), Math.max(a, b) + 1)));
+            setSelectedIds(new Set(visible.slice(Math.min(a, b), Math.max(a, b) + 1).map((i) => i.id)));
           } else {
             setSelectedIds(new Set([next]));
             setAnchorId(next);
             markActive(next);
           }
+          // Focus follows the cursor. Without this the ring, the selection and
+          // the next Space keypress were all describing different cards.
+          focusCard(next);
           break;
         }
         case "Enter": {
-          if (actionSel.length > 0) {
+          // On a control, Enter is that control's own command.
+          if (!onControl && actionSel.length > 0) {
             e.preventDefault();
-            copySelection(state, actionSel, setToast);
+            copySelection(state, actionSel, notify);
           }
           break;
         }
@@ -215,22 +408,19 @@ export default function Panel({
         case "Backspace": {
           if (actionSel.length > 0) {
             e.preventDefault();
-            for (const id of actionSel) void api.deleteItem(id);
-            setSelectedIds(new Set());
-            refresh();
+            deleteItems(actionSel);
           }
           break;
         }
         case " ": {
-          // Space marks done, as in Copper. Toggling the whole selection off
-          // the lead item's state keeps a mixed selection from splitting.
-          if (actionSel.length > 0) {
-            e.preventDefault();
-            const lead = state.items.find((i) => i.id === actionSel[0]);
-            const next = lead ? lead.done === 0 : true;
-            for (const id of actionSel) void api.setDone(id, next);
-            refresh();
-          }
+          // Space marks done, as in Copper. On a control it is that control's
+          // own key, and running both would toggle the same item twice.
+          if (onControl || actionSel.length === 0) break;
+          e.preventDefault();
+          const leadItem = state.items.find((i) => i.id === lead);
+          const next = leadItem ? leadItem.done === 0 : true;
+          for (const id of actionSel) void api.setDone(id, next);
+          refresh();
           break;
         }
         case "Escape": {
@@ -246,10 +436,17 @@ export default function Panel({
   }, [
     state,
     query,
+    order,
+    visible,
+    rovingId,
     activeItemId,
     selectedIds,
     anchorId,
     menu,
+    notify,
+    markActive,
+    refresh,
+    deleteItems,
     showSwitcher,
     showOverflow,
     showShortcuts,
@@ -312,9 +509,6 @@ export default function Panel({
         if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
       }
     };
-    const onDragLeave = (e: DragEvent) => {
-      if (e.relatedTarget === null) void (0);
-    };
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
       const dt = e.dataTransfer;
@@ -355,24 +549,15 @@ export default function Panel({
         }
       }
       refresh();
-      if (added > 0) setToast(`Added ${added} file(s)`);
+      if (added > 0) notify(added === 1 ? "Added 1 file" : `Added ${added} files`);
     };
     window.addEventListener("dragover", onDragOver);
-    window.addEventListener("dragleave", onDragLeave);
     window.addEventListener("drop", onDrop);
     return () => {
       window.removeEventListener("dragover", onDragOver);
-      window.removeEventListener("dragleave", onDragLeave);
       window.removeEventListener("drop", onDrop);
     };
-  }, []);
-
-  const refresh = () => void api.getState().then(onState);
-
-  const markActive = (id: number | null) => {
-    onActiveItemChange?.(id);
-    void api.setActiveItem(id);
-  };
+  }, [notify, refresh]);
 
   const onDrag = (e: ReactMouseEvent) => {
     const t = e.target as HTMLElement;
@@ -388,13 +573,13 @@ export default function Panel({
 
   const submitComposer = () => {
     if (!state.license.canUse) {
-      setToast(state.license.message || "Activate Bard to add captures.");
+      notify(state.license.message || "Activate Bard to add captures.", "error");
       return;
     }
     const v = composer.trim();
     if (!v) return;
     if (v.startsWith("#")) {
-      void api.createSection(v.replace(/^#+\s*/, "")).then(() => setToast(`Section created`));
+      void api.createSection(v.replace(/^#+\s*/, "")).then(() => notify("Section created"));
     } else {
       void api.addItem(v);
     }
@@ -413,11 +598,10 @@ export default function Panel({
       return;
     }
     if (e.shiftKey && anchorId !== null) {
-      const flat = flatFiltered(state, query);
-      const a = flat.indexOf(anchorId);
-      const b = flat.indexOf(item.id);
+      const a = order.get(anchorId) ?? -1;
+      const b = order.get(item.id) ?? -1;
       if (a >= 0 && b >= 0) {
-        setSelectedIds(new Set(flat.slice(Math.min(a, b), Math.max(a, b) + 1)));
+        setSelectedIds(new Set(visible.slice(Math.min(a, b), Math.max(a, b) + 1).map((i) => i.id)));
       }
       return;
     }
@@ -446,11 +630,11 @@ export default function Panel({
     const ids = menu.ids;
     switch (action) {
       case "copy":
-        copySelection(state, ids, setToast);
+        copySelection(state, ids, notify);
         if (ids.length === 1) markActive(ids[0]);
         break;
       case "copyList":
-        copyAsList(state, ids, setToast);
+        copyAsList(state, ids, notify);
         break;
       case "favorite":
         for (const id of ids) {
@@ -466,19 +650,14 @@ export default function Panel({
         if (menu.item?.kind === "image") void api.addNoteToImage(menu.item.id).then(refresh);
         break;
       case "delete":
-        for (const id of ids) void api.deleteItem(id);
-        setSelectedIds(new Set());
-        if (activeItemId !== null && ids.includes(activeItemId)) markActive(null);
-        refresh();
+        deleteItems(ids);
         break;
     }
     setMenu(null);
   };
 
-  const grouped = groupBySection(state, query);
   const activeSectionName =
     state.sections.find((s) => s.id === state.activeSectionId)?.name ?? null;
-  const doneCount = state.items.filter((i) => i.done !== 0).length;
 
   return (
     <>
@@ -526,7 +705,7 @@ export default function Panel({
             disabled={doneCount === 0}
             onClick={() => {
               void api.clearCompleted().then(refresh);
-              setToast(`Cleared ${doneCount} completed`);
+              notify(`Cleared ${doneCount} completed`);
             }}
           >
             <ListChecks size={16} strokeWidth={1.8} />
@@ -551,7 +730,16 @@ export default function Panel({
         ))}
       </div>
 
-      <div className="timeline" role="listbox" aria-label="Captured items">
+      {/* The listbox holds the whole timeline: notes, drawings, images and
+          dictations alike, which is why it is not labelled "Captured items".
+          Its one tab stop is `rovingId`; the arrows move focus with it. */}
+      <div
+        ref={timelineRef}
+        className="timeline"
+        role="listbox"
+        aria-label="Timeline"
+        aria-multiselectable="true"
+      >
         {state.items.length === 0 ? (
           <EmptyState section={activeSectionName} />
         ) : grouped.length === 0 ? (
@@ -560,148 +748,174 @@ export default function Panel({
             <div className="hint">Nothing here matches “{query}”.</div>
           </div>
         ) : (
-          grouped.map((group) => (
-            <div key={group.section ? `s${group.section.id}` : "inbox"}>
-              {/* A letterspaced label and a hairline reaching the edge — the
-                  count and the folder glyph were noise on a list you already
-                  see in full. */}
-              <button
-                type="button"
-                className={`group-header${
-                  (group.section ? group.section.id : null) === state.activeSectionId
-                    ? " active"
-                    : ""
-                }`}
-                onClick={() => {
-                  void api.setActiveSection(group.section ? group.section.id : null);
-                  refresh();
-                }}
-              >
-                <span className="group-name">
-                  {group.section ? group.section.name : "Inbox"}
-                </span>
-                <span className="group-rule" aria-hidden="true" />
-              </button>
-              {group.items.map((it) => (
-                <ItemCard
-                  key={it.id}
-                  item={it}
-                  attachments={state.attachments.filter((a) => a.itemId === it.id)}
-                  selected={selectedIds.has(it.id)}
-                  active={activeItemId === it.id}
-                  editing={editingId === it.id}
-                  search={query}
-                  onClick={(e) => onItemClick(it, e)}
-                  onActivate={() => {
-                    setSelectedIds(new Set([it.id]));
-                    setAnchorId(it.id);
-                    markActive(it.id);
+          grouped.map((group) => {
+            const groupId = group.section ? `section-${group.section.id}` : "section-inbox";
+            return (
+              <div key={groupId} role="group" aria-label={group.section ? group.section.name : "Inbox"}>
+                {/* A letterspaced label and a hairline reaching the edge — the
+                    count and the folder glyph were noise on a list you already
+                    see in full. */}
+                <button
+                  type="button"
+                  className={`group-header${
+                    (group.section ? group.section.id : null) === state.activeSectionId
+                      ? " active"
+                      : ""
+                  }`}
+                  onClick={() => {
+                    void api.setActiveSection(group.section ? group.section.id : null);
+                    refresh();
                   }}
-                  onContextMenu={(e) => onContextMenu(it, e)}
-                  onOpenContextMenu={(event) => {
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    openContextMenu(it, rect.left + rect.width / 2, rect.top + rect.height / 2);
-                  }}
-                  onCopyImage={() => {
-                    copySelection(state, [it.id], setToast);
-                    markActive(it.id);
-                  }}
-                  onToggleDone={() => {
-                    void api.setDone(it.id, it.done === 0).then(refresh);
-                  }}
-                  onDelete={() => {
-                    void api.deleteItem(it.id).then(() => {
-                      setSelectedIds(new Set());
-                      if (activeItemId === it.id) markActive(null);
-                      refresh();
-                    });
-                  }}
-                  onEdit={() => setEditingId(it.id)}
-                  onEditDone={() => setEditingId(null)}
-                />
-              ))}
-            </div>
-          ))
+                >
+                  <span className="group-name">
+                    {group.section ? group.section.name : "Inbox"}
+                  </span>
+                  <span className="group-rule" aria-hidden="true" />
+                </button>
+                {group.items.map((it) => (
+                  <ItemCard
+                    key={it.id}
+                    item={it}
+                    attachments={attachmentsByItem.get(it.id) ?? EMPTY_ATTACHMENTS}
+                    selected={selectedIds.has(it.id)}
+                    active={rovingId === it.id}
+                    fresh={freshId === it.id}
+                    editing={editingId === it.id}
+                    search={query}
+                    onClick={(e) => onItemClick(it, e)}
+                    onFocus={() => markActive(it.id)}
+                    onContextMenu={(e) => onContextMenu(it, e)}
+                    onOpenContextMenu={(event) => {
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      openContextMenu(it, rect.left + rect.width / 2, rect.top + rect.height / 2);
+                    }}
+                    onCopyImage={() => {
+                      copySelection(state, [it.id], notify);
+                      markActive(it.id);
+                    }}
+                    onToggleDone={() => {
+                      void api.setDone(it.id, it.done === 0).then(refresh);
+                    }}
+                    onDelete={() => deleteItems([it.id])}
+                    onEdit={() => setEditingId(it.id)}
+                    onEditDone={() => setEditingId(null)}
+                  />
+                ))}
+              </div>
+            );
+          })
         )}
       </div>
 
-      {state.license.state === "restricted" ? (
-        <div className="license-gate" role="status">
-          <span>{state.license.message || "Activate Bard to continue capturing."}</span>
-          <button type="button" className="btn" onClick={() => void api.openSettings()}>Activate</button>
-        </div>
-      ) : null}
-
-      <div className="composer">
-        {dictation.listening || dictation.transcribing ? (
-          <div className="dictate-indicator">
-            <span className="pulse-dot" />
-            {dictation.transcribing ? "Transcribing…" : "Listening — speak now"}
+      {/* The foot is a positioning context, so the toast sits directly above the
+          composer at any composer height — it was pinned to `bottom: 14px`,
+          which put it on top of the field you were typing into. */}
+      <div className="panel-foot">
+        {state.license.state === "restricted" ? (
+          <div className="license-gate" role="status">
+            <span>{state.license.message || "Activate Bard to continue capturing."}</span>
+            <button type="button" className="btn" onClick={() => void api.openSettings()}>Activate</button>
           </div>
         ) : null}
-        <div className="composer-row">
-          <button
-            type="button"
-            className="composer-add"
-            aria-label="Attach"
-            disabled={!state.license.canUse}
-            aria-haspopup="menu"
-            onClick={(e) => {
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              setComposerMenu({ x: r.left, y: r.top - 8 });
-            }}
-          >
-            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-              <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" strokeWidth="1.3" />
-              <path d="M8 4.8 V11.2 M4.8 8 H11.2" stroke="currentColor"
-                    strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              const files = [...(e.target.files ?? [])];
-              void addFiles(files, setToast);
-              e.target.value = "";
-            }}
-          />
-          <textarea
-            ref={composerRef}
-            className="composer-input"
-            rows={1}
-            disabled={!state.license.canUse}
-            placeholder={`Add a note or a prompt${
-              activeSectionName ? ` (${activeSectionName.toLowerCase()})` : ""
-            }`}
-            value={composer}
-            onChange={(e) => {
-              setComposer(e.target.value);
-              e.target.style.height = "auto";
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submitComposer();
-              }
-            }}
-          />
+
+        <div className="composer">
+          {dictation.listening || dictation.transcribing ? (
+            <div className="dictate-indicator">
+              <span className="pulse-dot" />
+              {dictation.transcribing ? "Transcribing…" : "Listening — speak now"}
+            </div>
+          ) : null}
+          <div className="composer-row">
+            <button
+              type="button"
+              className="composer-add"
+              aria-label="Attach"
+              disabled={!state.license.canUse}
+              aria-haspopup="menu"
+              onClick={(e) => {
+                const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                setComposerMenu({ x: r.left, y: r.top - 8 });
+              }}
+            >
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" strokeWidth="1.3" />
+                <path d="M8 4.8 V11.2 M4.8 8 H11.2" stroke="currentColor"
+                      strokeWidth="1.3" strokeLinecap="round" />
+              </svg>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = [...(e.target.files ?? [])];
+                void addFiles(files, notify);
+                e.target.value = "";
+              }}
+            />
+            <textarea
+              ref={composerRef}
+              className="composer-input"
+              rows={1}
+              disabled={!state.license.canUse}
+              placeholder={`Add a note or a prompt${
+                activeSectionName ? ` (${activeSectionName.toLowerCase()})` : ""
+              }`}
+              value={composer}
+              onChange={(e) => {
+                setComposer(e.target.value);
+                e.target.style.height = "auto";
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  submitComposer();
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        {/* The live region is created on the first paint and stays empty until
+            there is something to say: a region created with its content is not
+            reliably announced, and a 2.6-second one is removed before the
+            announcement has been read. */}
+        <div
+          className="toast-layer"
+          role="status"
+          aria-live={toast?.tone === "error" ? "assertive" : "polite"}
+          aria-atomic="true"
+        >
+          {toast ? (
+            <div className={`toast${toast.tone === "error" ? " error" : ""}`}>
+              <span className="toast-text">{toast.text}</span>
+              {toast.tone === "error" ? (
+                <button
+                  type="button"
+                  className="toast-dismiss"
+                  aria-label="Dismiss"
+                  onClick={dismissToast}
+                >
+                  <X size={13} strokeWidth={2} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 
       {showOverflow ? (
         <Menu
           label="Sort"
-          onClose={() => setShowOverflow(false)}
-          entries={SORT_ORDERS.map(([order, label]) => ({
+          onClose={closeOverflow}
+          entries={SORT_ORDERS.map(([orderName, label]) => ({
             label,
             radio: true,
-            checked: state.sort === order,
-            trailing: state.sort === order ? "✓" : undefined,
-            onClick: () => void api.setSort(order).then(refresh),
+            checked: state.sort === orderName,
+            trailing: state.sort === orderName ? "✓" : undefined,
+            onClick: () => void api.setSort(orderName).then(refresh),
           }))}
         />
       ) : null}
@@ -710,7 +924,7 @@ export default function Panel({
         <Menu
           anchor="point"
           at={composerMenu}
-          onClose={() => setComposerMenu(null)}
+          onClose={closeComposerMenu}
           entries={[
             { label: "Attach", onClick: () => fileInputRef.current?.click() },
           ]}
@@ -720,7 +934,7 @@ export default function Panel({
       {showSwitcher ? (
         <SectionSwitcher
           state={state}
-          onClose={() => setShowSwitcher(false)}
+          onClose={closeSwitcher}
           onPicked={(id) => {
             void api.setActiveSection(id);
             setShowSwitcher(false);
@@ -729,25 +943,7 @@ export default function Panel({
         />
       ) : null}
 
-      {showShortcuts ? (
-        <div className="shortcut-sheet" role="dialog" aria-modal="true" aria-label="Bard keyboard shortcuts">
-          <div className="shortcut-sheet-head">
-            <strong>Keyboard shortcuts</strong>
-            <button className="icon-btn" aria-label="Close shortcuts" onClick={() => setShowShortcuts(false)}>×</button>
-          </div>
-          <div className="shortcut-list">
-            <div><kbd>Enter</kbd><span>Copy</span></div>
-            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd><span>Copy as list</span></div>
-            <div><kbd>Ctrl</kbd><kbd>K</kbd><span>Sections</span></div>
-            <div><kbd>Right Shift</kbd><kbd>Right Shift</kbd><kbd>1 / 2 / 3</kbd><span>Paste item, from any app</span></div>
-            <div><kbd>Right Alt</kbd><kbd>Right Alt</kbd><span>Settings, from any app</span></div>
-            <div><kbd>Left Alt</kbd><kbd>Left Alt</kbd><span>Draw, from any app</span></div>
-            <div><kbd>F11</kbd><span>Fullscreen Draw</span></div>
-            <div><kbd>Space</kbd><span>Done</span></div>
-            <div><kbd>Esc</kbd><span>Close</span></div>
-          </div>
-        </div>
-      ) : null}
+      {showShortcuts ? <ShortcutSheet onClose={closeShortcuts} /> : null}
 
       {menu ? (
         <ContextMenu
@@ -756,14 +952,15 @@ export default function Panel({
           multi={menu.ids.length > 1}
           item={menu.item}
           onAction={onMenuAction}
-          onClose={() => setMenu(null)}
+          onClose={closeMenu}
         />
       ) : null}
-
-      {toast ? <div className="toast" role="status" aria-live="polite">{toast}</div> : null}
     </>
   );
 }
+
+/** Shared by every card with no attachments, so the prop keeps one identity. */
+const EMPTY_ATTACHMENTS: Attachment[] = [];
 
 /** The timeline's orders, in the menu's order. Newest first is the default. */
 const SORT_ORDERS: [SortOrder, string][] = [
@@ -773,40 +970,163 @@ const SORT_ORDERS: [SortOrder, string][] = [
   ["completed", "Completed last"],
 ];
 
-function flatFiltered(state: AppState, query: string): number[] {
-  return filterItems(state, query).map((i) => i.id);
+/*
+  The fixed gesture map, read off gesture.rs: Left Shift captures, Ctrl
+  dictates, Right Shift opens the panel, Left Alt draws, Right Alt opens
+  Settings. The sheet is the only place in the app that states all of them, so
+  a row that names the wrong side teaches the wrong gesture.
+*/
+const SHORTCUT_GROUPS: { name: string; rows: { keys: string[]; what: string }[] }[] = [
+  {
+    name: "Gestures",
+    rows: [
+      { keys: ["Left Shift", "Left Shift"], what: "Capture the selection" },
+      { keys: ["Ctrl", "Ctrl"], what: "Dictate — hold, or tap twice" },
+      { keys: ["Right Shift", "Right Shift"], what: "Show or hide Bard" },
+      { keys: ["Right Shift", "Right Shift", "1 / 2 / 3"], what: "Paste a timeline item" },
+      { keys: ["Left Alt", "Left Alt"], what: "Draw" },
+      { keys: ["Right Alt", "Right Alt"], what: "Settings" },
+      { keys: ["F11"], what: "Fullscreen Draw" },
+    ],
+  },
+  {
+    name: "Keys",
+    rows: [
+      { keys: ["Enter"], what: "Copy" },
+      { keys: ["Ctrl", "Shift", "M"], what: "Copy as list" },
+      { keys: ["Ctrl", "K"], what: "Sections" },
+      { keys: ["Ctrl", "/"], what: "These shortcuts" },
+      { keys: ["Space"], what: "Done" },
+      { keys: ["Esc"], what: "Close" },
+    ],
+  },
+];
+
+/**
+ * The shortcut sheet is a modal, so it behaves like one: a scrim that the
+ * timeline cannot be clicked through, focus that starts inside and cannot Tab
+ * out, Escape to leave, and the focus returned to wherever it came from. The
+ * previous version declared `aria-modal` and none of that.
+ */
+function ShortcutSheet({ onClose }: { onClose: () => void }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const restoreFocusTo = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    restoreFocusTo.current = document.activeElement as HTMLElement | null;
+    // Initial focus on the close control: the sheet is a list to read, not a
+    // form, so there is nothing inside it worth landing on first.
+    cardRef.current?.querySelector<HTMLElement>("button")?.focus();
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      const card = cardRef.current;
+      if (event.key !== "Tab" || !card) return;
+      const focusable = [
+        ...card.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), [href], input:not(:disabled), select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      ];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const current = document.activeElement;
+      const inside = current !== null && card.contains(current);
+      if (event.shiftKey && (!inside || current === first)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (!inside || current === last)) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    // Capture: the panel's own handler would otherwise hide the whole window
+    // before the sheet ever saw the key.
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      restoreFocusTo.current?.focus();
+    };
+  }, [onClose]);
+
+  return (
+    <div className="sheet" onClick={onClose}>
+      <div
+        ref={cardRef}
+        className="sheet-card shortcuts"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcut-sheet-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="shortcut-sheet-head">
+          <h2 id="shortcut-sheet-title">Shortcuts</h2>
+          <button
+            type="button"
+            className="icon-btn sheet-head-close"
+            aria-label="Close shortcuts"
+            onClick={onClose}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
+        <div className="shortcut-groups">
+          {SHORTCUT_GROUPS.map((group) => (
+            <div key={group.name} className="shortcut-group" role="group" aria-label={group.name}>
+              <h3 className="shortcut-group-name">{group.name}</h3>
+              {group.rows.map((row) => (
+                <div key={`${group.name}-${row.keys.join("-")}`} className="shortcut-row">
+                  <span className="shortcut-keys">
+                    {row.keys.map((key, index) => (
+                      <kbd key={`${key}-${index}`}>{key}</kbd>
+                    ))}
+                  </span>
+                  <span className="shortcut-what">{row.what}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function filterItems(state: AppState, query: string): Item[] {
+function filterItems(items: Item[], query: string): Item[] {
   const q = query.trim().toLowerCase();
-  return state.items.filter((it) => {
-    if (!q) return true;
+  if (!q) return items;
+  return items.filter((it) => {
     if (it.kind === "image") return false;
     return it.content.toLowerCase().includes(q);
   });
 }
 
 function groupBySection(
-  state: AppState,
-  query: string
+  items: Item[],
+  sections: Section[],
+  activeSectionId: number | null,
 ): { section: Section | null; items: Item[] }[] {
-  const items = filterItems(state, query);
-  const sections = [...state.sections];
-  const active = state.activeSectionId;
-  if (active !== null) {
-    sections.sort((a, b) => (a.id === active ? -1 : b.id === active ? 1 : a.id - b.id));
+  const ordered = [...sections];
+  if (activeSectionId !== null) {
+    ordered.sort((a, b) => (a.id === activeSectionId ? -1 : b.id === activeSectionId ? 1 : a.id - b.id));
   }
   const out: { section: Section | null; items: Item[] }[] = [];
   const inbox = items.filter((i) => i.sectionId === null);
   if (inbox.length > 0) out.push({ section: null, items: inbox });
-  for (const s of sections) {
-    const group = items.filter((i) => i.sectionId === s.id);
-    if (group.length > 0) out.push({ section: s, items: group });
+  for (const section of ordered) {
+    const group = items.filter((i) => i.sectionId === section.id);
+    if (group.length > 0) out.push({ section, items: group });
   }
   return out;
 }
 
-function copySelection(state: AppState, ids: number[], toast: (m: string) => void) {
+function copySelection(state: AppState, ids: number[], notify: Notify) {
   if (ids.length === 0) return;
   const items = ids
     .map((id) => state.items.find((i) => i.id === id))
@@ -818,7 +1138,7 @@ function copySelection(state: AppState, ids: number[], toast: (m: string) => voi
   const reportFailure = (reason: unknown) => {
     playCue("error");
     const detail = reason instanceof Error ? reason.message : String(reason ?? "");
-    toast(detail || "Couldn't copy.");
+    notify(detail || "Couldn't copy.", "error");
   };
 
   if (items.length === 1) {
@@ -827,7 +1147,7 @@ function copySelection(state: AppState, ids: number[], toast: (m: string) => voi
     void write
       .then(() => {
         playCue("copy");
-        toast("Copied");
+        notify("Copied");
       })
       .catch(reportFailure);
     return;
@@ -838,25 +1158,38 @@ function copySelection(state: AppState, ids: number[], toast: (m: string) => voi
     )
     .then(() => {
       playCue("copy");
-      toast("Copied as list");
+      notify("Copied as list");
     })
     .catch(reportFailure);
 }
 
-function copyAsList(state: AppState, ids: number[], toast: (m: string) => void) {
+function copyAsList(state: AppState, ids: number[], notify: Notify) {
   const markdown = ids
     .map((id) => state.items.find((item) => item.id === id))
     .filter((item): item is Item => !!item)
     .map((item) => (item.kind === "text" ? `- ${item.content}` : "- [image]"))
     .join("\n");
-  if (markdown) void api.copyText(markdown).then(() => { playCue("copy"); toast("Copied as list"); });
+  if (!markdown) return;
+  // The same unhandled rejection `copySelection` had: a failed list write said
+  // nothing at all, and left the last "Copied" standing as if it had worked.
+  void api
+    .copyText(markdown)
+    .then(() => {
+      playCue("copy");
+      notify("Copied as list");
+    })
+    .catch((reason: unknown) => {
+      playCue("error");
+      const detail = reason instanceof Error ? reason.message : String(reason ?? "");
+      notify(detail || "Couldn't copy.", "error");
+    });
 }
 
 /**
  * Add dropped or picked files. Images become image items; text files become
  * notes from their contents; anything else becomes a note naming the file.
  */
-async function addFiles(files: File[], toast: (m: string) => void) {
+async function addFiles(files: File[], notify: Notify) {
   if (files.length === 0) return;
   for (const file of files) {
     if (file.type.startsWith("image/")) {
@@ -869,7 +1202,7 @@ async function addFiles(files: File[], toast: (m: string) => void) {
       await api.addItem(file.name);
     }
   }
-  toast(files.length === 1 ? "Added 1 file" : `Added ${files.length} files`);
+  notify(files.length === 1 ? "Added 1 file" : `Added ${files.length} files`);
 }
 
 function readBlob(file: File): Promise<{ b64: string; ext: string }> {
@@ -892,7 +1225,9 @@ function readBlob(file: File): Promise<{ b64: string; ext: string }> {
   The empty state asks about the section you are actually in — "What should we
   build in ui?" rather than a generic nothing-here. It is the one place the app
   addresses you, so it stays a question, and the hint under it exists only
-  because a first-run user cannot know about double-shift yet.
+  because a first-run user cannot know the capture gesture yet. It names Left
+  Shift: Right Shift opens the panel, and a user who taps the wrong one decides
+  the product is broken.
 */
 function EmptyState({ section }: { section: string | null }) {
   return (
@@ -908,7 +1243,7 @@ function EmptyState({ section }: { section: string | null }) {
         What should we build{section ? ` in ${section}` : ""}?
       </div>
       <div className="hint">
-        Select text anywhere, then tap <kbd>Shift</kbd> <kbd>Shift</kbd>.
+        Select text anywhere, then tap <kbd>Left Shift</kbd> twice.
       </div>
     </div>
   );

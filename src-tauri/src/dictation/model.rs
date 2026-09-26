@@ -1,4 +1,12 @@
-use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Mutex, MutexGuard,
+    },
+    time::Duration,
+};
 
 use serde::Serialize;
 use tauri::AppHandle;
@@ -73,14 +81,66 @@ pub struct ModelStatus {
     pub owned: bool,
 }
 
-static SESSION: Mutex<Option<(String, Session, CancelToken)>> = Mutex::new(None);
+/// The resident session: the path it was built from, the session, and the token
+/// that aborts an in-flight run.
+type SessionSlot = (String, Session, CancelToken);
+
+static SESSION: Mutex<Option<SessionSlot>> = Mutex::new(None);
 static ACTIVE_CANCEL: Mutex<Option<CancelToken>> = Mutex::new(None);
-static INIT_BACKENDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static CANCEL_DOWNLOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static LAST_USE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static WATCHER_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static INIT_BACKENDS: AtomicBool = AtomicBool::new(false);
+static CANCEL_DOWNLOAD: AtomicBool = AtomicBool::new(false);
+static LAST_USE: AtomicU64 = AtomicU64::new(0);
+static WATCHER_STARTED: AtomicBool = AtomicBool::new(false);
+/// Bumped every time the shared slot is emptied. A run that took the session out
+/// of the slot reads this before and after its work: if the number moved, the
+/// slot was claimed while the run was in flight and the session must be dropped
+/// rather than put back.
+static SLOT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 const UNLOAD_IDLE_MS: u64 = 5 * 60 * 1000;
+
+fn session_lock() -> MutexGuard<'static, Option<SessionSlot>> {
+    SESSION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn active_cancel_lock() -> MutexGuard<'static, Option<CancelToken>> {
+    ACTIVE_CANCEL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Mark the engine as used, so the idle reaper can eventually reclaim it.
+fn touch_last_use() {
+    LAST_USE.store(crate::db::now_ms() as u64, Ordering::SeqCst);
+}
+
+/// Empty the shared slot and claim it, so a run that is holding the session in
+/// its own hands will not put it back.
+///
+/// Every lock in this module degrades rather than dies. A poisoned lock here
+/// used to `unwrap`, and because this is called from the idle-unload watcher a
+/// panic there would take the watcher thread with it: no models would ever be
+/// reclaimed again, memory would climb for the life of the process, and nothing
+/// would be written anywhere. The `cancel` path and the transcription path
+/// already used `into_inner`; these two were the outliers.
+fn release_session() {
+    let held = session_lock().take().is_some();
+    if held {
+        // The cancel token belongs to the session we just dropped. Clearing it
+        // when the slot was already empty would disarm a run that is in flight
+        // with the session in its own hands.
+        *active_cancel_lock() = None;
+    }
+    SLOT_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Whether a finished run may return its session to the shared slot. The caller
+/// also requires the slot to be empty; this is the part that can be tested.
+fn reclaim_session(slot_generation: u64, run_generation: u64) -> bool {
+    slot_generation == run_generation
+}
 
 fn model_path(app: &AppHandle, def: &ModelDef) -> PathBuf {
     crate::hf::local_models_dir(app).join(def.filename)
@@ -256,25 +316,21 @@ pub fn model_status(app: &AppHandle) -> ModelStatus {
 }
 
 pub fn cancel_transcription() {
-    if let Some(token) = ACTIVE_CANCEL
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .as_ref()
-    {
+    if let Some(token) = active_cancel_lock().as_ref() {
         token.cancel();
     }
 }
 
 pub fn cancel_download() {
-    CANCEL_DOWNLOAD.store(true, std::sync::atomic::Ordering::SeqCst);
+    CANCEL_DOWNLOAD.store(true, Ordering::SeqCst);
 }
 
 pub fn cancel_download_reset() {
-    CANCEL_DOWNLOAD.store(false, std::sync::atomic::Ordering::SeqCst);
+    CANCEL_DOWNLOAD.store(false, Ordering::SeqCst);
 }
 
 pub fn cancel_pending() -> bool {
-    CANCEL_DOWNLOAD.load(std::sync::atomic::Ordering::SeqCst)
+    CANCEL_DOWNLOAD.load(Ordering::SeqCst)
 }
 
 pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
@@ -326,22 +382,23 @@ pub fn delete_model(app: &AppHandle, id: &str) -> Result<(), String> {
     crate::hf::delete_model(app, id)?;
     // A non-active deletion cannot be the in-memory session, but clearing an
     // idle/stale session here preserves the old unload behavior for callers.
-    *SESSION.lock().unwrap() = None;
-    *ACTIVE_CANCEL.lock().unwrap() = None;
+    // The slot is taken for an instant: a transcription in flight holds the
+    // session in its own thread, so this no longer waits out the whole take, and
+    // the generation bump keeps that run from putting the deleted model back.
+    release_session();
     Ok(())
 }
 
 pub fn start_unload_watcher(_app: AppHandle) {
-    if WATCHER_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    if WATCHER_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(30));
-        let last = LAST_USE.load(std::sync::atomic::Ordering::SeqCst);
+        let last = LAST_USE.load(Ordering::SeqCst);
         if last > 0 && crate::db::now_ms() - last as i64 > UNLOAD_IDLE_MS as i64 {
-            *SESSION.lock().unwrap() = None;
-            *ACTIVE_CANCEL.lock().unwrap() = None;
-            LAST_USE.store(0, std::sync::atomic::Ordering::SeqCst);
+            release_session();
+            LAST_USE.store(0, Ordering::SeqCst);
         }
     });
 }
@@ -363,41 +420,113 @@ fn transcribe_inner(app: &AppHandle, samples: &[f32]) -> Result<String, String> 
     }
     crate::hf::verify_model_file(app, &id, &path)?;
 
-    if !INIT_BACKENDS.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        let _ = transcribe_cpp::init_backends_default();
+    if !INIT_BACKENDS.load(Ordering::SeqCst) {
+        // The flag used to be set with `swap` before the call and the result
+        // discarded, so one failure — a busy GPU, a driver that was not ready
+        // yet — disabled dictation for the rest of the process with nothing
+        // anywhere saying why. The flag now records success, and a failure is
+        // reported instead of swallowed.
+        transcribe_cpp::init_backends_default().map_err(|error| {
+            format!("Bard's transcription engine could not start: {error}")
+        })?;
+        INIT_BACKENDS.store(true, Ordering::SeqCst);
     }
 
-    let mut guard = SESSION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if guard
-        .as_ref()
-        .map(|(saved, _, _)| saved != &path.to_string_lossy().to_string())
-        .unwrap_or(true)
-    {
-        let model = Model::load(&path).map_err(|e| e.to_string())?;
-        let mut session = model.session().map_err(|e| e.to_string())?;
-        let token = CancelToken::new();
-        session.set_cancel_token(&token);
-        *guard = Some((path.to_string_lossy().to_string(), session, token));
-    }
-    let Some((_, session, token)) = guard.as_mut() else {
-        return Err("Voice model session could not be created.".into());
+    let saved_path = path.to_string_lossy().to_string();
+    // The session is *taken out* of the shared slot for the duration of the run.
+    // Holding the lock across `run` is what made this module's two other
+    // lock-takers — the idle reaper and `delete_model` — block for the whole
+    // transcription. Nothing else can start a run while this one is in flight,
+    // because the state machine is not Idle until the run returns.
+    let (session_path, mut session, token, generation) = {
+        let mut guard = session_lock();
+        if guard
+            .as_ref()
+            .map(|(saved, _, _)| saved != &saved_path)
+            .unwrap_or(true)
+        {
+            let model = Model::load(&path).map_err(|e| e.to_string())?;
+            let mut session = model.session().map_err(|e| e.to_string())?;
+            let token = CancelToken::new();
+            session.set_cancel_token(&token);
+            *guard = Some((saved_path.clone(), session, token));
+        }
+        let Some((_, session, token)) = guard.take() else {
+            return Err("Voice model session could not be created.".into());
+        };
+        // Read inside the same critical section as the take, so a release that
+        // raced us is always visible afterwards as a different generation.
+        (
+            saved_path.clone(),
+            session,
+            token,
+            SLOT_GENERATION.load(Ordering::SeqCst),
+        )
     };
+
     token.reset();
-    *ACTIVE_CANCEL
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(token.clone());
+    *active_cancel_lock() = Some(token.clone());
     let result = session
         .run(samples, &RunOptions::default())
+        .map(|transcript| transcript.text.trim().to_string())
         .map_err(|e| e.to_string());
-    *ACTIVE_CANCEL
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    let result = result?;
-    LAST_USE.store(
-        crate::db::now_ms() as u64,
-        std::sync::atomic::Ordering::SeqCst,
-    );
-    Ok(result.text.trim().to_string())
+    *active_cancel_lock() = None;
+
+    // The reaper counts from the last *attempt*, not the last success. A failed
+    // run still leaves a 1.5 GB model resident, and a stamp written only on
+    // success left `LAST_USE` at zero, which the reaper treats as "never used" —
+    // so that model stayed loaded for the life of the process and no amount of
+    // idling would reclaim it.
+    touch_last_use();
+
+    let mut guard = session_lock();
+    if reclaim_session(SLOT_GENERATION.load(Ordering::SeqCst), generation) && guard.is_none() {
+        *guard = Some((session_path, session, token));
+    }
+    // Otherwise a delete or the reaper claimed the slot while this run was in
+    // flight, and the session is dropped here instead of being put back: the
+    // model has been removed, or is due to be, and putting it back would pin
+    // its weights with nothing left that refers to them.
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_run_keeps_the_session_only_if_the_slot_was_not_claimed() {
+        assert!(reclaim_session(7, 7));
+        // A delete or the reaper ran while the transcription was in flight.
+        assert!(!reclaim_session(8, 7));
+    }
+
+    #[test]
+    fn claiming_the_slot_is_always_visible_to_a_run() {
+        let before = SLOT_GENERATION.load(Ordering::SeqCst);
+        release_session();
+        let after = SLOT_GENERATION.load(Ordering::SeqCst);
+        assert_ne!(before, after, "release_session must bump the generation");
+    }
+
+    #[test]
+    fn the_reaper_window_is_five_minutes() {
+        assert_eq!(UNLOAD_IDLE_MS, 5 * 60 * 1000);
+    }
+
+    #[test]
+    fn releasing_the_slot_takes_no_lock_a_run_can_be_holding() {
+        // A transcription holds the session in its own thread for the whole run,
+        // so this is the shape the reaper and `delete_model` depend on. If
+        // someone reintroduces a lock held across `session.run`, this is the
+        // call that starts blocking for minutes.
+        let started = std::time::Instant::now();
+        release_session();
+        release_session();
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(50),
+            "release_session blocked for {:?}",
+            started.elapsed()
+        );
+    }
 }

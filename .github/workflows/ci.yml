@@ -12,8 +12,19 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      # rustsec/audit-check publishes its findings as a commit Check, and needs
+      # this to say so. Without it a finding still fails the step, but with an
+      # authentication error instead of the list of advisories.
+      checks: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # No step in this workflow pushes, and `bun install` runs npm lifecycle
+          # scripts from the dependency graph. Leaving a repository credential
+          # in .git/config for the whole job hands all of them one.
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -52,9 +63,30 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Rust dependency audit
-        uses: rustsec/audit-check@v2
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # The Rust crate lives in src-tauri, and this is load-bearing rather
+          # than cosmetic: the action runs `cargo audit --file
+          # <working-directory>/Cargo.lock`, and there is no Cargo.lock at the
+          # repository root. Without it the audit is pointed at a file that does
+          # not exist and the step fails every run — a broken gate that reads as
+          # a working one.
+          working-directory: src-tauri
+        # Policy, and the reason it is not stricter: this action fails the step
+        # on a critical advisory and only annotates a Check for informational
+        # ones, which is the same shape as the `bun audit` step above it — the
+        # JS side hard-fails, and nothing about the Rust graph should be
+        # quieter than the JS graph. Measured 2026-09-26 against
+        # src-tauri/Cargo.lock: 682 locked packages, 328 of them compiled into
+        # the Windows build, 0 vulnerabilities, 8 warnings (6 unmaintained,
+        # 2 unsound). Three of those — glib, memmap2, proc-macro-error — are
+        # in the lockfile only; `cargo tree --target x86_64-pc-windows-msvc -i
+        # <crate>` reports nothing to print, so they are never compiled here.
+        # The five unic-* warnings are real and reach the build through
+        # urlpattern -> tauri-utils; they are unmaintained, not unsound, and
+        # that is the only reason this step is green. Reproduce with
+        # `cargo audit --file src-tauri/Cargo.lock` before assuming otherwise.
 
       - name: Package NSIS installer
         env:

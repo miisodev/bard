@@ -3,7 +3,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Eraser,
-  KeyRound,
   LoaderCircle,
   PlugZap,
   RotateCcw,
@@ -107,7 +106,7 @@ export default function DictationPane(_: PaneProps) {
   };
 
   return (
-    <Pane title="Dictation" description="Speech to text, entirely on this machine.">
+    <Pane title="Dictation" description="Speech to text on this machine, with optional post-processing.">
       <Group title="Input">
         <Row label="Microphone" hint="The system default is used unless you pick one.">
           <Select
@@ -173,8 +172,8 @@ export default function DictationPane(_: PaneProps) {
       {!loading && error ? <Note tone="danger">{error}</Note> : null}
 
       <Note>
-        Audio capture and transcription stay on this device. If Refine is on, only the
-        finished transcript text is sent to the service you configure.
+        Audio capture and transcription stay on this device. If Refine is on, the
+        finished transcript text — and nothing else — is sent to OpenRouter.
       </Note>
     </Pane>
   );
@@ -427,6 +426,7 @@ export function PostprocessingPane(_: PaneProps) {
         </Row>
         <Row
           stacked
+          htmlFor="openrouter-api-key"
           label="OpenRouter API key"
           hint={
             keyConfigured
@@ -453,6 +453,7 @@ export function PostprocessingPane(_: PaneProps) {
         </Row>
         <Row
           stacked
+          htmlFor="openrouter-model-id"
           label="Model IDs"
           hint="Use the provider-prefixed IDs shown by OpenRouter, separated by commas. Bard sends the first ID; it never substitutes a fallback."
         >
@@ -473,15 +474,24 @@ export function PostprocessingPane(_: PaneProps) {
           />
         </Row>
         <div className="postprocessing-actions">
-          <Button
-            variant="primary"
-            onClick={() => void save()}
-            disabled={controlsDisabled || !dirty}
-            ariaBusy={saving}
-          >
-            {saving ? <LoaderCircle className="spinning" aria-hidden="true" /> : <Save aria-hidden="true" />}
-            {saving ? "Saving…" : "Save"}
-          </Button>
+          {/*
+            Save appears only when there is something to save. It was the
+            primary button and permanently disabled until the pane was edited,
+            which is a loud blue control that does nothing — a dead control in
+            the most prominent position reads as a broken app, not as a
+            web form's submit button.
+          */}
+          {dirty ? (
+            <Button
+              variant="primary"
+              onClick={() => void save()}
+              disabled={controlsDisabled}
+              ariaBusy={saving}
+            >
+              {saving ? <LoaderCircle className="spinning" aria-hidden="true" /> : <Save aria-hidden="true" />}
+              {saving ? "Saving…" : "Save changes"}
+            </Button>
+          ) : null}
           {testing ? (
             <Button onClick={() => void cancelTest()} ariaBusy={true}>
               <LoaderCircle className="spinning" aria-hidden="true" />
@@ -491,6 +501,7 @@ export function PostprocessingPane(_: PaneProps) {
             <Button
               onClick={() => void testConnection()}
               disabled={controlsDisabled || dirty}
+              title={dirty ? "Save or discard your changes before testing" : undefined}
               ariaBusy={false}
             >
               <PlugZap aria-hidden="true" />
@@ -507,10 +518,11 @@ export function PostprocessingPane(_: PaneProps) {
             Clear key
           </Button>
         </div>
+        {/* One icon for one sentence. This said the same thing twice over, with
+            a Shield beside it and a Key inside it. */}
         <div className="postprocessing-security">
           <ShieldCheck aria-hidden="true" />
           <span>
-            <KeyRound aria-hidden="true" />
             The key is sent only when you save and is never included in app state or events.
           </span>
         </div>
@@ -557,8 +569,8 @@ export function PostprocessingPane(_: PaneProps) {
       ) : null}
 
       <Note>
-        Audio and local transcription always stay on this machine. When Refine is on,
-        only the already-produced transcript text is sent to OpenRouter. Bard has no account, sync, or telemetry.
+        Bard has no account, sync, or telemetry. The only thing that leaves this
+        machine is what the OpenRouter group above says it sends.
       </Note>
     </Pane>
   );
