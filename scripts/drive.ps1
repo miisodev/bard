@@ -267,8 +267,8 @@ $SCANS = @{
   "lctrl"  = @{ Make = 0x1D; Break = 0x9D; Extended = $false; Name = "Left Ctrl" }
   "rctrl"  = @{ Make = 0x1D; Break = 0x9D; Extended = $true;  Name = "Right Ctrl" }
 }
-# Aliases, so "lshift" and "shiftleft" both work. Bare "shift", "alt" and "ctrl"
-# are deliberately NOT accepted: a gesture has to name a side, and quietly
+# Aliases, so "lshift" and "shiftleft" both work. Bare "shift" and "alt" are
+# deliberately NOT accepted: those gestures are side-sensitive, and quietly
 # defaulting to the left one lets a test pass for the wrong key.
 foreach ($pair in @(
   @("shiftleft", "lshift"), @("shiftright", "rshift"), @("leftshift", "lshift"), @("rightshift", "rshift"),

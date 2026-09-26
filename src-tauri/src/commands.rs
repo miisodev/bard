@@ -90,8 +90,10 @@ pub fn hf_use_cached(
     size: u64,
 ) -> Result<(), String> {
     require_licensed_or_onboarding(&app)?;
-    let id = crate::hf::register_cached(&app, &repo, &file, &local_path, size)?;
-    crate::hf::activate_model(&app, &id)
+    // One load, not two. This used to register the path and then activate it,
+    // and each of those opened the file with the engine — so choosing a detected
+    // model meant two full opens of a multi-gigabyte GGUF for one click.
+    crate::hf::register_and_activate_cached(&app, &repo, &file, &local_path, size)
 }
 
 #[tauri::command]

@@ -1,9 +1,9 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Mutex, MutexGuard,
+        Mutex, MutexGuard, OnceLock,
     },
     time::Duration,
 };
@@ -371,6 +371,9 @@ pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
         crate::hf::emit_download_failure(app, def.id, error);
         return Err(error.into());
     }
+    // The file on disk has just changed, so anything previously verified for this
+    // model is no longer a statement about these bytes.
+    invalidate_verification();
 
     // Installation is not selection. The UI receives a refresh signal and the
     // user activates this model explicitly with `set_model`.
@@ -410,6 +413,50 @@ pub fn transcribe(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
     result
 }
 
+/// The model whose file has been fully verified in this process, if any.
+///
+/// Keyed by id and the resolved path together, so switching models, or the same
+/// id pointing at a different file, re-verifies.
+fn verified_this_process() -> &'static Mutex<Option<(String, PathBuf)>> {
+    static VERIFIED: OnceLock<Mutex<Option<(String, PathBuf)>>> = OnceLock::new();
+    VERIFIED.get_or_init(|| Mutex::new(None))
+}
+
+/// Run the full catalogue verification once per process for a given model file.
+fn ensure_session_verified(app: &AppHandle, id: &str, path: &Path) -> Result<(), String> {
+    let resolved = path.to_path_buf();
+    {
+        let guard = verified_this_process()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if guard
+            .as_ref()
+            .is_some_and(|(seen_id, seen_path)| seen_id == id && seen_path == &resolved)
+        {
+            return Ok(());
+        }
+    }
+
+    crate::hf::verify_model_file(app, id, path)?;
+
+    let mut guard = verified_this_process()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some((id.to_owned(), resolved));
+    Ok(())
+}
+
+/// Forget the per-process verification, so the next capture checks again.
+///
+/// Called whenever the file behind the active model can have changed underneath
+/// Bard — a fresh download, or a model being replaced.
+pub fn invalidate_verification() {
+    let mut guard = verified_this_process()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = None;
+}
+
 fn transcribe_inner(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
     let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
     let Some(path) = resolve_path(app, &id) else {
@@ -418,7 +465,21 @@ fn transcribe_inner(app: &AppHandle, samples: &[f32]) -> Result<String, String> 
     if !path.is_file() {
         return Err("Voice model not downloaded.".into());
     }
-    crate::hf::verify_model_file(app, &id, &path)?;
+    // Verified once per *session*, not once per capture.
+    //
+    // `verify_model_file` resolves the file and re-checks it against the
+    // catalogue, and `verify_pinned_file` memoises on
+    // `(size, last_write_time, creation_time)`. That memo is the problem: on this
+    // filesystem an in-place same-size rewrite leaves both timestamps bit-for-bit
+    // unchanged — measured, not assumed — so the memo effectively verifies a file
+    // once per process and then trusts it forever, which is the one guarantee the
+    // whole checksum path exists to provide.
+    //
+    // Verifying on session entry rather than per capture removes the dependence on
+    // the memo while keeping the cost off the dictation hot path: a session that
+    // dictates forty times hashes once, not forty times, and any change to the
+    // file between sessions is caught.
+    ensure_session_verified(app, &id, &path)?;
 
     if !INIT_BACKENDS.load(Ordering::SeqCst) {
         // The flag used to be set with `swap` before the call and the result

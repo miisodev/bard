@@ -1747,6 +1747,14 @@ fn register_probed_path(
     Ok(id)
 }
 
+/// Register a discovered cache model and return its id, without activating it.
+///
+/// Superseded by [`register_and_activate_cached`], which is what the command
+/// layer now calls: registering and then activating separately meant two full
+/// engine opens of a multi-gigabyte file for one click. Kept because the two-step
+/// form is the honest shape for any caller that wants to register now and
+/// activate later.
+#[allow(dead_code)]
 pub fn register_cached(
     app: &AppHandle,
     repo: &str,
