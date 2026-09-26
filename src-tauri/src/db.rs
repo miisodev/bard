@@ -6,11 +6,17 @@ use tauri::{AppHandle, Manager};
 
 pub struct Db(pub Mutex<Option<Connection>>);
 
+/// Milliseconds since the Unix epoch, or 0 if the system clock is before it.
+///
+/// Never unwraps. `overlay::holding_clicks` calls this from the mouse hook
+/// thread, so under `panic = "abort"` a clock set earlier than 1970 would kill
+/// the whole process and take the click guard with it. A wrong timestamp is
+/// recoverable; a dead process is not.
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default()
 }
 
 #[derive(Serialize, Clone)]

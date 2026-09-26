@@ -6,6 +6,32 @@
   ui.tsx — if a pane ever needs a one-off rule, the primitive is missing.
 */
 
+/* A name that has to reach a screen reader and nothing else. The licence
+   field's label used this class with no rule anywhere, so it rendered as
+   14px body text above the key field. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A failure the user has to act on, in the danger tone. Also undefined
+   everywhere, which is why an activation failure read as an ordinary line of
+   body copy, indistinguishable from the label above it. The card's own gap
+   supplies the spacing. */
+.form-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
 .settings-root {
   display: flex;
 }
@@ -26,6 +52,17 @@
   padding: var(--sp-1) var(--sp-5) var(--sp-5);
 }
 
+/*
+  The tablist is its own element so it can carry the role, which leaves the
+  sidebar's own flex column with two children instead of nine. It has to pass
+  the column layout on, or the sections lose their 2px rhythm.
+*/
+.settings-nav > [role="tablist"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
 .settings-nav button {
   text-align: left;
   border: none;
@@ -43,8 +80,8 @@
 .settings-nav button:hover { background: var(--canvas-hover); color: var(--on-canvas); }
 
 .settings-nav button.on {
-  background: var(--accent);
-  color: var(--text-on-accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
   font-weight: var(--fw-medium);
 }
 
@@ -137,6 +174,7 @@
 .row-text { flex: 1; min-width: 0; }
 
 .row-label {
+  display: block;   /* a `<label>` when the row names a control, a `<div>` when not */
   font-size: var(--fs-base);
   color: var(--text);
 }
@@ -147,11 +185,32 @@
   line-height: var(--lh-base);
   color: var(--text-2);
   overflow-wrap: anywhere;
+  /* Hints carry real data here — the export folder path is one — and the
+     window is `user-select: none` so drags select nothing. A path a person is
+     expected to read has to be copyable. */
+  user-select: text;
 }
 
 .row-control { flex: none; }
 .row.stacked .row-control { flex: 1; min-width: 0; }
 .row.stacked .field { width: 100%; }
+
+/*
+  `Segmented` is one tab stop with a roving tabindex now, so this ring is the
+  only thing telling a keyboard user which option they are on — and
+  `.segmented` is `overflow: hidden`, so the ring has to be drawn inside the
+  button to survive. It belongs beside `.segmented` in styles.css.
+*/
+.segmented button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* The pane holds the scroll, so it takes focus. Same clipping reason. */
+.settings-content > [role="tabpanel"]:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
 
 .note {
   margin: var(--sp-5) var(--sp-1) 0;
@@ -201,6 +260,22 @@ summary:focus-visible {
   box-shadow: var(--focus-ring);
 }
 
+/* `Button variant="danger"` emits `.btn.danger` and no rule for it existed in
+   any stylesheet, so every Remove and Delete in the app arrived as a neutral
+   grey button: the Danger group looked exactly like a group of defaults. It
+   belongs in styles.css, beside `.btn` itself, where the panel can reach it. */
+.btn.danger {
+  background: var(--danger-soft);
+  border-color: transparent;
+  color: var(--danger);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .btn svg,
 .tag svg,
 .loading-row svg,
@@ -242,7 +317,7 @@ summary:focus-visible {
 .model-badges,
 .model-meta-row,
 .model-actions,
-.model-tags,
+.model-fields,
 .detected-title,
 .repo-results-head {
   display: flex;
@@ -259,6 +334,9 @@ summary:focus-visible {
   font-weight: var(--fw-semibold);
   color: var(--text);
   overflow-wrap: anywhere;
+  /* A repository id like `onnx-community/whisper-large-v3-turbo` is data a
+     person types into OpenRouter by hand. It has to be selectable. */
+  user-select: text;
 }
 
 .role-label {
@@ -289,6 +367,21 @@ summary:focus-visible {
   font-family: var(--font-mono);
   font-size: var(--fs-caption);
 }
+
+/* What the catalogue says about a model, as fields. File size, language count,
+   parameter count, quantisation and licence were all drawn as pills too, so
+   fourteen different kinds of fact were announced in the same shape. A pill is
+   for state; a field is for a value. */
+.model-fields {
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-5);
+  margin-top: var(--sp-4);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-base);
+}
+
+.model-fields > span { min-width: 0; }
 
 .model-meters {
   display: flex;
@@ -333,14 +426,7 @@ summary:focus-visible {
   margin-top: var(--sp-6);
 }
 
-.model-tags {
-  flex: 1;
-  flex-wrap: wrap;
-  gap: var(--sp-3);
-}
-
 .model-badges .tag,
-.model-tags .tag,
 .detected-title .tag,
 .hf-file-title .tag,
 .setting-label-with-tag .tag {
@@ -374,16 +460,12 @@ summary:focus-visible {
   gap: var(--sp-4);
 }
 
+/* A download is a part of the model's row, not a card inside it. It used to be
+   a `--surface-2` slab with its own hairline, inside a `--surface` card, around
+   a `.progress` bar — three nested boxes to say "this one is downloading".
+   A failure is the danger-toned line below it, which is already there. */
 .model-progress {
   margin-top: var(--sp-6);
-  padding: var(--sp-5);
-  border-radius: var(--r-control);
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-
-.model-progress.has-error {
-  background: var(--danger-soft);
 }
 
 .progress-copy {
@@ -464,6 +546,8 @@ summary:focus-visible {
   font-size: var(--fs-sm);
   color: var(--text-2);
   overflow-wrap: anywhere;
+  /* Filesystem paths — a path a person may need to verify or report. */
+  user-select: text;
 }
 
 .detected-meta { color: var(--text-3); }
@@ -629,6 +713,7 @@ summary:focus-visible {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   color: var(--text);
+  user-select: text;
 }
 
 .hf-file-meta {
@@ -641,7 +726,8 @@ summary:focus-visible {
 }
 
 .hf-file-meta > span { min-width: 0; }
-.hf-file-meta .checksum { font-family: var(--font-mono); }
+/* A SHA-256 a person is expected to compare against something else. */
+.hf-file-meta .checksum { font-family: var(--font-mono); user-select: text; }
 .file-check-state {
   display: inline-flex;
   align-items: center;
@@ -699,6 +785,22 @@ summary:focus-visible {
 .postprocessing-status.success { color: var(--success); }
 .postprocessing-status.danger { color: var(--danger); }
 .postprocessing-status.muted { color: var(--text-2); }
+
+/* The release notes the updater fetched and the pane never showed. No panel of
+   its own: this is text in a card, not a card in a card. */
+.update-notes {
+  max-height: 160px;
+  margin: var(--sp-4) 0 0;
+  padding: var(--sp-4) 0 0;
+  overflow: auto;
+  border-top: 1px solid var(--rule);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  user-select: text;
+}
 
 .crash-report {
   margin: 0 var(--sp-7) var(--sp-7);

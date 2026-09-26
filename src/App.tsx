@@ -1,10 +1,10 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "./store";
 import { playCue } from "./audio";
 import type { AppState, ModelProgress } from "./types";
-import Panel from "./components/Panel";
+import Panel, { type ToastDetail } from "./components/Panel";
 import Onboarding from "./components/Onboarding";
 import { useTheme } from "./useTheme";
 
@@ -14,10 +14,69 @@ export interface DictationState {
   level: number;
 }
 
-function errorText(error: unknown): string {
+/**
+ * `mic-level` is the hottest path in the shell, and Rust emits it at 5 Hz and
+ * not at all when the quantised level has not moved — so a silent take produces
+ * one message rather than 24,000. Three guards remain here: the level is
+ * quantised to 5% steps — finer than that is not visible in anything — the
+ * comparison is on whole steps, so float noise cannot defeat it, and a value
+ * is published at most every 120 ms. The setter also returns the *same* object
+ * when nothing changed, which is the only way React can skip the re-render.
+ */
+const LEVEL_STEP = 0.05;
+const LEVEL_MIN_INTERVAL_MS = 120;
+
+function errorText(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
   const text = String(error);
-  return text.replace(/^Error:\s*/i, "").trim() || "Bard could not load its local state.";
+  return text.replace(/^Error:\s*/i, "").trim() || fallback;
+}
+
+/**
+ * The panel shows what it is told. A bare string is a confirmation and clears
+ * itself; an object carrying a tone is a failure and stays up until it has been
+ * read, so every `listen` below has to decide which kind of thing it is.
+ */
+function toast(detail: string | ToastDetail) {
+  window.dispatchEvent(new CustomEvent("bard-toast", { detail }));
+}
+
+/**
+ * A render throw in this window is a blank rectangle. The panel is frameless,
+ * untitled and `skipTaskbar`, so there is no title bar to read and no taskbar
+ * entry to fall back on — nothing distinguishes a crash from an app that simply
+ * did not open. This boundary is the only thing standing between that and a
+ * user who concludes Bard is broken: it names the failure, keeps the detail in
+ * the console for support, and offers the one action that can fix it.
+ */
+class ErrorBoundary extends Component<{ children: ReactNode }, { failure: Error | null }> {
+  state: { failure: Error | null } = { failure: null };
+
+  static getDerivedStateFromError(failure: Error) {
+    return { failure };
+  }
+
+  componentDidCatch(failure: Error, info: { componentStack?: string | null }) {
+    console.error("Bard could not render.", failure, info.componentStack ?? "");
+  }
+
+  render() {
+    const { failure } = this.state;
+    if (!failure) return this.props.children;
+    return (
+      <div className="app">
+        <div className="onboarding">
+          <AlertCircle width={28} height={28} aria-hidden="true" />
+          <h1>Bard ran into a problem</h1>
+          <p role="alert">{errorText(failure, "The panel stopped unexpectedly.")}</p>
+          <button className="btn primary" onClick={() => window.location.reload()}>
+            <RotateCcw aria-hidden="true" />
+            Reload Bard
+          </button>
+        </div>
+      </div>
+    );
+  }
 }
 
 export interface AppProps {
@@ -37,6 +96,11 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     level: 0,
   });
   const [activeItemId, setActiveItemId] = useState<number | null>(suppliedActiveItemId ?? null);
+  // The live input level, and when it was last handed to React. Keeping the
+  // rate down here is what stops a take from re-rendering every card 20 times a
+  // second — see LEVEL_MIN_INTERVAL_MS.
+  const publishedStep = useRef(0);
+  const publishedAt = useRef(0);
 
   useEffect(() => {
     setActiveItemId(suppliedActiveItemId ?? null);
@@ -58,7 +122,7 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
           setLoadError(null);
         })
         .catch((error: unknown) => {
-          if (alive) setLoadError(errorText(error));
+          if (alive) setLoadError(errorText(error, "Bard could not load its local state."));
         });
     };
 
@@ -93,9 +157,7 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     );
     subscribe(
       listen("dictation-panel", (event) => {
-        window.dispatchEvent(
-          new CustomEvent("bard-toast", { detail: "Dictated — saved to clipboard" })
-        );
+        toast("Dictated — saved to clipboard");
         void (event.payload as string);
       }),
     );
@@ -103,24 +165,37 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
       listen("dictation-error", (event) => {
         clearDictation();
         playCue("error");
-        const message = event.payload as string;
-        window.dispatchEvent(new CustomEvent("bard-toast", { detail: message }));
+        toast({ text: event.payload as string, tone: "error" });
       }),
     );
     subscribe(listen("dictation-cancelled", clearDictation));
     subscribe(
       listen("license-restricted", (event) => {
         const message = typeof event.payload === "string" ? event.payload : "Bard needs an active licence.";
-        window.dispatchEvent(new CustomEvent("bard-toast", { detail: message }));
+        toast({ text: message, tone: "error" });
         refresh();
+      }),
+    );
+    // The capture gesture does its work — sentinel on the clipboard, a synthetic
+    // copy, fourteen polls of the result — and when nothing came back it emitted
+    // `capture-failed` into a window with no listener, so a first-run user with
+    // nothing selected was told nothing at all. The clipboard is left as it was
+    // found, and the event carries no payload, so the message has to hold for
+    // both reasons it fires: an empty clipboard, and a clipboard holding
+    // something that is neither text nor an image. Both are answered the same
+    // way, so both get the same sentence.
+    subscribe(
+      listen("capture-failed", () => {
+        playCue("error");
+        toast({
+          text: "Nothing to capture. Select text or an image, then tap Left Shift twice.",
+          tone: "error",
+        });
       }),
     );
     subscribe(
       listen("dictation-cloud-warning", (event) => {
-        const message = event.payload as string;
-        window.dispatchEvent(
-          new CustomEvent("bard-toast", { detail: `Cloud cleanup skipped — ${message}` }),
-        );
+        toast({ text: `Cloud cleanup skipped — ${event.payload as string}`, tone: "error" });
       }),
     );
     subscribe(
@@ -140,8 +215,17 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     );
     subscribe(
       listen("mic-level", (event) => {
-        const [level] = event.payload as [number, number];
-        setDictation((current) => ({ ...current, level }));
+        const raw = Number((event.payload as [number, number])[0]);
+        if (!Number.isFinite(raw)) return;
+        const step = Math.round(raw / LEVEL_STEP);
+        if (step === publishedStep.current) return;
+        const now = performance.now();
+        if (now - publishedAt.current < LEVEL_MIN_INTERVAL_MS) return;
+        publishedStep.current = step;
+        publishedAt.current = now;
+        const level = step * LEVEL_STEP;
+        // Returning `current` unchanged is what lets React bail out entirely.
+        setDictation((current) => (current.level === level ? current : { ...current, level }));
       }),
     );
     subscribe(
@@ -180,49 +264,44 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     };
   }, []);
 
-  if (!state) {
-    return (
-      <div className="app">
-        <div className="onboarding">
-          {loadError ? (
-            <>
-              <AlertCircle width={28} height={28} aria-hidden="true" />
-              <h1>Bard could not start</h1>
-              <p role="alert">{loadError}</p>
-              <button className="btn primary" onClick={() => window.location.reload()}>
-                <RotateCcw aria-hidden="true" />
-                Try again
-              </button>
-            </>
-          ) : (
-            <>
-              <LoaderCircle width={28} height={28} aria-hidden="true" />
-              <h1>Starting Bard</h1>
-              <p role="status">Loading your local workspace…</p>
-            </>
-          )}
-        </div>
+  // One boundary around every screen the shell can show. The panel is the
+  // screen that matters and the boot and onboarding states are what it looks
+  // like a second earlier, so all three fail the same visible way.
+  const screen = !state ? (
+    <div className="app">
+      <div className="onboarding">
+        {loadError ? (
+          <>
+            <AlertCircle width={28} height={28} aria-hidden="true" />
+            <h1>Bard could not start</h1>
+            <p role="alert">{errorText(loadError, "Bard could not load its local state.")}</p>
+            <button className="btn primary" onClick={() => window.location.reload()}>
+              <RotateCcw aria-hidden="true" />
+              Try again
+            </button>
+          </>
+        ) : (
+          <>
+            <LoaderCircle width={28} height={28} aria-hidden="true" />
+            <h1>Starting Bard</h1>
+            <p role="status">Loading your local workspace…</p>
+          </>
+        )}
       </div>
-    );
-  }
-
-  if (!state.onboardingCompleted) {
-    return (
-      <div className="app">
-        <Onboarding
-          state={state}
-          modelProgress={modelProgress}
-          onDone={async () => {
-            await api.setOnboardingCompleted(true);
-            const next = await api.getState();
-            setState(next);
-          }}
-        />
-      </div>
-    );
-  }
-
-  return (
+    </div>
+  ) : !state.onboardingCompleted ? (
+    <div className="app">
+      <Onboarding
+        state={state}
+        modelProgress={modelProgress}
+        onDone={async () => {
+          await api.setOnboardingCompleted(true);
+          const next = await api.getState();
+          setState(next);
+        }}
+      />
+    </div>
+  ) : (
     <div className="app">
       <Panel
         state={state}
@@ -233,9 +312,6 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
       />
     </div>
   );
-}
 
-/**
- * Resolve and apply the theme. "system" follows the OS and keeps following it;
- * `useTheme` re-runs this when the OS appearance changes.
- */
+  return <ErrorBoundary>{screen}</ErrorBoundary>;
+}
