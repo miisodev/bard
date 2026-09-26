@@ -196,15 +196,12 @@
 .row.stacked .field { width: 100%; }
 
 /*
-  `Segmented` is one tab stop with a roving tabindex now, so this ring is the
+  `Segmented` is one tab stop with a roving tabindex now, so its ring is the
   only thing telling a keyboard user which option they are on — and
   `.segmented` is `overflow: hidden`, so the ring has to be drawn inside the
-  button to survive. It belongs beside `.segmented` in styles.css.
+  button to survive. That rule is in styles.css, beside `.segmented`; the panel
+  and Draw do not load this file.
 */
-.segmented button:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--accent);
-}
 
 /* The pane holds the scroll, so it takes focus. Same clipping reason. */
 .settings-content > [role="tabpanel"]:focus-visible {
@@ -260,21 +257,9 @@ summary:focus-visible {
   box-shadow: var(--focus-ring);
 }
 
-/* `Button variant="danger"` emits `.btn.danger` and no rule for it existed in
-   any stylesheet, so every Remove and Delete in the app arrived as a neutral
-   grey button: the Danger group looked exactly like a group of defaults. It
-   belongs in styles.css, beside `.btn` itself, where the panel can reach it. */
-.btn.danger {
-  background: var(--danger-soft);
-  border-color: transparent;
-  color: var(--danger);
-}
-
-.btn.danger:hover:not(:disabled) {
-  background: var(--danger-soft);
-  border-color: var(--danger);
-  color: var(--danger);
-}
+/* `.btn.danger` and `.segmented button:focus-visible` live in styles.css, beside
+   the primitives they modify, because the panel and the Draw window both render
+   them and neither loads this file's siblings. */
 
 .btn svg,
 .tag svg,

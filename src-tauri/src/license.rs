@@ -28,6 +28,9 @@ const RECEIPT_SETTING: &str = "license_receipt";
 const RECEIPT_USERNAME: &str = "license-receipt";
 const MACHINE_ID_SETTING: &str = "license_machine_id";
 const LAST_CHECK_SETTING: &str = "license_last_checked_at";
+/// How many distinct machines this key has been activated on, as far as this
+/// install has observed. Written when an activation succeeds.
+const ACTIVATION_COUNT_SETTING: &str = "license_activation_count";
 const DEFAULT_LICENSE_SERVER: &str = "https://miiso.dev/api/bard/license";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const KEYRING_TIMEOUT: Duration = Duration::from_millis(400);
@@ -73,6 +76,22 @@ const LICENSE_PUBLIC_KEYS: &[(&str, [u8; 32])] = &[
     ),
 ];
 
+impl LicenseStatus {
+    /// Fill in the commercial terms that are the same for every state.
+    ///
+    /// Five of the six construction sites in `status` are states with no licence
+    /// in force — a trial, a key not yet verified, a store still starting — and
+    /// all of them need the same three fields. Spelling them out per site is six
+    /// chances to add a field later and miss one, which is exactly how the
+    /// three-machine limit ended up as prose in a Terms hint.
+    fn with_terms(mut self, app: &tauri::AppHandle) -> Self {
+        self.activation_count = crate::db::get_setting(app, ACTIVATION_COUNT_SETTING)
+            .and_then(|value| value.parse::<i64>().ok());
+        self.activation_limit = Some(ACTIVATION_LIMIT);
+        self
+    }
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LicenseStatus {
@@ -85,10 +104,30 @@ pub struct LicenseStatus {
     pub expires_at: Option<i64>,
     pub last_checked_at: Option<i64>,
     pub message: Option<String>,
+    /// How many of the three permitted machines this key is signed in to, and the
+    /// total.
+    ///
+    /// These are the headline terms of a $20 one-off licence and the product
+    /// rendered neither: the three-machine limit was a sentence in a Terms hint,
+    /// so a person only discovered it by hitting the wall. `None` when the
+    /// broker has not supplied a count, which is the local-only case.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation_limit: Option<i64>,
+    /// Days left in the current offline lease. `None` when the licence was
+    /// validated against the service and no offline window is in play.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offline_lease_days_left: Option<i64>,
 }
 
+/// The commercial terms, in one place. The UI must not hardcode these: a $20
+/// licence with three seats is the product's promise, and the number has to come
+/// from the same place the enforcement comes from.
+pub const ACTIVATION_LIMIT: i64 = 3;
+
 impl LicenseStatus {
-    fn unavailable() -> Self {
+    pub fn unavailable() -> Self {
         Self {
             state: "unavailable".into(),
             can_use: false,
@@ -98,6 +137,9 @@ impl LicenseStatus {
             expires_at: None,
             last_checked_at: None,
             message: Some("Bard is still starting.".into()),
+            activation_count: None,
+            activation_limit: None,
+            offline_lease_days_left: None,
         }
     }
 }
@@ -474,7 +516,8 @@ fn status_from_receipt(
     };
     LicenseStatus {
         state: if valid { "active" } else { "restricted" }.into(),
-        can_use: valid,        key_configured,
+        can_use: valid,
+        key_configured,
         trial_started_at: Some(trial_started_at),
         trial_expires_at: Some(trial_expires_at),
         expires_at: Some(receipt.license_expires_at),
@@ -487,6 +530,19 @@ fn status_from_receipt(
         } else {
             default_message
         },
+        // How many of the three seats are in use. The signed receipt identifies
+        // this activation but not the count, so the local record of activations
+        // is the honest source: it is what this machine has seen, and the UI
+        // presents it as "activations of 3 used" rather than as a live figure.
+        activation_count: crate::db::get_setting(app, ACTIVATION_COUNT_SETTING)
+            .and_then(|value| value.parse::<i64>().ok()),
+        activation_limit: Some(ACTIVATION_LIMIT),
+        // Only meaningful while the lease is running on an offline signature.
+        // `valid_until` is the end of that window, so the remaining days are the
+        // difference between it and now.
+        offline_lease_days_left: (receipt.valid_until > now).then(|| {
+            receipt.valid_until.saturating_sub(now).div_euclid(24 * 60 * 60)
+        }),
     }
 }
 
@@ -519,7 +575,11 @@ pub fn status(app: &tauri::AppHandle) -> LicenseStatus {
             expires_at: None,
             last_checked_at: None,
             message: Some("Re-enter or refresh this Bard licence to continue.".into()),
-        };
+            activation_count: None,
+            activation_limit: None,
+            offline_lease_days_left: None,
+        }
+        .with_terms(app);
     }
     let Some((started, expires)) = existing_trial_window(app) else {
         if matches!(
@@ -535,7 +595,11 @@ pub fn status(app: &tauri::AppHandle) -> LicenseStatus {
                 expires_at: None,
                 last_checked_at: None,
                 message: Some("Start Bard's 14-day local trial when you are ready.".into()),
-            };
+                activation_count: None,
+                activation_limit: None,
+                offline_lease_days_left: None,
+            }
+            .with_terms(app);
         }
         return LicenseStatus {
             state: "restricted".into(),
@@ -548,7 +612,11 @@ pub fn status(app: &tauri::AppHandle) -> LicenseStatus {
             message: Some(
                 "Bard could not verify its trial state. Reinstall or contact support.".into(),
             ),
-        };
+            activation_count: None,
+            activation_limit: None,
+            offline_lease_days_left: None,
+        }
+        .with_terms(app);
     };
     let now = now_seconds();
     if now < expires {
@@ -562,7 +630,11 @@ pub fn status(app: &tauri::AppHandle) -> LicenseStatus {
             last_checked_at: crate::db::get_setting(app, LAST_CHECK_SETTING)
                 .and_then(|value| value.parse::<i64>().ok()),
             message: None,
-        };
+            activation_count: None,
+            activation_limit: None,
+            offline_lease_days_left: None,
+        }
+        .with_terms(app);
     }
     LicenseStatus {
         state: "restricted".into(),
@@ -574,7 +646,11 @@ pub fn status(app: &tauri::AppHandle) -> LicenseStatus {
         last_checked_at: crate::db::get_setting(app, LAST_CHECK_SETTING)
             .and_then(|value| value.parse::<i64>().ok()),
         message: Some("Activate a Bard licence to continue using the app.".into()),
+        activation_count: None,
+        activation_limit: None,
+        offline_lease_days_left: None,
     }
+    .with_terms(app)
 }
 
 fn service_url(path: &str) -> String {
@@ -695,6 +771,20 @@ fn store_response_receipt(
         }
     }
     write_credential_bounded(RECEIPT_USERNAME, encoded.clone())?;
+    // Record that this machine now holds an activation, so the licence surface
+    // can say how many of the three seats are in use. The count is what this
+    // install has observed across successful activations on this machine; it is
+    // not a live figure from the broker, and the UI presents it as "activations
+    // used" rather than as an authoritative total.
+    let observed = crate::db::get_setting(app, ACTIVATION_COUNT_SETTING)
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0)
+        .clamp(0, ACTIVATION_LIMIT);
+    let _ = crate::db::set_setting_checked(
+        app,
+        ACTIVATION_COUNT_SETTING,
+        &observed.max(1).to_string(),
+    );
     crate::db::set_setting_checked(app, LAST_CHECK_SETTING, &now_seconds().to_string()).map_err(
         |_| LicenseError::Service("Bard could not persist its licence check time.".into()),
     )?;
@@ -818,8 +908,12 @@ pub async fn refresh(app: &tauri::AppHandle) -> LicenseStatus {
 pub fn spawn_revalidation(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut ticks: u64 = 0;
+        // The first pass runs before the first sleep, not 15 minutes in. A
+        // licence that is already past its recheck point would otherwise be
+        // unenforced for a quarter of an hour after launch, and the new
+        // three-day grace is measured from `next_check_at`, so that window is
+        // time the user cannot use.
         loop {
-            std::thread::sleep(REVALIDATION_INTERVAL);
             ticks += 1;
             // Every four hours, and only while a licence is actually in play.
             // An idle install writes nothing.
@@ -844,6 +938,9 @@ pub fn spawn_revalidation(app: tauri::AppHandle) {
             if stepped.is_err() {
                 crate::crash::record_event("licence:revalidation-iteration-failed");
             }
+            // At the end of the pass, not the start, so the immediate first
+            // iteration above is not followed by another straight away.
+            std::thread::sleep(REVALIDATION_INTERVAL);
         }
     });
 }
@@ -852,10 +949,21 @@ pub async fn deactivate(app: &tauri::AppHandle) -> Result<LicenseStatus, License
     let Some(mut key) = read_key_bounded() else {
         return Ok(status(app));
     };
-    let Some(activation_id) = cached_receipt(app).map(|receipt| receipt.activation_id) else {
-        key.zeroize();
-        return Err(LicenseError::InvalidReceipt);
-    };
+    // A machine with no cached receipt is the *normal* state of a restricted or
+    // lapsed install, and it is precisely the machine a person needs to free a
+    // seat from. Returning an error there made the only control that could help
+    // them unavailable in the only situation they would use it, and the UI had to
+    // paper over it by clearing local credentials and reporting success while the
+    // seat stayed taken.
+    //
+    // So the request goes out with no activation id, and the service is asked to
+    // release whatever this key holds for this machine. If the key is not signed
+    // in here, that is a no-op and the honest answer is still "this machine holds
+    // no seat".
+    let activation_id = cached_receipt(app).map(|receipt| receipt.activation_id);
+    if activation_id.is_none() {
+        crate::crash::record_event("licence:deactivate-without-receipt");
+    }
     let machine = match machine_id(app) {
         Ok(machine) => machine,
         Err(error) => {
@@ -866,7 +974,7 @@ pub async fn deactivate(app: &tauri::AppHandle) -> Result<LicenseStatus, License
     let request = DeactivateRequest {
         key: &key,
         machine_id: &machine,
-        activation_id: &activation_id,
+        activation_id: activation_id.as_deref().unwrap_or(""),
         app_version: env!("CARGO_PKG_VERSION"),
     };
     let payload = match serde_json::to_value(request) {
