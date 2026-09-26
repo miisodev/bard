@@ -90,7 +90,7 @@
     "createUpdaterArtifacts": true,
     "category": "Productivity",
     "shortDescription": "Capture. Dictate. Keep.",
-    "longDescription": "Bard is a minimal native Windows workspace that merges clipboard capture, offline voice dictation and optional text cleanup into one keyboard-first panel.",
+    "longDescription": "Bard is a minimal native Windows workspace that merges clipboard capture, offline voice dictation and optional Refine into one keyboard-first panel.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

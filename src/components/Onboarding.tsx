@@ -165,8 +165,8 @@ export default function Onboarding({
           <h1>Capture. Dictate. Keep.</h1>
           <p>
             Bard catches anything you copy, turns your voice into text without
-            sending audio anywhere, and keeps both on this machine. Cloud text
-            cleanup is always opt-in.
+            sending audio anywhere, and keeps both on this machine. Refine is
+            always opt-in.
           </p>
         </>
       ) : step === 1 ? (

@@ -158,5 +158,5 @@ code-signing certificates in this repository.
 
 OpenRouter keys are stored through `keyring`'s Windows Credential Manager
 backend. They are never written to SQLite, `AppState`, events, logs, or crash
-reports. The Post-processing pane must be tested with a disposable key; the
+reports. The Refine pane must be tested with a disposable key; the
 metadata-only **Test connection** action does not send dictated text.

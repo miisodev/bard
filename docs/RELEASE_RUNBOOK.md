@@ -71,12 +71,39 @@ With one, the signed path is:
 .\scripts\build-release.ps1 -SignCommand "<signer> sign ... %1"
 ```
 
-The script refuses a dirty worktree, passes the certificate to Tauri, and
-builds once. Tauri signs `bard.exe`, the NSIS installer and its uninstaller
-during the build, **then** writes the updater signature over the final
-installer. Signing after the build is wrong twice over: the installer would
-carry the unsigned `bard.exe`, and the updater signature would no longer match
-the file. The script ends by running:
+The script refuses a dirty worktree, builds once, and then signs — in two
+separate steps, because the two kinds of signature are not the same problem.
+
+**Authenticode stays in the build.** Tauri signs `bard.exe`, the NSIS installer
+and its uninstaller while the build runs. This cannot be moved afterwards: the
+installer is assembled *around* the already-signed `bard.exe`, so signing later
+would leave the shipped installer carrying an unsigned binary. The certificate
+thumbprint, or a cloud signer's key reference, is what the build carries — a
+store thumbprint is a public identifier, and a cloud signer's key never enters
+the build's environment.
+
+**The updater signature is a separate step.** It used to be written by the build
+itself, which meant `TAURI_SIGNING_PRIVATE_KEY` was exported into the
+environment of `bun`, of `@tauri-apps/cli` inside `node_modules`, of every
+lifecycle script, of `cargo`, and of every `build.rs` in the dependency graph.
+One compromised transitive npm dependency was therefore a silent, total
+compromise of the update chain for every installed client, with a genuinely
+valid signature. The build now runs with `createUpdaterArtifacts: false` and
+those three variables scrubbed from its environment, and `scripts/tauri-sign.mjs`
+signs the finished installer afterwards.
+
+That helper is not cosmetic either: `bun run tauri signer sign` still loads
+JavaScript out of `node_modules`, so the helper dlopens the platform's **native**
+signing binding directly. The key is passed as a file path, the password via
+environment variable, never on a command line, and the script refuses to run at
+all if `TAURI_SIGNING_PRIVATE_KEY` is present in its environment. The signature
+is computed over the final bytes, so the artefact is not mutated by signing it.
+
+The key itself comes from `$HOME\.tauri\bard-updater.key` and
+`bard-updater-password.txt`, or from the environment on a machine that sets it.
+It never enters the repository.
+
+The script ends by running:
 
 ```powershell
 .\scripts\verify-release.ps1 -Version 0.1.0 -RequireSignature
@@ -89,16 +116,17 @@ verification is a hard stop. On the unsigned path drop `-RequireSignature`: the
 Authenticode block is what it gates, while the Tauri updater signature is
 verified either way.
 
-The updater key comes from `TAURI_SIGNING_PRIVATE_KEY` and
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, or from `$HOME\.tauri\bard-updater.key`
-and `bard-updater-password.txt`. It never enters the repository.
-
 The CI release workflow can sign only through a cloud signer
 (`WINDOWS_SIGN_COMMAND` secret); a token-held certificate signs on its own
 machine with the script above. Until a certificate exists the direct release
 is built here with `.\scripts\build-release.ps1 -Unsigned` (decision
-2026-09-24), and a `v*` tag push starts the CI workflow, which cannot sign —
-cancel that run.
+2026-09-24).
+
+**Configure the `release` environment before publishing.** The workflow is wired
+to a GitHub environment named `release`, but required reviewers are a
+repository setting that YAML cannot set. Without it a `v*` tag push still
+reaches a signing run unattended — and the previous runbook's answer to that was
+"cancel that run", which is a procedure rather than a control.
 
 ## 4. Build the Store package
 
