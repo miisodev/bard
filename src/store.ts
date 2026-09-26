@@ -89,7 +89,7 @@ export const api = {
     invoke<void>("set_retention_days", { origin, days }),
   getRetentionDays: (origin: "clipboard" | "dictation") =>
     invoke<number | null>("get_retention_days", { origin }),
-  pruneHistoryNow: () => invoke<void>("prune_history_now"),
+  pruneHistoryNow: () => invoke<number>("prune_history_now"),
 
   getLicense: () => invoke<LicenseStatus>("get_license"),
   startTrial: () => invoke<LicenseStatus>("start_trial"),

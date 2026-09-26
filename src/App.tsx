@@ -193,6 +193,20 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
         });
       }),
     );
+    // A write that could not happen. `insert_item_with_origin` and friends used
+    // to unwrap on `execute`, so a full disk took the whole process down under
+    // `panic = "abort"` — no window, no message. They now return a sentinel and
+    // emit this instead, and without a listener the sentinel would just be
+    // silent data loss: a capture that vanishes with nothing said anywhere.
+    subscribe(
+      listen<string>("db-write-failed", (event) => {
+        playCue("error");
+        toast({
+          text: event.payload || "Bard could not save this. Check that the drive has free space.",
+          tone: "error",
+        });
+      }),
+    );
     subscribe(
       listen("dictation-cloud-warning", (event) => {
         toast({ text: `Cloud cleanup skipped — ${event.payload as string}`, tone: "error" });

@@ -33,7 +33,7 @@ export default function DataPane({ refresh }: PaneProps) {
   const [retentionAttempt, setRetentionAttempt] = useState(0);
   const [retentionError, setRetentionError] = useState<string | null>(null);
   const [pruneLoading, setPruneLoading] = useState(false);
-  const [pruned, setPruned] = useState(false);
+  const [pruned, setPruned] = useState<number | null>(null);
   const [pruneError, setPruneError] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<Notice | null>(null);
   const [dangerError, setDangerError] = useState<string | null>(null);
@@ -119,10 +119,13 @@ export default function DataPane({ refresh }: PaneProps) {
     if (pruneLoading) return;
     setPruneLoading(true);
     setPruneError(null);
-    setPruned(false);
+    setPruned(null);
     try {
-      await api.pruneHistoryNow();
-      setPruned(true);
+      // The command reports how many rows it removed. Discarding that leaves a
+      // bare "History pruned." on a destructive action, and a number is what lets
+      // someone trust it actually did anything.
+      const removed = await api.pruneHistoryNow();
+      setPruned(removed);
       refresh();
     } catch {
       // Not the backend's words: they are a debug string at best and empty at
@@ -233,7 +236,13 @@ export default function DataPane({ refresh }: PaneProps) {
             {pruneLoading ? "Pruning…" : "Prune now"}
           </Button>
         </Row>
-        {pruned && !pruneError ? <Note tone="success">History pruned.</Note> : null}
+        {pruned !== null && !pruneError ? (
+          <Note tone="success">
+            {pruned === 0
+              ? "Nothing had expired. History pruned."
+              : `Pruned ${pruned.toLocaleString()} item${pruned === 1 ? "" : "s"}.`}
+          </Note>
+        ) : null}
         {pruneError ? <Note tone="danger">{pruneError}</Note> : null}
       </Group>
 

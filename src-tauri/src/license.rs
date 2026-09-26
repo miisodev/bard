@@ -987,26 +987,58 @@ pub async fn deactivate(app: &tauri::AppHandle) -> Result<LicenseStatus, License
     let result = post_service("deactivate", payload).await;
     key.zeroize();
     result?;
-    crate::db::set_settings_checked(app, &[(RECEIPT_SETTING, ""), (LAST_CHECK_SETTING, "")])
-        .map_err(|_| LicenseError::Service("Bard could not clear its licence state.".into()))?;
+    // The activation count goes with the receipt. Left behind, it renders as
+    // "Licensed · 1 activation of 3 used" directly under "Activation required" on a
+    // machine that holds no licence at all — the wrong number, on the one screen
+    // whose job is to be trustworthy about the licence.
+    crate::db::set_settings_checked(
+        app,
+        &[
+            (RECEIPT_SETTING, ""),
+            (LAST_CHECK_SETTING, ""),
+            (ACTIVATION_COUNT_SETTING, ""),
+        ],
+    )
+    .map_err(|_| LicenseError::Service("Bard could not clear its licence state.".into()))?;
     delete_credential_bounded(RECEIPT_USERNAME)?;
     delete_key_bounded()?;
     Ok(status(app))
 }
 
 pub fn erase_local(app: &tauri::AppHandle) -> Result<(), LicenseError> {
-    delete_credential_bounded(LICENSE_USERNAME)?;
-    delete_credential_bounded(RECEIPT_USERNAME)?;
-    delete_credential_bounded(INSTALLATION_ID_USERNAME)?;
-    delete_credential_bounded(TRIAL_SECRET_USERNAME)?;
-    delete_credential_bounded(TRIAL_STATE_USERNAME)?;
-    let _ = app;
-    Ok(())
+    // Every entry is attempted even if one fails, and the first failure is
+    // reported at the end. Bailing on the first error left a half-erased set,
+    // which for the trial pair means a secret with no MAC — the state the app
+    // reports as "could not verify its trial state", with no in-product way out.
+    let mut first_error = None;
+    for entry in [
+        LICENSE_USERNAME,
+        RECEIPT_USERNAME,
+        INSTALLATION_ID_USERNAME,
+        TRIAL_SECRET_USERNAME,
+        TRIAL_STATE_USERNAME,
+    ] {
+        if let Err(error) = delete_credential_bounded(entry) {
+            first_error.get_or_insert(error);
+        }
+    }
+    let _ = crate::db::set_setting_checked(app, ACTIVATION_COUNT_SETTING, "");
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 pub fn clear(app: &tauri::AppHandle) -> Result<LicenseStatus, LicenseError> {
-    crate::db::set_settings_checked(app, &[(RECEIPT_SETTING, ""), (LAST_CHECK_SETTING, "")])
-        .map_err(|_| LicenseError::Service("Bard could not clear its licence state.".into()))?;
+    crate::db::set_settings_checked(
+        app,
+        &[
+            (RECEIPT_SETTING, ""),
+            (LAST_CHECK_SETTING, ""),
+            (ACTIVATION_COUNT_SETTING, ""),
+        ],
+    )
+    .map_err(|_| LicenseError::Service("Bard could not clear its licence state.".into()))?;
     delete_credential_bounded(RECEIPT_USERNAME)?;
     delete_key_bounded()?;
     Ok(status(app))

@@ -399,9 +399,13 @@ fn toggle_now_inner(app: &AppHandle) {
         if win.is_focused().unwrap_or(false) {
             hide_now_inner(app);
         } else {
+            // Refocusing an already-visible panel. Deliberately does *not* emit
+            // `panel-shown`: the panel's composer asserts focus when it hears that,
+            // so announcing a refocus would throw away whatever the person was
+            // doing inside it — a half-typed inline edit, a card selection, the
+            // search field — and send their next keystrokes to the composer.
             remember_foreground();
             let _ = win.set_focus();
-            let _ = app.emit("panel-shown", ());
         }
     } else {
         remember_foreground();

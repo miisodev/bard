@@ -437,6 +437,15 @@ pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
                     Some(&dest.to_string_lossy()),
                     "clipboard",
                 );
+                if id == db::INSERT_FAILED {
+                    // The copy landed but the row did not, so nothing references
+                    // this file and no sweep will ever collect it. Undo the copy
+                    // rather than leak it, and do not count it as added — the
+                    // Explorer verb and the first-launch intake both report this
+                    // number back to the person.
+                    let _ = std::fs::remove_file(&dest);
+                    continue;
+                }
                 db::set_active_item(app, Some(id));
                 added += 1;
             }
@@ -465,11 +474,20 @@ pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
                     continue;
                 }
                 let id = db::insert_item_with_origin(app, text, "text", None, "clipboard");
+                // `insert_item_with_origin` returns a sentinel rather than
+                // aborting when the write cannot happen. Counting a write that did
+                // not occur is how "Added 3 files" becomes a lie on a full disk.
+                if id == db::INSERT_FAILED {
+                    continue;
+                }
                 db::set_active_item(app, Some(id));
                 added += 1;
             }
         } else if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
             let id = db::insert_item_with_origin(app, name, "text", None, "clipboard");
+            if id == db::INSERT_FAILED {
+                continue;
+            }
             db::set_active_item(app, Some(id));
             added += 1;
         }
@@ -519,6 +537,13 @@ pub fn attach_image(
     let path = unique_image_path(&images, &ext);
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     let id = db::insert_attachment(&app, item_id, &path.to_string_lossy());
+    if id == db::INSERT_FAILED {
+        // The file is on disk with no row referencing it. `Ok(0)` would tell the
+        // renderer it has an attachment id it does not have, and the file would
+        // never be collected.
+        let _ = std::fs::remove_file(&path);
+        return Err("Bard could not attach this file. Check that the drive has free space.".into());
+    }
     refresh(&app);
     Ok(id)
 }
@@ -671,7 +696,11 @@ pub fn add_item(app: AppHandle, content: String) {
         return;
     }
     let id = db::insert_item(&app, &content, "text", None);
-    db::set_active_item(&app, Some(id));
+    // Setting the active item to the sentinel would clear it, so a failed write
+    // would also silently deselect whatever the person had been working on.
+    if id != db::INSERT_FAILED {
+        db::set_active_item(&app, Some(id));
+    }
     refresh(&app);
 }
 
@@ -685,6 +714,12 @@ pub fn add_image(app: AppHandle, data_base64: String, ext: String) -> Result<i64
     // Returned so a caller that needs the item afterwards — the drawing
     // window's "Copy and Save" — does not have to guess which row it made.
     let id = db::insert_item(&app, "", "image", Some(&path.to_string_lossy()));
+    if id == db::INSERT_FAILED {
+        // Same as `attach_image`: the PNG is on disk with no row. Undo the write
+        // rather than leave an orphan nothing will ever sweep.
+        let _ = std::fs::remove_file(&path);
+        return Err("Bard could not save this image. Check that the drive has free space.".into());
+    }
     db::set_active_item(&app, Some(id));
     refresh(&app);
     Ok(id)

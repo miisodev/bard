@@ -230,6 +230,45 @@ pub fn capture_image(app: &AppHandle, img: &arboard::ImageData<'_>) -> bool {
 pub const MAX_CAPTURE_IMAGE_PIXELS: u64 = 40_000_000;
 pub const MAX_CAPTURE_IMAGE_BYTES: usize = 25 * 1024 * 1024;
 
+/// A `Vec` that refuses to grow past a limit.
+///
+/// The byte cap has to be enforced *while* the encoder runs, not after it
+/// returns. A 40 MP screenshot is comfortably inside the pixel limit and its PNG
+/// can still exceed 25 MB, so a post-encode check rejects the image only after the
+/// allocation and the CPU have already been spent — which is the entire cost the
+/// limit exists to avoid, paid on the monitor thread that also has to notice the
+/// next copy.
+struct CappedBytes {
+    bytes: Vec<u8>,
+    cap: usize,
+}
+
+impl CappedBytes {
+    fn new(cap: usize) -> Self {
+        Self {
+            bytes: Vec::with_capacity(cap.min(1 << 20)),
+            cap,
+        }
+    }
+}
+
+impl std::io::Write for CappedBytes {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.bytes.len() + buffer.len() > self.cap {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "encoded image exceeds the size Bard stores",
+            ));
+        }
+        self.bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn encode_png(img: &arboard::ImageData) -> Option<Vec<u8>> {
     use image::{ExtendedColorType, ImageEncoder};
     let pixels = (img.width as u64).saturating_mul(img.height as u64);
@@ -237,9 +276,7 @@ fn encode_png(img: &arboard::ImageData) -> Option<Vec<u8>> {
         crate::crash::record_event("capture:image-too-large");
         return None;
     }
-    // Preallocated from the known raw size: the encoder appends, and growing a
-    // `Vec` from empty on a hot thread is the expensive part.
-    let mut png = Vec::with_capacity(img.bytes.len().min(MAX_CAPTURE_IMAGE_BYTES));
+    let mut png = CappedBytes::new(MAX_CAPTURE_IMAGE_BYTES);
     let encoder = image::codecs::png::PngEncoder::new(&mut png);
     encoder
         .write_image(
@@ -249,11 +286,7 @@ fn encode_png(img: &arboard::ImageData) -> Option<Vec<u8>> {
             ExtendedColorType::Rgba8,
         )
         .ok()?;
-    if png.len() > MAX_CAPTURE_IMAGE_BYTES {
-        crate::crash::record_event("capture:image-encoded-too-large");
-        return None;
-    }
-    Some(png)
+    Some(png.bytes)
 }
 
 #[cfg(windows)]

@@ -99,11 +99,21 @@ export default function ItemCard({
   }, [item.id, item.kind]);
 
   useEffect(() => {
+    // Rebuilt, not accumulated. Detach an attachment and its file is unlinked, but
+    // the base64 data URL for the dead id would otherwise stay in state for the
+    // life of the card — real memory held for a thumbnail of a file that no longer
+    // exists, across every card in the timeline.
+    let alive = true;
+    setThumbUrls(new Map());
     for (const a of attachments) {
       void api.attachmentImageData(a.id).then((url) => {
-        if (url) setThumbUrls((m) => new Map(m).set(a.id, url));
+        if (!alive || !url) return;
+        setThumbUrls((m) => new Map(m).set(a.id, url));
       });
     }
+    return () => {
+      alive = false;
+    };
   }, [attachments.map((a) => a.id).join(",")]);
 
   useEffect(() => {

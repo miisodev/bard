@@ -923,13 +923,14 @@ pub fn verify_load(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The `(size, modified, created, inode)` fingerprint of a file.
+///
+/// Still used by the *compatibility* cache, where a stale answer is a display
+/// problem rather than an integrity one. It must not be used to decide whether a
+/// checksum needs recomputing: measured on this filesystem, an in-place same-size
+/// rewrite leaves every one of these fields unchanged, so such a memo would bless
+/// a file whose contents had changed. See `verify_pinned_file`.
 type PinnedFileStamp = (u64, u128, u128, u64);
-type PinnedFileCacheValue = (PinnedFileStamp, String);
-
-fn pinned_file_cache() -> &'static Mutex<HashMap<PathBuf, PinnedFileCacheValue>> {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, PinnedFileCacheValue>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 #[cfg(windows)]
 fn file_stamp(metadata: &fs::Metadata) -> (u64, u128, u128, u64) {
@@ -1007,29 +1008,25 @@ pub fn verify_pinned_file(
             metadata.len()
         ));
     }
-    let key = path_key(path);
-    let stamp = file_stamp(&metadata);
-    if pinned_file_cache()
-        .lock()
-        .ok()
-        .and_then(|cache| cache.get(&key).cloned())
-        .is_some_and(|cached| {
-            (cached.0).0 == stamp.0
-                && (cached.0).1 == stamp.1
-                && (cached.0).2 == stamp.2
-                && (cached.0).3 == stamp.3
-                && cached.1 == expected_sha256
-        })
-    {
-        return Ok(());
-    }
+    // Hashed unconditionally.
+    //
+    // There used to be a memo keyed on `(size, last_write_time, creation_time)`,
+    // on the theory that a changed file moves a timestamp. Measured on this
+    // filesystem, it does not: an in-place same-size rewrite left both
+    // `last_write_time` and `creation_time` bit-for-bit identical, so the memo was
+    // effectively "verify once per process, ever" and `verify_pinned_file`
+    // returned `Ok` for a model whose bytes no longer matched the hash it exists to
+    // guarantee. It showed up as a test that failed 6 runs in 25.
+    //
+    // The cost of removing it is one SHA-256 per call, and the call sites are
+    // bounded: `dictation::model` verifies once per process per model rather than
+    // once per capture, and this function's other caller has just done a full
+    // `Model::load` — which dominates a hash by orders of magnitude. Removing an
+    // unsound cache is cheap here, which is the only reason it was ever optional.
     let actual =
         sha256_file(path).map_err(|error| format!("Could not hash model file: {error}"))?;
     if !actual.eq_ignore_ascii_case(&expected_sha256) {
         return Err("Model checksum does not match the verified catalogue value.".into());
-    }
-    if let Ok(mut cache) = pinned_file_cache().lock() {
-        cache.insert(key, (stamp, expected_sha256));
     }
     Ok(())
 }

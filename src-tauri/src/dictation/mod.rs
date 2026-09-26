@@ -477,6 +477,20 @@ pub fn stop(app: &AppHandle) {
                     Delivery::Timeline => {
                         let item_id =
                             crate::db::insert_item_with_origin(&app, &text, "text", None, "dictation");
+                        if item_id == crate::db::INSERT_FAILED {
+                            // The words are on the clipboard either way, so nothing
+                            // is lost — but announcing `dictation-panel` for a row
+                            // that does not exist would render a card the timeline
+                            // never received, which then vanishes on the next
+                            // refresh. Say what actually happened.
+                            overlay::show_report(&app, "Couldn't save");
+                            let _ = app.emit(
+                                "dictation-error",
+                                "Bard could not save this dictation. Check that the drive has free space.",
+                            );
+                            *state_lock() = DictState::Idle;
+                            return;
+                        }
                         crate::db::set_active_item(&app, Some(item_id));
                         let _ = crate::db::cleanup_origin(&app, "dictation");
                         let _ = app.emit("dictation-panel", text);

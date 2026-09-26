@@ -233,6 +233,13 @@ fn spawn_listener(sender: mpsc::Sender<Event>) {
 const LISTENER_RETRY_MIN: Duration = Duration::from_secs(2);
 const LISTENER_RETRY_MAX: Duration = Duration::from_secs(60);
 
+/// A hook that stayed up at least this long counts as working, and resets the
+/// backoff. A hook that dies sooner is treated as still broken, so a permanently
+/// failing one settles at the one-minute ceiling rather than respawning every
+/// two seconds and filling the lifecycle log with noise that evicts the evidence
+/// for everything else.
+const HEALTHY_LISTENER_RUN: Duration = Duration::from_secs(30);
+
 /// Start the single raw-input coordinator. The rdev hook only forwards events
 /// to a normal worker; all timing, state, and application actions happen off
 /// the low-level callback thread.
@@ -247,16 +254,33 @@ pub fn start(app: AppHandle) {
     let worker_app = app.clone();
     thread::spawn(move || {
         let mut backoff = LISTENER_RETRY_MIN;
+        // When the hook that just died was last armed. A run that lasted long
+        // enough to count as healthy resets the backoff; one that died
+        // immediately lets it keep doubling.
+        let mut previous_armed_at: Option<Instant> = None;
 
         loop {
             let attempt = LISTENER_ATTEMPT.fetch_add(1, Ordering::AcqRel) + 1;
             let (sender, receiver) = mpsc::channel::<Event>();
             spawn_listener(sender);
+            let armed_at = Instant::now();
             if attempt == 1 {
                 crate::crash::record_event("input:listener-started");
             } else {
                 crate::crash::record_event(&format!("input:listener-restarted:{attempt}"));
-                backoff = LISTENER_RETRY_MIN;
+                // The backoff is reset only when the *previous* hook actually
+                // worked. Resetting it unconditionally meant the sleep was always
+                // the 2-second floor and the 60-second ceiling was dead code: a
+                // hook that fails immediately and permanently — a blocked or
+                // denied low-level hook, a conflicting one from another product —
+                // respawned every two seconds forever, writing two lifecycle lines
+                // each time and rotating away the evidence for everything else
+                // inside about ninety minutes.
+                if previous_armed_at.is_some_and(|since| {
+                    armed_at.saturating_duration_since(since) > HEALTHY_LISTENER_RUN
+                }) {
+                    backoff = LISTENER_RETRY_MIN;
+                }
             }
 
             let mut gestures = GestureState::new();
@@ -307,12 +331,14 @@ pub fn start(app: AppHandle) {
                 }
             }
 
-            // The channel closed. If the hook is still marked alive it did not
-            // end on its own terms, so it never got to record why — say that
-            // rather than leaving a bare re-arm with no cause.
+            // The channel closed. `LISTENER_ALIVE` is cleared by the hook thread
+            // *before* it drops the sender, so a genuine end always reads false
+            // here — a true reading means the channel closed for some other
+            // reason and the hook never got to record why.
             if LISTENER_ALIVE.load(Ordering::Acquire) {
                 crate::crash::record_event("input:hook-vanished");
             }
+            previous_armed_at = Some(armed_at);
             crate::crash::record_event("input:worker-rearming");
             // Gesture state is rebuilt fresh on every re-arm. The sets below are
             // the coordinator's whole memory of which keys are physically down,
@@ -333,13 +359,17 @@ fn process_raw_event(
     foreign_buttons: &mut HashSet<Button>,
     app: &AppHandle,
 ) {
-    if SYNTHETIC_INPUT.load(Ordering::SeqCst) {
-        gestures.reset();
-        foreign_keys.clear();
-        foreign_buttons.clear();
-        return;
-    }
-
+    // Deliberately no blanket early-return on SYNTHETIC_INPUT here.
+    //
+    // The hook already scopes its suppression to the Control key, so Bard's own
+    // Ctrl+C and Ctrl+V never reach this function — and a blanket discard would
+    // throw away every *genuine* keystroke that arrived during the same 40-180ms
+    // window, on the two most-used actions in the product. A keypress could simply
+    // vanish.
+    //
+    // The gesture machine is still reset across a synthetic burst, but by
+    // `GESTURE_RESET`, which `SyntheticInputGuard::enter` sets on the outermost
+    // entry and which the worker's own loop consumes before it calls in here.
     let now = Instant::now();
     match event.event_type {
         EventType::KeyPress(key) => {

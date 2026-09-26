@@ -98,7 +98,11 @@ export default function Panel({
   const activeReported = useRef<number | null>(activeItemId);
   const seenIds = useRef<Set<number> | null>(null);
   /** Timeline position to focus once the list next renders — set by a delete. */
-  const focusAfterRender = useRef<number | null>(null);
+  /**
+   * The item to focus once a deletion has rendered: an id, `undefined` for "the
+   * list is now empty, put focus in the composer", or `null` for "nothing to do".
+   */
+  const focusAfterRender = useRef<number | undefined | null>(null);
 
   /*
     Everything the timeline draws is derived from `state.items` and `query`,
@@ -218,25 +222,38 @@ export default function Panel({
   const deleteItems = useCallback(
     (ids: number[]) => {
       if (ids.length === 0) return;
-      const first = order.get([...ids].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))[0]);
-      focusAfterRender.current = first ?? 0;
+      // Address the neighbour by id, not by index. The old code recorded a
+      // position in the flat visible order and then looked it up in the DOM, which
+      // is in *grouped* order — and the two differ as soon as there is an Inbox
+      // item alongside a section item, because Inbox always renders first. Deleting
+      // the newest item then focused the one above it.
+      const visibleIds = visible.map((item) => item.id);
+      const at = visibleIds.findIndex((id) => ids.includes(id));
+      const nextId =
+        at < 0
+          ? null
+          : visibleIds[at + ids.length] ?? visibleIds[at - 1] ?? null;
+      focusAfterRender.current = nextId;
       for (const id of ids) void api.deleteItem(id);
       setSelectedIds(new Set());
       if (activeItemId !== null && ids.includes(activeItemId)) markActive(null);
       refresh();
     },
-    [order, markActive, refresh, activeItemId],
+    [visible, markActive, refresh, activeItemId],
   );
 
   useEffect(() => {
-    const position = focusAfterRender.current;
-    if (position === null) return;
+    const id = focusAfterRender.current;
+    if (id === null) return;
     focusAfterRender.current = null;
-    const cards = timelineRef.current?.querySelectorAll<HTMLElement>("[data-item-id]");
-    if (!cards || cards.length === 0) return;
-    const neighbour = cards[Math.min(position, cards.length - 1)];
-    neighbour.focus();
-    neighbour.scrollIntoView({ block: "nearest" });
+    // Nothing left to land on — the timeline is now empty. The composer is the
+    // natural place for focus, and returning without moving it drops the person on
+    // `<body>`, which is the defect this was written to fix.
+    if (id === undefined) {
+      composerRef.current?.focus();
+      return;
+    }
+    focusCard(id);
   }, [visible]);
 
   useEffect(() => {
@@ -739,6 +756,11 @@ export default function Panel({
         role="listbox"
         aria-label="Timeline"
         aria-multiselectable="true"
+        // The container takes the tab stop when the list is empty. Every card is
+        // `tabIndex={-1}` in that case — there is no row to point at — so without
+        // this the timeline cannot be reached by Tab at all and the next Tab
+        // restarts from the search field.
+        tabIndex={rovingId === null ? 0 : -1}
       >
         {state.items.length === 0 ? (
           <EmptyState section={activeSectionName} />

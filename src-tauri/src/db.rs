@@ -119,6 +119,17 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    // Zero freed pages instead of leaving them readable in the main database file.
+    // The delete path truncates the write-ahead log, which covers the log; this
+    // covers the pages the log had already written into the database itself.
+    // Without it "Clear captures" removes the text from queries while leaving it
+    // recoverable from `bard.db` with a hex editor — which is not what someone
+    // clearing a password out of their history was told would happen.
+    //
+    // The cost is a write-path memset on every delete. That is the right trade for
+    // a local-first product whose pitch is that your data is yours, and the delete
+    // path is not a hot loop.
+    conn.pragma_update(None, "secure_delete", "ON")?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS items(
            id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -911,49 +922,71 @@ pub fn set_retention_days(app: &AppHandle, origin: &str, days: Option<i64>) -> R
     set_setting_checked(app, key, &value.to_string())
 }
 
+/// Every file path belonging to `ids`: attachment paths and the items' own
+/// image paths.
+///
+/// The id list appears in the statement twice, so it is bound twice. Binding it
+/// once fails with a parameter-count mismatch, the whole query returns nothing,
+/// and the consequence is invisible: no error reaches a user, the rows are
+/// deleted, and every image stays on disk forever. That is exactly what happened
+/// once already, so the count is asserted rather than trusted, and the query is a
+/// free function over `&Connection` so a test can reach it without an
+/// `AppHandle`.
+fn owned_file_paths(connection: &Connection, ids: &[i64]) -> Result<Vec<String>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "SELECT path FROM attachments WHERE item_id IN ({placeholders}) \
+         UNION ALL SELECT image_path FROM items \
+         WHERE image_path IS NOT NULL AND id IN ({placeholders})"
+    );
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| format!("Could not read attachments: {error}"))?;
+    debug_assert_eq!(
+        statement.parameter_count(),
+        ids.len() * 2,
+        "the statement binds each id twice"
+    );
+    let bound = ids.iter().chain(ids.iter());
+    let rows = statement
+        .query_map(rusqlite::params_from_iter(bound), |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Could not read attachments: {error}"))?;
+    Ok(rows.filter_map(Result::ok).collect())
+}
+
 pub fn delete_items_with_files(app: &AppHandle, ids: &[i64]) -> Result<(), String> {
     if ids.is_empty() {
         return Ok(());
     }
-    // One query for all the ids. This used to be one query per id, so pruning
+    // Collect the paths first, delete the rows, unlink the files. That order is
+    // what makes a crash safe in the right direction: a crash in the middle leaks
+    // an orphan file, but never deletes a file a surviving row still references.
+    //
+    // The whole thing runs in chunks. It used to be one query per id, so pruning
     // 5,000 expired items meant 10,000 statements, each taking and releasing the
-    // global connection mutex. The statement is built from the placeholder list
-    // only — `ids` are bound, never interpolated — and the length is capped by
-    // SQLite's own variable limit, so the id count is clamped to stay inside it.
-    let files = {
-        // SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 999. The same
-        // placeholder list appears twice, so each id contributes two bindings.
-        let take = ids.len().min(400);
-        let subset = &ids[..take];
-        let placeholders = vec!["?"; subset.len()].join(",");
-        let sql = format!(
-            "SELECT path FROM attachments WHERE item_id IN ({placeholders}) \
-             UNION ALL SELECT image_path FROM items \
-             WHERE image_path IS NOT NULL AND id IN ({placeholders})"
-        );
-        with_conn(app, |connection| {
-            let mut files: Vec<String> = match connection.prepare(&sql) {
-                Err(error) => {
-                    log::warn!("could not read attachments: {error}");
-                    return Vec::new();
-                }
-                Ok(mut statement) => {
-                    match statement.query_map(rusqlite::params_from_iter(subset.iter()), |row| {
-                        row.get::<_, String>(0)
-                    }) {
-                        Err(error) => {
-                            log::warn!("could not read attachments: {error}");
-                            return Vec::new();
-                        }
-                        Ok(rows) => rows.filter_map(Result::ok).collect(),
-                    }
-                }
-            };
-            files.sort();
-            files.dedup();
-            files
-        })
-    };
+    // global connection mutex. A single `IN (...)` was the obvious replacement and
+    // it was wrong twice: SQLite's default variable limit is 999, and the
+    // placeholder list appears twice in the statement, so each id contributes two
+    // bindings. Binding the list once made every query fail, which is silent --
+    // no error reaches a user, and every image in the batch is simply orphaned on
+    // disk forever. Chunking keeps the statement count and the binding count
+    // honest together, and deletes exactly the rows whose paths it looked up.
+    //
+    // The statement is built from the placeholder list only; ids are always
+    // bound, never interpolated.
+    const DELETE_CHUNK: usize = 400;
+
+    let mut files: Vec<String> = Vec::new();
+    for chunk in ids.chunks(DELETE_CHUNK) {
+        let found = with_conn(app, |connection| owned_file_paths(connection, chunk))?;
+        files.extend(found);
+    }
+    files.sort();
+    files.dedup();
+
     with_conn_mut(app, |connection| {
         let transaction = connection
             .transaction()
@@ -967,8 +1000,8 @@ pub fn delete_items_with_files(app: &AppHandle, ids: &[i64]) -> Result<(), Strin
             .commit()
             .map_err(|error| format!("Could not commit deletion: {error}"))
     })?;
-    for path in files {
-        remove_owned_image_file(app, &path);
+    for path in &files {
+        remove_owned_image_file(app, path);
     }
     // "Clear captures" and the retention controls are the app's central privacy
     // promise, and a person using them reasonably expects the text to be gone.
@@ -1354,6 +1387,102 @@ mod tests {
             created_at: id,
             updated_at: id,
         }
+    }
+
+    /// The regression that shipped once: the id list appears twice in the
+    /// statement and was bound once, so `query_map` returned a parameter-count
+    /// error, the file list came back empty, and every image Bard had ever pruned
+    /// stayed on disk with no error anywhere. A test that only asserted "no
+    /// panic" would have passed on that code.
+    #[test]
+    fn owned_file_paths_finds_an_items_image_and_its_attachments() {
+        let connection = Connection::open_in_memory().expect("in-memory database");
+        connection
+            .execute_batch(
+                "CREATE TABLE items (id INTEGER PRIMARY KEY, image_path TEXT);
+                 CREATE TABLE attachments (id INTEGER PRIMARY KEY, item_id INTEGER, path TEXT);",
+            )
+            .expect("schema");
+        for id in 1..=3i64 {
+            connection
+                .execute(
+                    "INSERT INTO items(id, image_path) VALUES(?1, ?2)",
+                    params![id, format!("images/{id}.png")],
+                )
+                .expect("insert item");
+        }
+        connection
+            .execute(
+                "INSERT INTO attachments(item_id, path) VALUES(?1, ?2)",
+                params![2i64, "images/2-extra.png"],
+            )
+            .expect("insert attachment");
+
+        let mut paths = owned_file_paths(&connection, &[1, 2, 3]).expect("paths");
+        paths.sort();
+        paths.dedup();
+        assert_eq!(
+            paths,
+            [
+                "images/1.png",
+                "images/2-extra.png",
+                "images/2.png",
+                "images/3.png"
+            ],
+            "every deleted item's own image and every attachment must be collected"
+        );
+    }
+
+    #[test]
+    fn owned_file_paths_ignores_ids_that_are_not_there() {
+        let connection = Connection::open_in_memory().expect("in-memory database");
+        connection
+            .execute_batch(
+                "CREATE TABLE items (id INTEGER PRIMARY KEY, image_path TEXT);
+                 CREATE TABLE attachments (id INTEGER PRIMARY KEY, item_id INTEGER, path TEXT);",
+            )
+            .expect("schema");
+        connection
+            .execute(
+                "INSERT INTO items(id, image_path) VALUES(1, 'images/1.png')",
+                [],
+            )
+            .expect("insert item");
+        let paths = owned_file_paths(&connection, &[1, 99]).expect("paths");
+        assert_eq!(paths, ["images/1.png"]);
+        assert!(owned_file_paths(&connection, &[]).expect("empty").is_empty());
+    }
+
+    /// More ids than one chunk holds, because the chunking is the other half of
+    /// the same fix: the lookup must cover every id, not a clamped prefix.
+    #[test]
+    fn owned_file_paths_covers_every_id_across_chunk_boundaries() {
+        const CHUNK: usize = 400;
+        let connection = Connection::open_in_memory().expect("in-memory database");
+        connection
+            .execute_batch(
+                "CREATE TABLE items (id INTEGER PRIMARY KEY, image_path TEXT);
+                 CREATE TABLE attachments (id INTEGER PRIMARY KEY, item_id INTEGER, path TEXT);",
+            )
+            .expect("schema");
+        let ids: Vec<i64> = (1..=901).collect();
+        for id in &ids {
+            connection
+                .execute(
+                    "INSERT INTO items(id, image_path) VALUES(?1, ?2)",
+                    params![*id, format!("images/{id}.png")],
+                )
+                .expect("insert item");
+        }
+        let mut collected = Vec::new();
+        for chunk in ids.chunks(CHUNK) {
+            collected.extend(owned_file_paths(&connection, chunk).expect("paths"));
+        }
+        assert_eq!(
+            collected.len(),
+            ids.len(),
+            "every id must be looked up, including the ones past the first chunk"
+        );
     }
 
     #[test]
