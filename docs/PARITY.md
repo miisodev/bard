@@ -4,10 +4,12 @@ The build plan. bard ships when every in-scope row below is complete, every
 `later` row remains out of the consumer release, and the whole installed product
 survives the two tests:
 
-**The specification lives in `docs/blueprints/`** — five documents describing
-the finished product. This ledger is the plan for getting there and tracks
-status; the blueprints carry no status and never will. Where the two disagree,
-the blueprints are the product and this file is behind.
+**Intent lives in the workspace blueprint, `SaaS\bard\Blueprints\`**
+(`Business.md`, `Product.md`, `Brand.md`, `Blocks.md`, `Plan.md`), and the record
+of what was built (architecture, design system, input model, licence mechanics)
+in the BrainLLM `bard` domain. This ledger is the plan for getting there and
+tracks status; the blueprint carries no status and never will. Where the two
+disagree about what Bard must do, the blueprint wins and this file is behind.
 
 > **The Copper test.** A long-time heavy user of shadcn's Copper picks up bard and
 > uses it with no caveats and no friction.
@@ -181,7 +183,7 @@ Neither reference does this; it is the reason bard is one app and not two.
 | E1 | **One-time licence** — US$20 once, 365 days from first activation, 14-day local trial, three paid activations, signed 30-day offline lease, bounded revalidation | **partial** | CSPRNG installation identity, Credential Manager key/lease storage, replay and temporal checks, key rotation, explicit trial, terminal revocation handling, scheduled bounded refresh, Polar broker routes and activation/deactivation UI are implemented. The Polar product is one-time with a licence-key benefit and no Polar-side expiry; the broker stamps `expiresAt = now + 365 days` at first activation. Live four-device, refund and checkout evidence remain. |
 | E2 | Code signing (SmartScreen) | **partial** | Signing happens inside the Tauri build (`scripts/build-release.ps1`): a certificate thumbprint for a token or store certificate, or a cloud signer's sign command, so `bard.exe`, the installer and its uninstaller are signed before the updater signature is written. The previous post-build PFX script could never have worked — code-signing keys are hardware-bound since June 2023 — and would have shipped an installer holding the unsigned `bard.exe`. No certificate is being bought: 0.1.2 ships unsigned by decision, the page tells buyers how to dismiss the SmartScreen notice, and the signing path stays intact for anyone who later holds such a key |
 | E3 | Auto-update channel + signed releases | **partial** | The Tauri updater endpoint, embedded public key, cryptographically verified updater artifact, user-invoked confirmed check/install flow, release workflow and updater signature verification exist, and the public feed serves the newest release. Authenticode is not part of this row: the artifacts ship unsigned by decision. An immutable public manifest, live upgrade and rollback receipt remain. |
-| E4 | miiso.dev purchase + download page | **partial** | The authenticated Bard storefront, the one-time Polar product and its licence-key benefit, secure entitlement retrieval, broker routes, legal pages and NSIS/MSIX download paths are implemented. Production is live, not fail-closed: the page sells the one-time $20 licence, Polar checkout issues the key by email, and the site's Terms carry the same one-time 365-day model. Outstanding: the first real purchase receipt and the expiry-reminder job |
+| E4 | miiso.dev purchase + download page | **partial** | The authenticated Bard storefront, the one-time Polar product and its licence-key benefit, secure entitlement retrieval, broker routes, legal pages and NSIS/MSIX download paths are implemented. Production is live, not fail-closed: the page sells the one-time $20 licence, Polar checkout issues the key by email, and the site's Terms carry the same one-time 365-day model. Outstanding: the first real purchase receipt. The expiry-reminder sweep (`/api/bard/licence-reminders`, daily 07:00 UTC) is live |
 | E5 | Microsoft Store packaging | **partial** | `scripts/build-msix.ps1 -Store` packages the release binary under the Partner Center identity with a `windows.startupTask`; Microsoft signs it after certification. The app detects its package identity and stands its updater down. The validation package builds; the name is reserved, the listing assets are ready, and submission 1 of Store ID `9N37XJJS1F3H` is in certification — its public page still returns 410 until certification completes, and `NEXT_PUBLIC_BARD_STORE_URL` waits on that |
 | E10 | **NSIS consumer package** | **partial** | **One direct package: the NSIS installer** with embedded WebView2 bootstrapper, Send to Bard hook and updater signature, distributed unsigned by decision. The downloadable MSIX is dropped (a sideloaded copy would carry a different identity from the Store copy and never update). Clean install/upgrade/uninstall, the SmartScreen notice the product page tells buyers to dismiss, and legal-notice packaging remain |
 | E6 | Licence review — cooper is Apache-2.0, Handy is MIT | **clear, keep it that way** | bard ships **no code from either**. Handy was read for facts — which crates, which features, what its catalog records — and facts carry no licence. cooper was read for approach only; `shapes.ts` and `markdown.tsx` are bard's own. The markdown tokenizer *was* a verbatim copy of cooper's regex and has been rewritten as an independent scanner. Attribution attaches to code, so none is owed today — but it becomes owed the moment anything is vendored, `catalog.json` included |
@@ -202,7 +204,7 @@ protects it.
 
 | Gate | Pass condition | Current state |
 |---|---|---|
-| **G1 Product truth** | Blueprint 1.2 contradictions, currency, retention, installer and licence registers are clean; every A/B/C row is `done`, `off`, or `resolved` with no `missing`, `partial`, `verify`, `regression`, `blocked` or `open` state; public copy matches runtime behaviour | **blocked** — new mandate rows open; blueprint reconciliation is specification only |
+| **G1 Product truth** | Blueprint and domain contradictions, currency, retention, installer and licence registers are clean; every A/B/C row is `done`, `off`, or `resolved` with no `missing`, `partial`, `verify`, `regression`, `blocked` or `open` state; public copy matches runtime behaviour | **blocked** — new mandate rows open; blueprint reconciliation is specification only |
 | **G2 Commerce and licence** | Purchase of the one-time US$20 licence, the 365-day term stamped on the key at first activation, no automatic charge or renewal, refund or revocation, 14-day trial, three activations, fourth-machine refusal, local/portal deactivation, replacement key, the reminder email before expiry, 30-day offline lease, tamper/replay/clock failures and revalidation bounds all pass on installed builds | **blocked** — local contract is implemented and the live Polar product is one-time with no Polar-side expiry; the live lifecycle receipts (real purchase, four-device, refund) and installed evidence remain |
 | **G3 Security and privacy** | No secret licence key, signed lease, signing private key, OpenRouter key or service credential appears in repo, binary strings, SQLite, events, URLs, logs, crash reports or notifications; keyring round trip passes; CSP/capabilities are least-privilege; signed lease and updater signatures reject tampering; uninstall removes persistent secrets and the shell verb | **blocked** — local lease/updater checks pass; the release is unsigned by decision, and installed secret inspection and the uninstall receipt remain |
 | **G4 Installer and distribution** | An NSIS installer for direct distribution; a Store submission that completes certification; clean install, repair, upgrade and uninstall pass for both; no MSI and no downloadable MSIX; the SmartScreen notice the product page tells buyers how to dismiss is recorded; NSIS onboarding and in-app onboarding match the design system; Explorer verb registers, repairs and removes | **blocked** — the NSIS and Store MSIX candidates are built and the listing is in certification; the published listing and installed lifecycle evidence remain |
@@ -216,8 +218,8 @@ protects it.
 | **G12 Legal and commercial** | Terms, Privacy, refund, one-time-term and reminder-email language, model licences/notices, third-party attributions, brand check and every product-page claim are reviewed against the installed build | **blocked** — E7 open; the Bard Terms and Privacy pages carry the one-time model, and every product-page claim still needs review against the installed build |
 
 A gate moves to `pass` only with a reproducible receipt against the release
-candidate. Evidence belongs in this ledger or its referenced release record, not
-in the blueprint bodies.
+candidate. Evidence belongs in this ledger or its referenced release record, never
+in the blueprint or the brain domain's information notes.
 
 ---
 

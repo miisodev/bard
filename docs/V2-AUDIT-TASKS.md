@@ -48,7 +48,7 @@ Ordered by "does this stop someone using the product".
 | B2 | Composer never takes focus; typing does nothing while `focus-within` makes it look ready | `Panel.tsx:640` | open |
 | B3 | No skip on the licence step — the free path is gated behind a red error | `Onboarding.tsx:121` | open |
 | B4 | `machine_id()` overwrites the installation ID on a credential-read timeout, destroying a paying customer's binding irrecoverably | `license.rs:266-295` | open |
-| B5 | Dictation retention defaults to 7 days in Rust, 30 in UI and blueprint — transcripts deleted 23 days early | `db.rs:783` vs `Data.tsx:16` | open |
+| B5 | Dictation retention defaults to 7 days in Rust, 30 in UI and in `Blueprints/Product.md` — transcripts deleted 23 days early | `db.rs:783` vs `Data.tsx:16` | open |
 | B6 | Draw discards unsaved work silently — no dirty marker, no confirmation | `DrawWindow.tsx:265,381` | open |
 | B7 | Draw `save()` has no `catch` — a failed write loses the drawing with no message | `DrawWindow.tsx:227` | open |
 | B8 | "Clear history" deletes notes, drawings and favourites with no confirmation | `db.rs:862`, `Data.tsx:197` | open |
