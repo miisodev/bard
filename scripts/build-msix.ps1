@@ -11,11 +11,9 @@
   rejects a package whose identity differs, and re-signs the package itself
   after certification, so no certificate is involved here.
 
-    # Store submission (Partner Center > Product identity; the display name
-    # must be one of the names reserved for the product)
-    .\scripts\build-msix.ps1 -Store -PackageName "miisodev.BardCaptureDictation" `
-      -Publisher "CN=61F791B1-D87E-4C90-9617-536200345DA6" -PublisherDisplayName "miisodev" `
-      -DisplayName "Bard: Capture & Dictation"
+    # Store submission. -Store fills in the reserved identity for
+    # "Bard: Clipboard, Draw and Dictate" (Store ID 9PBLVGFCJ5V1).
+    .\scripts\build-msix.ps1 -Store
 
     # Local manifest/package validation (not submittable)
     bun run build:msix
@@ -36,6 +34,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# The reserved Store identity (Partner Center > Product identity). A Store
+# build takes these unless they are passed explicitly.
+if ($Store) {
+  if (-not $PSBoundParameters.ContainsKey("PackageName")) { $PackageName = "miisodev.BardClipboardDrawandDictate" }
+  if (-not $PSBoundParameters.ContainsKey("Publisher")) { $Publisher = "CN=61F791B1-D87E-4C90-9617-536200345DA6" }
+  if (-not $PSBoundParameters.ContainsKey("PublisherDisplayName")) { $PublisherDisplayName = "miisodev" }
+  if (-not $PSBoundParameters.ContainsKey("DisplayName")) { $DisplayName = "Bard: Clipboard, Draw and Dictate" }
+}
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $binary = Join-Path $repoRoot "src-tauri\target\release\bard.exe"
 $versionParts = $Version.Split(".")

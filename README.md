@@ -96,7 +96,6 @@ Bard ships in two ways, and only one of them is signed.
   different identity from the Store copy, install beside it, and never receive
   an update. The package takes its identity from Partner Center.
 
-See `docs/RELEASE_RUNBOOK.md`.
 
 The three model roles are pinned to the hash-verified
 `https://github.com/miisodev/bard-models` release `models-v2`:
@@ -145,7 +144,7 @@ compiled for Windows, which
 same command through `rustsec/audit-check`, pinned to a commit; a critical
 advisory fails the job and an informational one is reported on a Check.
 
-The exact model release gate is documented in `docs/BUILD.md`. Set
+The model release gate is `cargo test smoke_test_exact_models_when_requested` against the staged files. Set
 `BARD_SMOKE_MODELS` (and `BARD_SMOKE_WAV` for transcription) only when running
 against the staged model files; the smoke tests are no-ops otherwise. The
 OpenRouter pane is optional and should be exercised with a disposable key

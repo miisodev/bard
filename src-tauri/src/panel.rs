@@ -213,7 +213,7 @@ fn save_geometry(app: &tauri::AppHandle, win: &tauri::WebviewWindow) {
     // number back: 380 to 396 to 424 to 440 to 476, with nobody touching it.
     // `shadow: false` keeps the two equal. If the panel ever gains a real
     // drop shadow it must come from a transparent margin inside the window
-    // (see docs/PARITY.md D2) rather than from a frame, or this returns.
+    // rather than from a frame, or this returns.
     let Ok(size) = win.inner_size() else {
         return;
     };

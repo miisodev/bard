@@ -40,7 +40,7 @@ earshot = "1.2"
 #
 # Note on features: default-features would have to stay off to reach Vulkan and
 # per-ISA CPU dispatch, but that makes transcribe-cpp-sys build ggml from
-# source, which does not currently come up on this machine (docs/BUILD.md).
+# source, which needs CMake on PATH and a short build path.
 transcribe-cpp = "=0.2.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli", "stream"] }
 keyring = { version = "4.2", default-features = false, features = ["v1", "windows-native-keyring-store"] }
