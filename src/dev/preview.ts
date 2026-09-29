@@ -10,7 +10,9 @@
   Query parameters: theme=light|dark, scene=empty|trial|restricted|recording,
   pane=<settings section>.
 */
+import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import type { Shape } from "../draw/shapes";
 import catalog from "../../src-tauri/src/catalog/catalog.json";
 import type { AppState, Item, ModelInfo } from "../types";
 import "./preview.css";
@@ -34,6 +36,8 @@ const items: Item[] = [
   text(6, "Call Lerato about the Cape Town launch venue", "manual", 75, { done: 1 }),
   text(7, "Remember: the three tests. Copper, Handy, and would Apple ship this.", "dictation", 180),
   text(8, "hello@miiso.dev", "clipboard", 320),
+  text(9, "Book the Cape Town venue for the twelfth", "dictation", 400),
+  text(10, "https://github.com/miisodev/bard-releases", "clipboard", 520),
 ];
 
 function text(
@@ -237,4 +241,53 @@ export function install(label: "main" | "settings" | "draw" | "overlay") {
   });
   document.documentElement.dataset.theme = theme;
   document.documentElement.dataset.preview = label;
+  if (params.has("bare")) document.documentElement.dataset.bare = "";
+  if (label === "overlay" && scene === "recording") playRecording();
+  if (label === "draw" && scene === "sketch") {
+    (window as { __bardPreviewShapes?: Shape[] }).__bardPreviewShapes = SKETCH;
+  }
 }
+
+/** A take in progress: the pill listening, its meter moving like speech. */
+function playRecording() {
+  let t = 0;
+  window.setTimeout(() => {
+    void emit("dictation-overlay", "listening");
+    // A meter already mid-sentence, so a still frame shows speech.
+    for (let i = 0; i < 12; i += 1) {
+      void emit("mic-level", [0.35 + 0.55 * Math.abs(Math.sin(i * 0.9) * Math.cos(i * 0.37)), 0.9]);
+    }
+  }, 150);
+  window.setInterval(() => {
+    t += 1;
+    const level = 0.35 + 0.45 * Math.abs(Math.sin(t / 2.3) * Math.cos(t / 5.1)) + 0.15 * Math.random();
+    void emit("mic-level", [level, 0.9]);
+  }, 60);
+}
+
+const INK = "#1d1d1f";
+const BLUE = "#2f6fed";
+const RED = "#e5484d";
+
+/** A small flow sketch: the kind of diagram Draw is for. */
+const SKETCH: Shape[] = [
+  { kind: "rect", id: 1, color: INK, width: 2.5, a: { x: 70, y: 170 }, b: { x: 240, y: 250 } },
+  { kind: "text", id: 2, color: INK, size: 20, at: { x: 104, y: 202 }, text: "Copy / Say" },
+  { kind: "arrow", id: 3, color: BLUE, width: 3, a: { x: 252, y: 210 }, b: { x: 382, y: 210 } },
+  { kind: "ellipse", id: 4, color: INK, width: 2.5, a: { x: 392, y: 160 }, b: { x: 606, y: 262 } },
+  { kind: "text", id: 5, color: INK, size: 20, at: { x: 450, y: 202 }, text: "One timeline" },
+  { kind: "arrow", id: 6, color: BLUE, width: 3, a: { x: 498, y: 272 }, b: { x: 498, y: 372 } },
+  { kind: "rect", id: 7, color: INK, width: 2.5, a: { x: 400, y: 382 }, b: { x: 600, y: 452 } },
+  { kind: "text", id: 8, color: INK, size: 20, at: { x: 432, y: 410 }, text: "Paste anywhere" },
+  {
+    kind: "pen",
+    id: 9,
+    color: RED,
+    width: 3,
+    points: Array.from({ length: 48 }, (_, i) => ({
+      x: 96 + i * 3.2,
+      y: 282 + Math.sin(i / 3.2) * 5 + (i > 40 ? (i - 40) * -1.5 : 0),
+    })),
+  },
+  { kind: "text", id: 10, color: RED, size: 16, at: { x: 96, y: 326 }, text: "Left Shift ×2  ·  Ctrl ×2" },
+];

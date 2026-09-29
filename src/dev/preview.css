@@ -32,3 +32,15 @@ html[data-preview="overlay"] #root {
   --preview-h: 60px;
   box-shadow: none;
 }
+
+/* Inside the screenshot stage: no desktop, the window fills its frame. */
+html[data-bare],
+html[data-bare] body {
+  background: transparent;
+}
+html[data-bare] body { display: block; }
+html[data-bare] #root {
+  width: 100%;
+  height: 100vh;
+  box-shadow: none;
+}

@@ -171,6 +171,16 @@ export default function DrawWindow() {
     render(ctx, all, w, h, { dpr, background: page, ink, selected });
   }, [selected, page, ink]);
 
+  // Browser preview only: a seeded sketch, so screenshots show Draw in use.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const seed = (window as { __bardPreviewShapes?: Shape[] }).__bardPreviewShapes;
+    if (seed && shapesRef.current.length === 0) {
+      shapesRef.current = seed.map((shape) => ({ ...shape }));
+      paint();
+    }
+  }, [paint]);
+
   useEffect(() => {
     paint();
     const onResize = () => paint();

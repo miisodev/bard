@@ -1,0 +1,198 @@
+<!doctype html>
+<!--
+  Store and site screenshots, composed from the real windows.
+
+  Dev-only (served by `bun run dev` at /src/dev/stage.html?shot=<name>): each
+  shot is a 1600 × 900 frame holding one headline and one or more live Bard
+  windows rendered through the browser preview. scripts/shots.mjs captures
+  every shot at 2× into .agents/files.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bard stage</title>
+    <style>
+      :root {
+        --ink: #0d1220;
+        --ink-2: #4a5468;
+        --accent: #2f6fed;
+        font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+      }
+      html, body { margin: 0; }
+      body {
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        position: relative;
+        background:
+          radial-gradient(60% 70% at 88% 18%, rgba(143, 179, 255, 0.55), transparent 62%),
+          radial-gradient(55% 65% at 72% 96%, rgba(201, 167, 255, 0.45), transparent 60%),
+          radial-gradient(50% 60% at 6% 100%, rgba(120, 214, 255, 0.28), transparent 60%),
+          linear-gradient(180deg, #f6f8ff 0%, #eef1fb 100%);
+      }
+      body.dark {
+        --ink: #f3f5fb;
+        --ink-2: #a7b0c4;
+        background:
+          radial-gradient(60% 70% at 88% 18%, rgba(63, 115, 216, 0.45), transparent 62%),
+          radial-gradient(55% 65% at 72% 96%, rgba(126, 87, 214, 0.38), transparent 60%),
+          linear-gradient(180deg, #0c0f18 0%, #121626 100%);
+      }
+      .copy {
+        position: absolute;
+        left: 110px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 560px;
+      }
+      .mark {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 36px;
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--ink);
+        letter-spacing: -0.01em;
+      }
+      .mark img { width: 44px; height: 44px; border-radius: 11px; box-shadow: 0 6px 18px rgba(20, 40, 90, 0.18); }
+      h1 {
+        margin: 0 0 22px;
+        font-size: 60px;
+        line-height: 1.04;
+        font-weight: 700;
+        letter-spacing: -0.035em;
+        color: var(--ink);
+      }
+      p {
+        margin: 0;
+        font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        font-size: 22px;
+        line-height: 1.5;
+        color: var(--ink-2);
+      }
+      .keys { margin-top: 30px; display: flex; gap: 10px; align-items: center; color: var(--ink-2); font-size: 17px; }
+      kbd {
+        font-family: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink);
+        padding: 6px 11px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.75);
+        box-shadow: inset 0 -1.5px 0 rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.08);
+      }
+      body.dark kbd { background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 -1.5px 0 rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.12); }
+      .win {
+        position: absolute;
+        border: 0;
+        border-radius: 16px;
+        background: transparent;
+        box-shadow: 0 40px 90px rgba(20, 30, 70, 0.28), 0 6px 20px rgba(20, 30, 70, 0.14);
+      }
+      body.dark .win { box-shadow: 0 40px 90px rgba(0, 0, 0, 0.55), 0 6px 20px rgba(0, 0, 0, 0.35); }
+      .doc {
+        position: absolute;
+        border-radius: 14px;
+        background: #ffffff;
+        box-shadow: 0 30px 80px rgba(20, 30, 70, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.05);
+        font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        color: #1d1d1f;
+        overflow: hidden;
+      }
+      .doc-bar { height: 44px; border-bottom: 1px solid #eceef2; display: flex; align-items: center; padding: 0 6px 0 18px; color: #4b5563; font-size: 13px; }
+      .doc-bar .ctl { margin-left: auto; display: flex; }
+      .doc-bar .ctl span { width: 46px; text-align: center; color: #6b7280; font-size: 14px; }
+      .doc-body { padding: 36px 44px; font-size: 19px; line-height: 1.7; }
+      .doc-body h2 { margin: 0 0 16px; font-size: 26px; letter-spacing: -0.01em; }
+      .caret { display: inline-block; width: 2px; height: 22px; background: #2f6fed; vertical-align: -4px; margin-left: 2px; }
+      .typed { background: rgba(47, 111, 237, 0.1); border-radius: 4px; padding: 1px 2px; }
+    </style>
+  </head>
+  <body>
+    <div class="copy">
+      <div class="mark"><img src="/src-tauri/icons/128x128@2x.png" alt="" />Bard</div>
+      <h1 id="headline"></h1>
+      <p id="subline"></p>
+      <div class="keys" id="keys"></div>
+    </div>
+    <div id="windows"></div>
+    <script type="module">
+      const shots = {
+        capture: {
+          headline: "Everything you copy, one keystroke away.",
+          subline: "Bard keeps what you copy and select in one searchable timeline. Enter pastes it straight back where you were.",
+          keys: [["Left Shift", "×2"], "to keep a selection"],
+          windows: [{ src: "/?bare", x: 1010, y: 105, w: 400, h: 620, scale: 1.12 }],
+        },
+        dictate: {
+          headline: "Speak. It's typed where you were.",
+          subline: "Offline dictation with a local speech model. Your voice never leaves your PC, and it works in any app.",
+          keys: [["Ctrl", "×2"], "to dictate"],
+          doc: { x: 760, y: 150, w: 740, h: 560 },
+          windows: [{ src: "/overlay.html?bare&scene=recording", x: 1000, y: 610, w: 260, h: 60, flat: true, scale: 1.5 }],
+        },
+        draw: {
+          headline: "Sketch it faster than you can say it.",
+          subline: "Pen, arrows, shapes and text on a page that opens beside your notes. Copy it as an image in one keystroke.",
+          keys: [["Left Alt", "×2"], "to draw"],
+          windows: [{ src: "/draw.html?bare&scene=sketch", x: 760, y: 150, w: 720, h: 600 }],
+        },
+        models: {
+          headline: "Three models. Nothing uploaded.",
+          subline: "Choose fast, English or multilingual. Transcription runs entirely on this PC, with no account and no analytics.",
+          keys: [],
+          windows: [{ src: "/settings.html?bare&pane=models", x: 780, y: 150, w: 720, h: 600 }],
+        },
+        dark: {
+          dark: true,
+          headline: "Quiet by design.",
+          subline: "A calm, keyboard-first panel in light or dark that stays out of the way until you need it.",
+          keys: [["Right Shift", "×2"], "to open Bard"],
+          windows: [{ src: "/?bare&theme=dark", x: 1010, y: 105, w: 400, h: 620, scale: 1.12 }],
+        },
+      };
+      const name = new URLSearchParams(location.search).get("shot") ?? "capture";
+      const shot = shots[name];
+      if (shot.dark) document.body.classList.add("dark");
+      document.getElementById("headline").textContent = shot.headline;
+      document.getElementById("subline").textContent = shot.subline;
+      const keys = document.getElementById("keys");
+      for (const part of shot.keys) {
+        if (Array.isArray(part)) {
+          const k = document.createElement("kbd");
+          k.textContent = part[0];
+          keys.append(k, part[1]);
+        } else {
+          const span = document.createElement("span");
+          span.textContent = part;
+          keys.append(span);
+        }
+      }
+      const host = document.getElementById("windows");
+      if (shot.doc) {
+        const d = shot.doc;
+        const doc = document.createElement("div");
+        doc.className = "doc";
+        Object.assign(doc.style, { left: `${d.x}px`, top: `${d.y}px`, width: `${d.w}px`, height: `${d.h}px` });
+        doc.innerHTML = `<div class="doc-bar"><span>Launch notes.txt</span><span class="ctl"><span>&#x2013;</span><span>&#x25a1;</span><span>&#x2715;</span></span></div>
+          <div class="doc-body"><h2>Friday launch</h2>
+          The build is signed off and the listing copy is final. What is left is the checklist Lerato asked for this morning.<br/><br/>
+          <span class="typed">Send the release notes to the team before noon, and book the venue for the Cape Town evening on the twelfth</span><span class="caret"></span></div>`;
+        host.append(doc);
+      }
+      for (const w of shot.windows) {
+        const frame = document.createElement("iframe");
+        frame.className = "win";
+        frame.src = w.src;
+        Object.assign(frame.style, { left: `${w.x}px`, top: `${w.y}px`, width: `${w.w}px`, height: `${w.h}px` });
+        if (w.flat) frame.style.boxShadow = "none";
+        if (w.scale) {
+          frame.style.transform = `scale(${w.scale})`;
+          frame.style.transformOrigin = "top left";
+        }
+        host.append(frame);
+      }
+    </script>
+  </body>
+</html>
