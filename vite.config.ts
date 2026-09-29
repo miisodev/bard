@@ -21,7 +21,8 @@ export default defineConfig({
     },
   },
   build: {
-    target: ["es2021", "chrome100", "safari13"],
+    // WebView2 is Chromium; Bard runs nowhere else.
+    target: ["es2021", "chrome100"],
     minify: "esbuild",
     sourcemap: false,
     rollupOptions: {
