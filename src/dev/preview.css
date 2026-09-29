@@ -1,0 +1,34 @@
+/* The browser preview's stage: a desktop behind each window at its real size. */
+html[data-preview],
+html[data-preview] body {
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 20% 10%, #8fb3ff 0%, transparent 55%),
+    radial-gradient(90% 80% at 90% 90%, #c9a7ff 0%, transparent 60%),
+    linear-gradient(160deg, #5d7de8, #3a4fb8);
+}
+html[data-preview] body {
+  display: grid;
+  place-items: center;
+}
+html[data-preview] #root {
+  position: relative;
+  width: var(--preview-w, 380px);
+  height: var(--preview-h, 620px);
+  border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(10, 20, 60, 0.45), 0 4px 16px rgba(10, 20, 60, 0.2);
+  transform: translateZ(0);
+}
+html[data-preview] #root > * {
+  height: 100% !important;
+}
+html[data-preview="settings"] #root,
+html[data-preview="draw"] #root {
+  --preview-w: 720px;
+}
+html[data-preview="overlay"] #root {
+  --preview-w: 260px;
+  --preview-h: 60px;
+  box-shadow: none;
+}

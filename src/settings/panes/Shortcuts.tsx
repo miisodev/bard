@@ -4,26 +4,26 @@ export default function ShortcutsPane() {
   return (
     <Pane
       title="Shortcuts"
-      description="Fixed gestures and panel keys. These are intentionally not customizable."
+      description="Bard is built around a few taps of keys you already rest on. They work in any app."
     >
       <Group title="From any app">
         <Row label="Capture" hint="Tap Left Shift twice to grab the current selection.">
-          <Keycaps keys={["Left Shift", "Left Shift"]} />
+          <Keycaps keys={["Left Shift"]} twice />
         </Row>
         <Row
           label="Paste item"
           hint="Tap Right Shift twice, then quickly press 1, 2, or 3 to paste that timeline item into the focused app."
         >
-          <Keycaps keys={["Right Shift", "Right Shift", "1 / 2 / 3"]} />
+          <Keycaps keys={["Right Shift"]} twice then="1 2 3" />
         </Row>
         <Row label="Panel" hint="Tap Right Shift twice to show or hide Bard.">
-          <Keycaps keys={["Right Shift", "Right Shift"]} />
+          <Keycaps keys={["Right Shift"]} twice />
         </Row>
         <Row label="Settings" hint="Tap Right Alt twice to open Settings as a single window.">
-          <Keycaps keys={["Right Alt", "Right Alt"]} />
+          <Keycaps keys={["Right Alt"]} twice />
         </Row>
         <Row label="Draw" hint="Tap Left Alt twice to open Draw as a single window.">
-          <Keycaps keys={["Left Alt", "Left Alt"]} />
+          <Keycaps keys={["Left Alt"]} twice />
         </Row>
         <Row label="Fullscreen Draw" hint="While Draw is focused, toggle its native fullscreen state.">
           <Keycaps keys={["F11"]} />
@@ -32,7 +32,7 @@ export default function ShortcutsPane() {
           label="Dictate"
           hint="Hold the same Ctrl key to talk, or tap it twice to start and twice to stop. Esc cancels."
         >
-          <Keycaps keys={["Ctrl", "Ctrl"]} />
+          <Keycaps keys={["Ctrl"]} twice />
         </Row>
       </Group>
 
@@ -60,12 +60,26 @@ export default function ShortcutsPane() {
   );
 }
 
-function Keycaps({ keys }: { keys: string[] }) {
+/**
+ * A chord, or a key tapped twice. A doubled gesture reads as one keycap and
+ * "×2" rather than the same cap drawn twice, which looked like a two-key chord.
+ */
+function Keycaps({ keys, twice = false, then }: { keys: string[]; twice?: boolean; then?: string }) {
+  const spoken = `${keys.join(" plus ")}${twice ? ", tapped twice" : ""}${then ? `, then ${then.split(" ").join(" or ")}` : ""}`;
   return (
-    <span className="keys static" aria-label={keys.join(" then ")}>
+    <span className="keys static" aria-label={spoken}>
       {keys.map((key, index) => (
         <kbd key={`${key}-${index}`}>{key}</kbd>
       ))}
+      {twice ? <span className="keys-times" aria-hidden="true">×2</span> : null}
+      {then ? (
+        <>
+          <span className="keys-then" aria-hidden="true">then</span>
+          {then.split(" ").map((key) => (
+            <kbd key={key} aria-hidden="true">{key}</kbd>
+          ))}
+        </>
+      ) : null}
     </span>
   );
 }

@@ -20,7 +20,7 @@
     {
       "id": "whisper-small",
       "name": "Bard Fast",
-      "description": "The small, broad-coverage multilingual model for everyday dictation.",
+      "description": "Quick and light, in 99 languages. The right place to start.",
       "role": "multilingualFast",
       "architecture": "whisper",
       "family": "Whisper Small",
@@ -67,7 +67,7 @@
     {
       "id": "whisper-medium",
       "name": "Bard English",
-      "description": "A dedicated English model tuned for low word error rate, punctuation, and clean technical dictation.",
+      "description": "The most accurate for English, technical words and punctuation included.",
       "role": "englishQuality",
       "architecture": "parakeet",
       "family": "Parakeet TDT",
@@ -113,7 +113,7 @@
     {
       "id": "whisper-turbo",
       "name": "Bard Multilingual",
-      "description": "The broad multilingual quality choice, with automatic language detection across 30 languages.",
+      "description": "More accurate across 30 languages, and tells them apart on its own.",
       "role": "multilingualQuality",
       "architecture": "qwen3_asr",
       "family": "Qwen3 ASR",

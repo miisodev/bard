@@ -44,6 +44,27 @@ function preview(item: Item): string {
   return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…` : text;
 }
 
+/** A card whose whole text is a CSS colour, or null. */
+function colorValue(content: string): string | null {
+  const value = content.trim();
+  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value)) return value;
+  if (/^(?:rgb|hsl|oklch)a?\([^()]{3,60}\)$/i.test(value)) return value;
+  return null;
+}
+
+/** A card that is one web address, split so the site reads first. */
+function linkParts(content: string): { host: string; rest: string } | null {
+  const value = content.trim();
+  if (!/^https?:\/\/\S+$/i.test(value)) return null;
+  try {
+    const url = new URL(value);
+    const rest = `${url.pathname === "/" ? "" : url.pathname}${url.search}${url.hash}`;
+    return { host: url.host.replace(/^www\./, ""), rest };
+  } catch {
+    return null;
+  }
+}
+
 export default function ItemCard({
   item,
   attachments,
@@ -90,6 +111,8 @@ export default function ItemCard({
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const done = item.done !== 0;
+  const color = item.kind === "text" ? colorValue(item.content) : null;
+  const link = item.kind === "text" ? linkParts(item.content) : null;
 
   useEffect(() => {
     if (item.kind !== "image") return;
@@ -224,13 +247,21 @@ export default function ItemCard({
         ) : (
           <div
             ref={bodyRef}
-            className={`item-body${clamped ? " clamped" : ""}`}
+            className={`item-body${clamped ? " clamped" : ""}${color ? " is-color" : ""}`}
             // Only where text is actually hidden: a tooltip that repeats what
             // the card already shows is noise on every row in the list.
             title={clamped ? item.content : undefined}
             onDoubleClick={item.kind === "text" ? onEdit : undefined}
           >
-            {renderInline(item.content, search)}
+            {color ? <span className="item-swatch" style={{ background: color }} aria-hidden="true" /> : null}
+            {link && !search ? (
+              <>
+                <span className="item-link-host">{link.host}</span>
+                <span className="item-link-rest">{link.rest}</span>
+              </>
+            ) : (
+              renderInline(item.content, search)
+            )}
           </div>
         )}
 

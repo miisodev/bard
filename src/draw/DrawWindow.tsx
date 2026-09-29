@@ -13,6 +13,7 @@ import {
   Type,
   Undo2,
   X,
+  ChevronDown,
 } from "lucide-react";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
@@ -486,14 +487,15 @@ export default function DrawWindow() {
               className="canvas-toggle"
               aria-expanded={canvasOpen}
               aria-haspopup="true"
-              title="Canvas"
+              title="Page colour"
               onClick={() => setCanvasOpen((open) => !open)}
             >
               <span className="canvas-chip" style={{ background: page }} aria-hidden="true" />
-              Canvas
+              Page
+              <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
             </button>
             {canvasOpen ? (
-              <div className="canvas-pop" role="group" aria-label="Canvas">
+              <div className="canvas-pop" role="group" aria-label="Page colour">
                 <div className="canvas-options">
                   {(["light", "dark"] as const).map((mode) => (
                     <button

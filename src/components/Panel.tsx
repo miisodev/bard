@@ -1,4 +1,4 @@
-import { ArrowUpDown, ListChecks, Paintbrush, Search, Settings2, X } from "lucide-react";
+import { Ellipsis, PenTool, Search, Settings, X } from "lucide-react";
 import { playCue } from "../audio";
 import {
   useCallback,
@@ -702,7 +702,7 @@ export default function Panel({
             title="Draw"
             onClick={() => void api.toggleCompanion("draw")}
           >
-            <Paintbrush size={16} strokeWidth={1.8} />
+            <PenTool size={16} strokeWidth={1.8} />
           </button>
           <button
             type="button"
@@ -712,31 +712,18 @@ export default function Panel({
             title="Settings"
             onClick={() => void api.toggleCompanion("settings")}
           >
-            <Settings2 size={16} strokeWidth={1.8} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn header-action"
-            aria-label={doneCount > 0 ? `Clear ${doneCount} completed` : "Clear completed"}
-            title={doneCount > 0 ? `Clear completed (${doneCount})` : "Clear completed"}
-            disabled={doneCount === 0}
-            onClick={() => {
-              void api.clearCompleted().then(refresh);
-              notify(`Cleared ${doneCount} completed`);
-            }}
-          >
-            <ListChecks size={16} strokeWidth={1.8} />
+            <Settings size={16} strokeWidth={1.8} />
           </button>
           <button
             type="button"
             className={`icon-btn header-action${showOverflow ? " active" : ""}`}
-            aria-label="Sort"
-            title="Sort"
+            aria-label="More"
+            title="More"
             aria-haspopup="menu"
             aria-expanded={showOverflow}
             onClick={() => setShowOverflow((v) => !v)}
           >
-            <ArrowUpDown size={16} strokeWidth={1.8} />
+            <Ellipsis size={16} strokeWidth={1.8} />
           </button>
         </div>
       </header>
@@ -930,15 +917,32 @@ export default function Panel({
 
       {showOverflow ? (
         <Menu
-          label="Sort"
+          label="More"
           onClose={closeOverflow}
-          entries={SORT_ORDERS.map(([orderName, label]) => ({
-            label,
-            radio: true,
-            checked: state.sort === orderName,
-            trailing: state.sort === orderName ? "✓" : undefined,
-            onClick: () => void api.setSort(orderName).then(refresh),
-          }))}
+          entries={[
+            ...SORT_ORDERS.map(([orderName, label]) => ({
+              label,
+              radio: true,
+              checked: state.sort === orderName,
+              trailing: state.sort === orderName ? "✓" : undefined,
+              onClick: () => void api.setSort(orderName).then(refresh),
+            })),
+            {
+              label: "Clear completed",
+              separated: true,
+              disabled: doneCount === 0,
+              trailing: doneCount > 0 ? String(doneCount) : undefined,
+              onClick: () => {
+                void api.clearCompleted().then(refresh);
+                notify(`Cleared ${doneCount} completed`);
+              },
+            },
+            {
+              label: "Keyboard shortcuts",
+              trailing: "Ctrl /",
+              onClick: () => setShowShortcuts(true),
+            },
+          ]}
         />
       ) : null}
 

@@ -4,7 +4,7 @@ import { AlertCircle, FileWarning, LoaderCircle, RotateCcw } from "lucide-react"
 import { api } from "../../store";
 import type { CrashReport } from "../../types";
 import type { PaneProps } from "../SettingsWindow";
-import { Button, Group, InlineConfirm, Note, Pane, Row, Segmented } from "../ui";
+import { Button, Group, InlineConfirm, Note, Pane, Row, Select } from "../ui";
 
 type Notice = { tone: "success" | "danger"; text: string };
 
@@ -204,7 +204,7 @@ export default function DataPane({ refresh }: PaneProps) {
               label="Clipboard lifespan"
               hint={retentionLoading ? "Reading local retention…" : "Text and images copied from other apps."}
             >
-              <Segmented
+              <Select
                 label="Clipboard lifespan"
                 value={clipboardDays}
                 options={RETENTION_OPTIONS}
@@ -216,7 +216,7 @@ export default function DataPane({ refresh }: PaneProps) {
               label="Dictation lifespan"
               hint="Final transcripts are stored locally; raw audio is never stored."
             >
-              <Segmented
+              <Select
                 label="Dictation lifespan"
                 value={dictationDays}
                 options={RETENTION_OPTIONS}

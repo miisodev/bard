@@ -294,7 +294,7 @@ body {
   padding: 0;
   border: none;
   background: none;
-  color: var(--text-3);
+  color: color-mix(in srgb, var(--text-3) 70%, transparent);
   cursor: pointer;
   border-radius: var(--r-pill);
   transition: color var(--t-fast) var(--ease-out);
@@ -308,6 +308,25 @@ body {
 
 .check:hover {
   color: var(--text-2);
+}
+
+/* A copied colour shows the colour. */
+.item-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: var(--sp-4);
+  vertical-align: -2px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.item-link-host { color: var(--accent-text); }
+.item-link-rest { color: var(--text-3); overflow-wrap: anywhere; }
+
+.item-body.is-color {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
 }
 
 .item-copy {
@@ -347,6 +366,7 @@ body {
 .item-card:focus-within .item-copy,
 .item-card.selected .item-copy,
 .item-card.active .item-copy {
+  opacity: 1;
   color: var(--text);
 }
 
@@ -1794,7 +1814,7 @@ mark {
 
 .license-card {
   display: grid;
-  gap: var(--sp-5);
+  gap: var(--sp-3);
   padding: var(--sp-7);
   border-radius: var(--r-card);
   background: var(--surface);
@@ -1841,6 +1861,13 @@ mark {
 .license-activation {
   justify-content: flex-start;
   flex-wrap: wrap;
+  margin-top: var(--sp-3);
+}
+
+.license-card-actions {
+  justify-content: flex-start;
+  gap: var(--sp-7);
+  margin-top: var(--sp-3);
 }
 
 .license-input {
@@ -2043,4 +2070,11 @@ mark {
   box-shadow: none;
   min-width: 0;
   padding: 0;
+}
+
+.keys-times,
+.keys-then {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }

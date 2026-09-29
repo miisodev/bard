@@ -3,6 +3,7 @@ import { RefreshCw, Download } from "lucide-react";
 import type { PaneProps } from "../SettingsWindow";
 import LicenseCard from "../../components/LicenseCard";
 import { api } from "../../store";
+import appIcon from "../../../src-tauri/icons/128x128.png";
 import { Button, Group, Pane, Row } from "../ui";
 
 export default function AboutPane({ state, refresh }: PaneProps) {
@@ -53,10 +54,17 @@ export default function AboutPane({ state, refresh }: PaneProps) {
 
   return (
     <Pane title="About">
-      <Group>
-        <Row label="Bard" hint="Capture. Dictate. Keep." />
-        <Row label="Version" hint={store ? `${state.appVersion} · Microsoft Store` : state.appVersion} />
-      </Group>
+      <header className="about-hero">
+        <img src={appIcon} alt="" width={64} height={64} />
+        <div>
+          <p className="about-name">Bard</p>
+          <p className="about-line">Capture. Dictate. Keep.</p>
+          <p className="about-version">
+            Version {state.appVersion}
+            {store ? " · Microsoft Store" : ""}
+          </p>
+        </div>
+      </header>
 
       <LicenseCard status={state.license} onStatus={refresh} />
 
@@ -121,31 +129,25 @@ export default function AboutPane({ state, refresh }: PaneProps) {
         ) : null}
       </Group>
 
-      <Group title="Legal">
-        {/* Two buttons both reading "Read" left the first two rows
-            indistinguishable; the label is the only place a legal document is
-            named. */}
-        <Row label="Terms" hint="One licence: 365 days from activation, three computers, an offline lease.">
-          <Button onClick={() => void api.openLink("https://miiso.dev/terms")}>Read terms</Button>
-        </Row>
-        <Row label="Privacy" hint="Local data, activation and the optional OpenRouter disclosures.">
-          <Button onClick={() => void api.openLink("https://miiso.dev/privacy")}>Read privacy</Button>
-        </Row>
-        <Row label="Support" hint="Report a problem, including anything Refine returned.">
-          <Button onClick={() => void api.openLink("https://miiso.dev/tools/bard#support")}>Contact</Button>
-        </Row>
-      </Group>
-
       <Group title="Privacy">
         <Row
-          label="Local by default"
-          hint="Audio capture, speech recognition, captures, and history stay on this computer. Purchasing uses miiso.dev; Bard has no account, sync, or telemetry."
-        />
-        <Row
-          label="Refine, only if you turn it on"
-          hint="Bard then sends the finished transcript text — and nothing else — to OpenRouter. Audio, captures, history, and unrelated items are never sent, and the untouched local transcript is used whenever Refine is off or fails."
+          label="Everything stays on this PC"
+          hint="Speech recognition, captures and history never leave it. Bard has no account, sync or analytics. Refine, if you turn it on, sends only the finished transcript to OpenRouter."
         />
       </Group>
+
+      <nav className="about-links" aria-label="Legal and support">
+        <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/terms")}>
+          Terms
+        </button>
+        <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/privacy")}>
+          Privacy
+        </button>
+        <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/tools/bard#support")}>
+          Support
+        </button>
+        <span className="about-copyright">© 2026 miiso.dev</span>
+      </nav>
     </Pane>
   );
 }

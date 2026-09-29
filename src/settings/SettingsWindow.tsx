@@ -51,6 +51,12 @@ const SECTION_STEP: Record<string, number> = {
   ArrowLeft: -1,
 };
 
+/** The section to open on: `?pane=` in the browser preview, General otherwise. */
+function initialSection(): SectionId {
+  const requested = new URLSearchParams(location.search).get("pane");
+  return SECTIONS.find((item) => item.id === requested)?.id ?? "general";
+}
+
 function errorText(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
   const text = String(error);
@@ -64,7 +70,7 @@ export default function SettingsWindow() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ModelProgress | null>(null);
   const [inventoryVersion, setInventoryVersion] = useState(0);
-  const [section, setSection] = useState<SectionId>("general");
+  const [section, setSection] = useState<SectionId>(initialSection);
   const nav = useRef<HTMLDivElement>(null);
 
   /**

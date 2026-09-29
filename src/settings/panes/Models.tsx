@@ -1,19 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  AlertCircle,
-  Check,
-  CheckCircle2,
-  Cloud,
-  Download,
-  ExternalLink,
-  HardDrive,
-  LoaderCircle,
-  RefreshCw,
-  RotateCcw,
-  ShieldCheck,
-  Trash2,
-  X,
-} from "lucide-react";
+import { AlertCircle, Check, Download, LoaderCircle, RotateCcw, Trash2, X } from "lucide-react";
 import { api } from "../../store";
 import type {
   BackendModelCompatibility,
@@ -30,35 +16,12 @@ import {
   Button,
   Group,
   InlineConfirm,
-  Meter,
   Note,
   Pane,
   Progress,
-  Tag,
   TextField,
   formatBytes,
 } from "../ui";
-
-/*
-  The three curated roles, keyed by model id.
-
-  This used to fall back to the model's *position* in the catalogue, so a
-  reordered or re-released catalogue confidently labelled a multilingual model
-  "Best English". Identity is the only stable thing here; an unrecognised model
-  gets no role rather than a borrowed one.
-*/
-const ROLE_BY_ID: Record<string, string> = {
-  "whisper-small": "Fast multilingual",
-  "whisper-medium": "Best English",
-  "whisper-turbo": "Best multilingual",
-};
-
-/** The same three roles, read from the catalogue's own `role` token. */
-const ROLE_BY_TOKEN: [string, string][] = [
-  ["fast", "Fast multilingual"],
-  ["english", "Best English"],
-  ["multilingual", "Best multilingual"],
-];
 
 /** The catalogue is three curated first-party models; a fourth is not one. */
 const CURATED_LIMIT = 3;
@@ -73,8 +36,6 @@ type ParsedHfInput = {
   requestedFile?: string;
   revision?: string;
 };
-
-type FirstPartyModel = ModelInfo & { roleLabel: string };
 
 function errorText(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -109,15 +70,7 @@ function compatibilityFrom(
   };
 }
 
-/** What this model is for, or "" when the catalogue does not say. */
-function roleLabel(model: ModelInfo): string {
-  const byId = ROLE_BY_ID[model.id];
-  if (byId) return byId;
-  const role = model.role?.toLowerCase() ?? "";
-  return ROLE_BY_TOKEN.find(([token]) => role.includes(token))?.[1] ?? "";
-}
-
-function firstPartyModels(models: ModelInfo[]): FirstPartyModel[] {
+function firstPartyModels(models: ModelInfo[]): ModelInfo[] {
   const explicitlyFirstParty = models.filter(
     (model) =>
       model.hosted === true ||
@@ -136,9 +89,7 @@ function firstPartyModels(models: ModelInfo[]): FirstPartyModel[] {
   const candidates =
     explicitlyFirstParty.length > 0 ? explicitlyFirstParty : compatibleWithOlderBackends;
 
-  return candidates
-    .slice(0, CURATED_LIMIT)
-    .map((model) => ({ ...model, roleLabel: roleLabel(model) }));
+  return candidates.slice(0, CURATED_LIMIT);
 }
 
 function modelSize(model: ModelInfo): string {
@@ -212,14 +163,6 @@ function hasInstallMetadata(file: HfFile): boolean {
   return file.size > 0 && /^[0-9a-f]{64}$/i.test(file.sha256);
 }
 
-function formatSpeed(bytesPerSecond?: number): string | null {
-  if (!bytesPerSecond || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return null;
-  if (bytesPerSecond >= 1024 ** 2) {
-    return `${Math.round((bytesPerSecond / 1024 ** 2) * 10) / 10} MB/s`;
-  }
-  return `${Math.round(bytesPerSecond / 1024)} KB/s`;
-}
-
 function formatEta(seconds?: number): string | null {
   if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return null;
   if (seconds < 60) return `${Math.ceil(seconds)} sec left`;
@@ -227,7 +170,11 @@ function formatEta(seconds?: number): string | null {
   return `${minutes} min left`;
 }
 
-function ProgressDetails({
+/**
+ * A download in progress, in the space the row's action button occupied: a
+ * thin bar, a percentage with time left, and the way out.
+ */
+function InlineProgress({
   progress,
   onCancel,
   onRetry,
@@ -236,47 +183,39 @@ function ProgressDetails({
   onCancel: () => void;
   onRetry: () => void;
 }) {
-  const speed = formatSpeed(progress.speedBytesPerSecond);
+  const percent = Math.round(progress.percent);
+  if (progress.error) {
+    return (
+      <div className="inline-progress failed">
+        <span role="alert" title={progress.error}>Download failed</span>
+        <Button onClick={onRetry}>
+          <RotateCcw aria-hidden="true" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
   const eta = formatEta(progress.etaSeconds);
-  const bytes =
-    progress.total > 0
-      ? `${formatBytes(progress.received)} of ${formatBytes(progress.total)}`
-      : formatBytes(progress.received);
-  const phase = progress.phase ?? (progress.error ? "Download failed" : "Downloading");
-
   return (
-    <div className="model-progress">
-      {/*
-        The live region is the phase alone, and the phase alone is constant
-        while bytes move. It used to wrap the byte counter too, so a 200 MB
-        download pushed a screen reader's polite buffer several times a second
-        for as long as it took. The failure text is the danger-toned line below.
-      */}
-      <div className="progress-copy">
-        <span role="status">{phase}</span>
-        <span className="progress-measure">
-          {[bytes, speed, eta].filter(Boolean).join(" · ")}
-        </span>
+    <div className="inline-progress">
+      <div className="inline-progress-copy">
+        <span role="status">{progress.phase === "Verifying" ? "Verifying" : `${percent}%`}</span>
+        {eta ? <span className="inline-progress-eta">{eta}</span> : null}
       </div>
       <Progress
         percent={progress.percent}
-        label={`${phase}: ${Math.round(progress.percent)} percent`}
-        valueText={progress.error ? `${phase}. ${progress.error}` : `${phase}, ${Math.round(progress.percent)} percent`}
+        label={`Downloading: ${percent} percent`}
+        valueText={`${percent} percent${eta ? `, ${eta}` : ""}`}
       />
-      <div className="progress-actions">
-        {progress.error ? (
-          <Button onClick={onRetry} disabled={false}>
-            <RotateCcw aria-hidden="true" />
-            Retry
-          </Button>
-        ) : (
-          <Button onClick={onCancel} disabled={false}>
-            <X aria-hidden="true" />
-            Cancel
-          </Button>
-        )}
-      </div>
-      {progress.error ? <div className="inline-error">{progress.error}</div> : null}
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="Cancel download"
+        title="Cancel"
+        onClick={onCancel}
+      >
+        <X aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -290,7 +229,6 @@ export default function ModelsPane({
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [detected, setDetected] = useState<DetectedModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
-  const [detectedLoading, setDetectedLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [detectedError, setDetectedError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -395,7 +333,6 @@ export default function ModelsPane({
 
   const loadDetectedModels = useCallback(async () => {
     const generation = ++detectedEpochRef.current;
-    setDetectedLoading(true);
     setDetectedError(null);
     try {
       const next = await api.getDetectedModels();
@@ -415,8 +352,6 @@ export default function ModelsPane({
     } catch (error) {
       if (!mountedRef.current || generation !== detectedEpochRef.current) return;
       setDetectedError(errorText(error));
-    } finally {
-      if (mountedRef.current && generation === detectedEpochRef.current) setDetectedLoading(false);
     }
   }, [checkDetectedModel]);
 
@@ -440,7 +375,7 @@ export default function ModelsPane({
       ? progress
       : null;
 
-  const downloadFirstParty = async (model: FirstPartyModel, activate: boolean) => {
+  const downloadFirstParty = async (model: ModelInfo, activate: boolean) => {
     const key = `${model.id}:${activate ? "use" : "only"}`;
     if (busyAction || checkingDetected || activeProgress) return;
     setBusyAction(key);
@@ -606,334 +541,217 @@ export default function ModelsPane({
     }
   };
 
-  const verifiedFileCount = requestedFiles.filter(
-    (file) =>
-      (fileChecks[file.path] ?? compatibilityFrom(file.compatibility ?? "unknown"))
-        .compatibility === "compatible",
-  ).length;
-  const filesAwaitingVerification = requestedFiles.length - verifiedFileCount;
+  const busy = Boolean(busyAction) || checkingDetected;
+  const otherModels = detected.filter(
+    (model) => compatibilityFrom(model.compatibility ?? "unknown").compatibility !== "missing",
+  );
 
   return (
-    <Pane title="Models" description="Choose what Bard uses for local transcription.">
-      <Group
-        title="Bard models"
-        note="Three curated first-party choices. Quality and speed are relative to this list, not benchmark scores, and appear only where the catalogue scores them."
-      >
+    <Pane
+      title="Models"
+      description="Bard turns speech into text on this PC. Your voice is never uploaded."
+    >
+      <Group>
         {modelsLoading && models.length === 0 ? (
           <div className="loading-row" role="status">
             <LoaderCircle className="spinning" aria-hidden="true" />
-            Loading Bard models…
+            Loading models…
           </div>
         ) : modelsError && models.length === 0 ? (
           <div className="error-empty" role="alert">
             <AlertCircle aria-hidden="true" />
             <div>
-              <strong>Bard models could not be loaded.</strong>
+              <strong>Models could not be loaded.</strong>
               <span>{modelsError}</span>
             </div>
             <Button onClick={() => void loadModels()}>Retry</Button>
           </div>
-        ) : firstParty.length === 0 ? (
-          <div className="empty-row">
-            <strong>No Bard models are available.</strong>
-            <span>Close Settings and reopen it after the catalogue finishes loading.</span>
-          </div>
         ) : (
-          firstParty.map((model) => {
-            const active = state.modelId === model.id;
-            const downloading = progress?.id === model.id;
-            const error = actionErrors[model.id];
-            const licence = model.license ?? model.source?.license?.name;
-            return (
-              <article key={model.id} className={`model${active ? " active" : ""}`}>
-                <div className="model-top">
-                  <div className="model-id">
-                    <div className="model-title-line">
-                      <span className="model-name">{model.name}</span>
-                      {model.roleLabel ? (
-                        <span className="role-label">{model.roleLabel}</span>
-                      ) : null}
-                    </div>
-                    <div className="model-badges">
-                      <Tag
-                        tone="accent"
-                        title={model.hostName ?? model.host?.repository ?? "Hosted by Bard"}
-                      >
-                        <Cloud aria-hidden="true" />
-                        Hosted
-                      </Tag>
-                      {active ? <Tag tone="success">Active</Tag> : null}
-                      {model.downloaded ? <Tag tone="success">Installed</Tag> : null}
-                    </div>
-                    <p className="model-desc">{model.description}</p>
-                    <div className="model-fields">
-                      <span>{modelSize(model)}</span>
-                      <span>
-                        {model.languages === 1
-                          ? "English"
-                          : model.languages > 1
-                            ? `${model.languages} languages`
-                            : "Language coverage not supplied"}
+          <div className="model-list" role="radiogroup" aria-label="Transcription model">
+            {firstParty.map((model) => {
+              const active = state.modelId === model.id;
+              const downloading = progress?.id === model.id ? progress : null;
+              const error = actionErrors[model.id];
+              const facts = [
+                model.languages === 1 ? "English" : `${model.languages} languages`,
+                modelSize(model),
+              ].join(" · ");
+              const choose = () => {
+                if (active || busy || downloading) return;
+                if (model.downloaded) void useFirstParty(model);
+              };
+              return (
+                <div key={model.id} className={`model-row${active ? " active" : ""}`}>
+                  <div
+                    className="model-choice"
+                    role="radio"
+                    aria-checked={active}
+                    aria-disabled={!model.downloaded || busy}
+                    tabIndex={active ? 0 : -1}
+                    onClick={choose}
+                    onKeyDown={(event) => {
+                      if (event.key === " " || event.key === "Enter") {
+                        event.preventDefault();
+                        choose();
+                      }
+                    }}
+                  >
+                    <span className="model-radio" aria-hidden="true">
+                      {active ? <Check strokeWidth={3} /> : null}
+                    </span>
+                    <span className="model-text">
+                      <span className="model-line">
+                        <span className="model-name">{model.name}</span>
                       </span>
-                      {model.parameters ? <span>{model.parameters} parameters</span> : null}
-                      {model.quantization ?? model.quant ? (
-                        <span>{model.quantization ?? model.quant}</span>
-                      ) : null}
-                      {licence ? (
-                        <a
-                          className="model-license-link"
-                          href={model.source?.license?.url ?? model.source?.url ?? model.host?.url ?? "https://miiso.dev/terms"}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="Open model licence and source details"
-                        >
-                          <span>{licence}</span>
-                          <ExternalLink size={11} aria-hidden="true" />
-                        </a>
-                      ) : null}
-                    </div>
-                    <div
-                      className="model-source ellipsis"
-                      title={model.source?.url ?? model.host?.url}
-                    >
-                      {model.host?.repository ?? "Bard release"}
-                      {model.source?.repo ? ` · ${model.source.repo}` : ""}
-                    </div>
+                      <span className="model-desc">{model.description}</span>
+                      <span className="model-facts">{facts}</span>
+                    </span>
                   </div>
-                  {/*
-                    Each meter is gated on its own score. Gating the pair on
-                    `accuracy > 0 || speed > 0` drew a 0% bar captioned
-                    "Relative quality: Low" for a model the catalogue never
-                    scored, which is a claim, not a gap.
-                  */}
-                  {model.accuracy > 0 || model.speed > 0 ? (
-                    <div className="model-meters" aria-label="Relative model characteristics">
-                      {model.accuracy > 0 ? <Meter label="Quality" value={model.accuracy} /> : null}
-                      {model.speed > 0 ? <Meter label="Speed" value={model.speed} /> : null}
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="model-meta-row">
-                  <div className="model-actions" aria-label={`Actions for ${model.name}`}>
-                    {!model.downloaded ? (
+                  <div className="model-trailing">
+                    {downloading ? (
+                      <InlineProgress
+                        progress={downloading}
+                        onCancel={() =>
+                          void api
+                            .downloadModelCancel()
+                            .catch((failure) => setActionError(model.id, errorText(failure)))
+                        }
+                        onRetry={() => void downloadFirstParty(model, true)}
+                      />
+                    ) : !model.downloaded ? (
+                      <Button
+                        onClick={() => void downloadFirstParty(model, true)}
+                        disabled={busy || Boolean(activeProgress)}
+                        ariaBusy={busyAction === `${model.id}:use`}
+                        ariaLabel={`Download ${model.name}, ${modelSize(model)}`}
+                      >
+                        <Download aria-hidden="true" />
+                        Get
+                      </Button>
+                    ) : active ? (
+                      <span className="model-state">In use</span>
+                    ) : (
                       <>
+                        <button
+                          type="button"
+                          className="icon-btn model-remove"
+                          aria-label={`Remove ${model.name}`}
+                          title="Remove"
+                          disabled={busy}
+                          onClick={() => setRemoveConfirmId(model.id)}
+                        >
+                          <Trash2 aria-hidden="true" />
+                        </button>
                         <Button
-                          variant="primary"
-                          onClick={() => void downloadFirstParty(model, true)}
-                          disabled={Boolean(busyAction) || checkingDetected || Boolean(activeProgress)}
+                          onClick={() => void useFirstParty(model)}
+                          disabled={busy}
                           ariaBusy={busyAction === `${model.id}:use`}
                         >
-                          <Download aria-hidden="true" />
-                          Download &amp; use
-                        </Button>
-                        <Button
-                          onClick={() => void downloadFirstParty(model, false)}
-                          disabled={Boolean(busyAction) || checkingDetected || Boolean(activeProgress)}
-                          ariaBusy={busyAction === `${model.id}:only`}
-                        >
-                          Download only
+                          Use
                         </Button>
                       </>
-                    ) : !active ? (
-                      <Button
-                        variant="primary"
-                        onClick={() => void useFirstParty(model)}
-                        disabled={Boolean(busyAction) || checkingDetected}
-                        ariaBusy={busyAction === `${model.id}:use`}
-                      >
-                        <Check aria-hidden="true" />
-                        Use
-                      </Button>
-                    ) : null}
-                    {model.downloaded ? (
-                      <Button
-                        variant="danger"
-                        onClick={() => setRemoveConfirmId(model.id)}
-                        disabled={active || Boolean(busyAction) || checkingDetected}
-                        ariaLabel={`Remove ${model.name} from Bard`}
-                        title={active ? "Choose another model before removing this one" : "Remove the downloaded model from Bard"}
-                        ariaBusy={busyAction === `${model.id}:remove`}
-                      >
-                        <Trash2 aria-hidden="true" />
-                        Remove
-                      </Button>
-                    ) : null}
+                    )}
                   </div>
+                  {removeConfirmId === model.id ? (
+                    <InlineConfirm
+                      onCancel={() => setRemoveConfirmId(null)}
+                      onConfirm={() => void removeFirstParty(model)}
+                      confirming={busyAction === `${model.id}:remove`}
+                      confirmLabel="Remove"
+                    >
+                      Remove {model.name}? You can download it again at any time.
+                    </InlineConfirm>
+                  ) : null}
+                  {error ? <div className="inline-error" role="alert">{error}</div> : null}
                 </div>
-
-                {removeConfirmId === model.id ? (
-                  <InlineConfirm
-                    onCancel={() => setRemoveConfirmId(null)}
-                    onConfirm={() => void removeFirstParty(model)}
-                    confirming={busyAction === `${model.id}:remove`}
-                    confirmLabel="Remove"
-                  >
-                    Remove {model.name} from Bard?
-                  </InlineConfirm>
-                ) : null}
-                {downloading ? (
-                  <ProgressDetails
-                    progress={progress}
-                    onCancel={() => void api.downloadModelCancel().catch((error) => setActionError(model.id, errorText(error)))}
-                    onRetry={() => void downloadFirstParty(model, !model.downloaded)}
-                  />
-                ) : null}
-                {error ? <div className="inline-error" role="alert">{error}</div> : null}
-              </article>
-            );
-          })
+              );
+            })}
+          </div>
         )}
       </Group>
 
-      <Group
-        title="On this computer"
-        note="Models found in shared local folders. Bard can register and use them without copying or deleting the source file."
-      >
-        <div className="group-toolbar">
-          <span>Scan known local model folders without uploading their contents.</span>
-          <Button onClick={() => void loadDetectedModels()} disabled={detectedLoading} ariaBusy={detectedLoading}>
-            <RefreshCw aria-hidden="true" />
-            Rescan
-          </Button>
-        </div>
-        {detectedLoading && detected.length === 0 ? (
-          <div className="loading-row" role="status">
-            <LoaderCircle className="spinning" aria-hidden="true" />
-            Checking local models…
-          </div>
-        ) : detectedError && detected.length === 0 ? (
-          <div className="error-empty" role="alert">
-            <AlertCircle aria-hidden="true" />
-            <div>
-              <strong>Local models could not be scanned.</strong>
-              <span>{detectedError}</span>
-            </div>
-            <Button onClick={() => void loadDetectedModels()}>Retry</Button>
-          </div>
-        ) : detected.length === 0 ? (
-          <div className="empty-row">
-            <HardDrive aria-hidden="true" />
-            <div>
-              <strong>No local models detected.</strong>
-              <span>Use Advanced model import to inspect a specific Hugging Face repository.</span>
-            </div>
-          </div>
-        ) : (
-          detected.map((model) => {
+      {otherModels.length > 0 ? (
+        <Group
+          title="Found on this PC"
+          note="Models other apps have downloaded. Bard uses them in place and never deletes them."
+        >
+          {otherModels.map((model) => {
             const key = detectedKey(model);
             const compatibility = compatibilityFrom(model.compatibility ?? "unknown");
             const active = state.modelId === model.id;
             const error = actionErrors[`detected:${key}`];
             return (
-              <div key={key} className={`detected-model${active ? " active" : ""}`}>
-                <div className="detected-main">
-                  <div className="detected-title">
-                    <span className="detected-name">{model.name ?? model.file}</span>
-                    <Tag
-                      tone={
-                        compatibility.compatibility === "compatible"
-                          ? "success"
-                          : compatibility.compatibility === "incompatible" ||
-                              compatibility.compatibility === "missing"
-                            ? "danger"
-                            : "default"
-                      }
-                    >
-                      {compatibility.compatibility === "checking" ? (
-                        <LoaderCircle className="spinning" aria-hidden="true" />
-                      ) : compatibility.compatibility === "compatible" ? (
-                        <CheckCircle2 aria-hidden="true" />
-                      ) : null}
-                      {compatibility.compatibility[0].toUpperCase() + compatibility.compatibility.slice(1)}
-                    </Tag>
-                    {active ? <Tag tone="success">Active</Tag> : null}
-                  </div>
-                  <div className="detected-source ellipsis" title={model.localPath}>{model.repo} · {model.file}</div>
-                  <div className="detected-meta">
-                    {formatBytes(model.size)}
-                    {model.parameters ? ` · ${model.parameters} parameters` : ""}
-                    {model.quantization ?? model.quant ? ` · ${model.quantization ?? model.quant}` : ""}
-                    {model.sourceRevision ? ` · ${model.sourceRevision.slice(0, 12)}` : ""}
-                  </div>
-                  {compatibility.message ? (
-                    <div className="detected-message">{compatibility.message}</div>
-                  ) : null}
-                </div>
-                <div className="model-actions" aria-label={`Actions for ${model.file}`}>
-                  {compatibility.compatibility === "missing" ? (
-                     <Tag tone="danger">File missing</Tag>
-                   ) : compatibility.compatibility !== "compatible" ? (
+              <div key={key} className={`model-row compact${active ? " active" : ""}`}>
+                <span className="model-text">
+                  <span className="model-name ellipsis" title={model.localPath}>
+                    {model.name ?? model.file}
+                  </span>
+                  <span className="model-facts">
+                    {[
+                      formatBytes(model.size),
+                      compatibility.compatibility === "checking"
+                        ? "Checking…"
+                        : compatibility.compatibility === "incompatible"
+                          ? "Not supported"
+                          : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </span>
+                <div className="model-trailing">
+                  {active ? (
+                    <span className="model-state">In use</span>
+                  ) : compatibility.compatibility === "compatible" ? (
                     <Button
-                      onClick={() => void checkDetectedModel(model)}
-                      disabled={checkingDetected || Boolean(busyAction)}
-                      ariaBusy={compatibility.compatibility === "checking"}
-                    >
-                      {compatibility.compatibility === "checking" ? (
-                        <LoaderCircle className="spinning" aria-hidden="true" />
-                      ) : (
-                        <ShieldCheck aria-hidden="true" />
-                      )}
-                      {compatibility.compatibility === "checking" ? "Checking" : "Check again"}
-                    </Button>
-                  ) : !active ? (
-                    <Button
-                      variant="primary"
                       onClick={() => void activateDetected(model)}
-                      disabled={Boolean(busyAction) || checkingDetected}
+                      disabled={busy}
                       ariaBusy={busyAction === `detected-use:${key}`}
                     >
-                      <Check aria-hidden="true" />
                       Use
                     </Button>
+                  ) : compatibility.compatibility !== "checking" &&
+                    compatibility.compatibility !== "incompatible" ? (
+                    <Button onClick={() => void checkDetectedModel(model)} disabled={busy}>
+                      Check
+                    </Button>
                   ) : null}
-                  <Button
-                    onClick={() => model.registered && void forgetDetected(model)}
-                    disabled={active || !model.registered || Boolean(busyAction) || checkingDetected}
-                    ariaLabel={`${model.owned ? "Remove" : "Forget"} ${model.file}`}
-                    title={
-                      model.owned
-                        ? "Remove Bard's installed copy"
-                        : "Remove Bard's reference; the external file is not deleted"
-                    }
-                    ariaBusy={busyAction === `detected-forget:${key}`}
-                  >
-                    <Trash2 aria-hidden="true" />
-                    {model.owned ? "Remove" : "Forget"}
-                  </Button>
+                  {model.registered && !active ? (
+                    <button
+                      type="button"
+                      className="icon-btn model-remove"
+                      aria-label={`${model.owned ? "Remove" : "Forget"} ${model.file}`}
+                      title={model.owned ? "Remove" : "Forget"}
+                      disabled={busy}
+                      onClick={() => void forgetDetected(model)}
+                    >
+                      <X aria-hidden="true" />
+                    </button>
+                  ) : null}
                 </div>
                 {error ? <div className="inline-error" role="alert">{error}</div> : null}
               </div>
             );
-          })
-        )}
-        <Note>Forget only removes Bard's reference to a local model. Bard never deletes a file from an external cache or folder; Remove applies only to copies Bard owns.</Note>
-      </Group>
+          })}
+        </Group>
+      ) : detectedError ? (
+        <Note tone="danger">Local models could not be scanned: {detectedError}</Note>
+      ) : null}
 
       <details className="model-disclosure">
         <summary>
-          <span className="disclosure-leading">
-            <span className="disclosure-icon"><HardDrive aria-hidden="true" /></span>
-            <span>
-              <strong>Advanced model import</strong>
-              <small>Inspect a Hugging Face repository before Bard installs anything.</small>
-            </span>
+          <span>
+            <strong>Add a model from Hugging Face</strong>
+            <small>For people who know which GGUF file they want.</small>
           </span>
-          <span className="disclosure-trailing">Optional</span>
         </summary>
         <div className="disclosure-body">
-          <p className="import-intro">
-            Paste a repository ID, repository URL, or resolve URL. Bard checks the file
-            list, source, size, and checksum before download, then verifies that the engine
-            can load the exact file before activating it.
-          </p>
           <div className="repo-form">
             <TextField
               id="hf-model-source"
-              label="Hugging Face repository or resolve URL"
-              showLabel
+              label="Hugging Face repository or file URL"
               value={repoInput}
-              placeholder="owner/repository or huggingface.co/owner/repository/resolve/main/model.gguf"
+              placeholder="owner/repository"
               autoComplete="off"
               spellCheck={false}
               onChange={(next) => {
@@ -947,59 +765,28 @@ export default function ModelsPane({
               onEnter={() => void scanRepository()}
             />
             <Button
-              variant="primary"
               onClick={() => void scanRepository()}
               disabled={!repoInput.trim() || scanning || Boolean(activeProgress)}
               ariaBusy={scanning}
             >
-              {scanning ? (
-                <LoaderCircle className="spinning" aria-hidden="true" />
-              ) : (
-                <ShieldCheck aria-hidden="true" />
-              )}
-              {scanning ? "Checking…" : "Check repository"}
+              {scanning ? "Looking…" : "Look up"}
             </Button>
           </div>
+          <p className="import-intro">
+            Bard checks each file's size and checksum before downloading, and makes sure it
+            loads before switching to it.
+          </p>
 
           {scanError ? <Note tone="danger">{scanError}</Note> : null}
 
           {files ? (
             <div className="repo-results" aria-live="polite">
-              <div className="repo-results-head">
-                <div>
-                  <strong>
-                    {filesAwaitingVerification > 0
-                      ? `${requestedFiles.length} model ${requestedFiles.length === 1 ? "file" : "files"} to verify`
-                      : `${verifiedFileCount} compatible ${verifiedFileCount === 1 ? "file" : "files"}`}
-                  </strong>
-                  <span>{scannedInput?.repo}</span>
-                </div>
-                <Button
-                  onClick={() => void scanRepository()}
-                  disabled={scanning || Boolean(activeProgress)}
-                  ariaBusy={scanning}
-                >
-                  <RefreshCw aria-hidden="true" />
-                  Rescan
-                </Button>
-              </div>
-
               {requestedFiles.length === 0 ? (
-                <div className="empty-row">
-                  <AlertCircle aria-hidden="true" />
-                  <div>
-                    <strong>
-                      {scannedInput?.requestedFile
-                        ? "The linked file is not available."
-                        : "No compatible model files found."}
-                    </strong>
-                    <span>
-                      {scannedInput?.requestedFile
-                        ? "The resolve URL may be stale, or its file may not be a supported model."
-                        : "Choose a repository containing a compatible GGUF model file."}
-                    </span>
-                  </div>
-                </div>
+                <Note>
+                  {scannedInput?.requestedFile
+                    ? "That file is not in the repository any more."
+                    : "No supported model files in that repository."}
+                </Note>
               ) : (
                 requestedFiles.map((file) => {
                   const check = fileChecks[file.path] ?? compatibilityFrom(file.compatibility ?? "unknown");
@@ -1007,88 +794,52 @@ export default function ModelsPane({
                   const installing = busyAction === `install:${file.path}`;
                   const error = installErrors[file.path];
                   const metadataReady = hasInstallMetadata(file);
-                  const sourceRepo = file.sourceRepo ?? scannedInput?.repo ?? "Hugging Face";
-                  const revision = file.sourceRevision ?? "main";
+                  const installed = installedFile === file.path;
                   return (
-                    <div key={file.path} className="hf-file">
-                      <div className="hf-file-main">
-                        <div className="hf-file-title">
-                          <span className="hf-file-name ellipsis" title={file.path}>{file.path}</span>
-                          {installedFile === file.path ? <Tag tone="success">Installed</Tag> : null}
-                        </div>
-                        <div className="hf-file-meta">
-                          <span>{formatBytes(file.size)}</span>
-                          {file.quant ? <span>{file.quant}</span> : null}
-                          <span title={file.sha256 || "No checksum supplied"} className="checksum">
-                            {file.sha256 ? `SHA-256 ${file.sha256.slice(0, 12)}…` : "Checksum not supplied"}
-                          </span>
-                          <span className="ellipsis" title={sourceRepo}>{sourceRepo}{revision ? ` @ ${revision.slice(0, 12)}` : ""}</span>
-                        </div>
-                        {check.message ? <div className="detected-message">{check.message}</div> : null}
-                      </div>
-                      <div className="model-actions">
-                        {!metadataReady ? <Tag tone="danger">No integrity metadata</Tag> : null}
-                        {check.compatibility === "compatible" ? (
-                          fileProgress ? (
-                            <span className="file-check-state">
-                              <CheckCircle2 aria-hidden="true" />
-                              Compatible
-                            </span>
-                          ) : (
-                            <Tag tone="success">
-                              <CheckCircle2 aria-hidden="true" />
-                              Compatible
-                            </Tag>
-                          )
-                        ) : check.compatibility === "unknown" ? (
-                          <Tag>Verify on install</Tag>
-                        ) : check.compatibility === "checking" ? (
-                          <span className="file-check-state">
-                            <LoaderCircle className="spinning" aria-hidden="true" />
-                            Checking
-                          </span>
+                    <div key={file.path} className="model-row compact">
+                      <span className="model-text">
+                        <span className="model-name ellipsis" title={file.path}>{file.path}</span>
+                        <span className="model-facts">
+                          {[
+                            formatBytes(file.size),
+                            file.quant,
+                            !metadataReady ? "No checksum, so Bard will not install it" : null,
+                            check.compatibility === "incompatible" ? "Not supported" : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <div className="model-trailing">
+                        {fileProgress ? (
+                          <InlineProgress
+                            progress={fileProgress}
+                            onCancel={() =>
+                              void api
+                                .downloadModelCancel()
+                                .catch((failure) => setScanError(errorText(failure)))
+                            }
+                            onRetry={() => void installFile(file)}
+                          />
+                        ) : installed ? (
+                          <span className="model-state">In use</span>
                         ) : (
-                          <Tag tone="danger">Not supported</Tag>
+                          <Button
+                            onClick={() => void installFile(file)}
+                            disabled={
+                              !metadataReady ||
+                              (check.compatibility !== "compatible" &&
+                                check.compatibility !== "unknown") ||
+                              installing ||
+                              busy ||
+                              Boolean(activeProgress)
+                            }
+                            ariaBusy={installing}
+                          >
+                            {installing ? "Installing…" : "Get"}
+                          </Button>
                         )}
-                        <Button
-                          variant="primary"
-                          onClick={() => void installFile(file)}
-                          disabled={
-                            installedFile === file.path ||
-                            !metadataReady ||
-                            (check.compatibility !== "compatible" &&
-                              check.compatibility !== "unknown") ||
-                            installing ||
-                            Boolean(busyAction) ||
-                            Boolean(activeProgress)
-                          }
-                          ariaBusy={installing}
-                        >
-                          {installing ? (
-                            <LoaderCircle className="spinning" aria-hidden="true" />
-                          ) : installedFile === file.path ? (
-                            <CheckCircle2 aria-hidden="true" />
-                          ) : (
-                            <Download aria-hidden="true" />
-                          )}
-                          {installing
-                            ? "Installing…"
-                            : installedFile === file.path
-                              ? "Installed"
-                              : !metadataReady
-                                ? "Integrity metadata required"
-                                : check.compatibility === "unknown"
-                                ? "Verify & install"
-                                : "Install & use"}
-                        </Button>
                       </div>
-                      {fileProgress ? (
-                        <ProgressDetails
-                          progress={fileProgress}
-                          onCancel={() => void api.downloadModelCancel().catch((scanFailure) => setScanError(errorText(scanFailure)))}
-                          onRetry={() => void installFile(file)}
-                        />
-                      ) : null}
                       {error ? <div className="inline-error" role="alert">{error}</div> : null}
                     </div>
                   );
@@ -1098,6 +849,17 @@ export default function ModelsPane({
           ) : null}
         </div>
       </details>
+
+      <p className="pane-footnote">
+        Bard's models are open-weight speech models, converted and hosted by Bard.{" "}
+        <a
+          href="https://github.com/miisodev/bard-models/blob/main/NOTICE.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Licences and sources
+        </a>
+      </p>
     </Pane>
   );
 }

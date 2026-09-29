@@ -1,11 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import SettingsWindow from "./SettingsWindow";
+import { boot } from "../dev/boot";
 import "../styles.css";
 import "./settings.css";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <SettingsWindow />
-  </React.StrictMode>
-);
+void boot("settings").then(async () => {
+  const { default: SettingsWindow } = await import("./SettingsWindow");
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <SettingsWindow />
+    </React.StrictMode>,
+  );
+});

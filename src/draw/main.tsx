@@ -1,11 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import DrawWindow from "./DrawWindow";
+import { boot } from "../dev/boot";
 import "../styles.css";
 import "./draw.css";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <DrawWindow />
-  </React.StrictMode>
-);
+void boot("draw").then(async () => {
+  const { default: DrawWindow } = await import("./DrawWindow");
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <DrawWindow />
+    </React.StrictMode>,
+  );
+});

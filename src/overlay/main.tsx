@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { X } from "lucide-react";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { boot } from "../dev/boot";
 import { useTheme } from "../useTheme";
 import "../styles.css";
 
@@ -116,8 +117,10 @@ function Overlay() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <Overlay />
-  </StrictMode>
+void boot("overlay").then(() =>
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <Overlay />
+    </StrictMode>,
+  ),
 );

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, Eye, EyeOff, KeyRound, LoaderCircle, RefreshCw } from "lucide-react";
+import { ExternalLink, Eye, EyeOff, LoaderCircle } from "lucide-react";
 import { api } from "../store";
 import { InlineConfirm } from "../settings/ui";
 import type { LicenseStatus } from "../types";
@@ -32,7 +32,7 @@ function terms(status: LicenseStatus): string[] {
   if (typeof status.activationCount === "number") {
     const limit = status.activationLimit ?? ACTIVATION_LIMIT;
     const used = Math.min(status.activationCount, limit);
-    lines.push(`Licensed · ${used} activation${used === 1 ? "" : "s"} of ${limit} used`);
+    lines.push(`Active on ${used} of ${limit} PCs`);
   }
   if (typeof status.offlineLeaseDaysLeft === "number") {
     const days = Math.max(0, Math.round(status.offlineLeaseDaysLeft));
@@ -134,7 +134,7 @@ export default function LicenseCard({
   const trial = status.state === "trial";
   const trialAvailable = status.state === "trial_available";
   const restricted = status.state === "restricted";
-  const label = active ? "Active licence" : trial ? `${daysLeft(status.trialExpiresAt)} days left in trial` : trialAvailable ? "14-day local trial" : restricted ? "Activation required" : "Licence status";
+  const label = active ? "Licensed" : trial ? `${daysLeft(status.trialExpiresAt)} days left in trial` : trialAvailable ? "14-day local trial" : restricted ? "Activation required" : "Licence status";
   // A stored key is a slot this computer may be holding, whatever state the
   // licence is in, so releasing it has to be offered wherever there is one.
   const releasable = status.keyConfigured;
@@ -143,15 +143,11 @@ export default function LicenseCard({
   return (
     <section className={`license-card${compact ? " compact" : ""}`} aria-labelledby="bard-license-title">
       <div className="license-card-head">
-        <div>
-          <p className="eyebrow">Licence</p>
-          <h2 id="bard-license-title">{label}</h2>
-        </div>
-        <KeyRound size={18} aria-hidden="true" />
+        <h2 id="bard-license-title">{label}</h2>
       </div>
       <p className="license-card-copy">
         {active
-          ? `Valid through ${dateLabel(status.expiresAt)}. Your work stays on this computer.`
+          ? `Valid until ${dateLabel(status.expiresAt)}.`
           : trial
             ? `Try Bard free for ${daysLeft(status.trialExpiresAt)} more days. No card is required.`
             : restricted
@@ -180,12 +176,11 @@ export default function LicenseCard({
 
       {active ? (
         <div className="license-card-actions">
-          <button type="button" className="btn" onClick={() => void refresh()} disabled={busy}>
-            {busy ? <LoaderCircle className="spin" size={14} aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
-            Check
+          <button type="button" className="link-button" onClick={() => void api.openLink(PURCHASE_URL)}>
+            Manage licence
           </button>
-          <button type="button" className="btn" onClick={() => void api.openLink(PURCHASE_URL)}>
-            Manage <ExternalLink size={14} aria-hidden="true" />
+          <button type="button" className="link-button" onClick={() => void refresh()} disabled={busy}>
+            {busy ? "Checking…" : "Check now"}
           </button>
           <button type="button" className="link-button" onClick={() => setConfirmRelease(true)} disabled={busy}>
             Release this PC
@@ -240,12 +235,8 @@ export default function LicenseCard({
       */}
       {!active && releasable ? (
         <div className="license-card-actions">
-          <button type="button" className="btn" onClick={() => void refresh()} disabled={busy}>
-            {busy ? <LoaderCircle className="spin" size={14} aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
-            Check
-          </button>
-          <button type="button" className="btn" onClick={() => void api.openLink(PURCHASE_URL)}>
-            Manage <ExternalLink size={14} aria-hidden="true" />
+          <button type="button" className="link-button" onClick={() => void refresh()} disabled={busy}>
+            {busy ? "Checking…" : "Check again"}
           </button>
           <button type="button" className="link-button" onClick={() => setConfirmRelease(true)} disabled={busy}>
             Release this PC

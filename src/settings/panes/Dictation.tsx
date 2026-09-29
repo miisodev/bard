@@ -1,14 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  AlertCircle,
-  CheckCircle2,
-  Eraser,
-  LoaderCircle,
-  PlugZap,
-  RotateCcw,
-  Save,
-  ShieldCheck,
-} from "lucide-react";
+import { AlertCircle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "../../store";
 import type {
   OverlayHorizontal,
@@ -18,7 +9,7 @@ import type {
   PostprocessingTestResponse,
 } from "../../types";
 import type { PaneProps } from "../SettingsWindow";
-import { Button, Group, Note, Pane, Row, Segmented, Select, Tag, TextField, Toggle } from "../ui";
+import { Button, Group, Note, Pane, Row, Segmented, Select, TextField, Toggle } from "../ui";
 
 function errorText(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -200,6 +191,9 @@ function testResponse(response: PostprocessingTestResponse, fallbackModel?: stri
   return { tone: "danger", message: "OpenRouter returned an unexpected test response." };
 }
 
+const REFINE_DESCRIPTION =
+  "Tidy finished transcripts with a language model you choose: filler words out, punctuation in.";
+
 export function PostprocessingPane(_: PaneProps) {
   const [settings, setSettings] = useState<PostprocessingSettings | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -211,6 +205,7 @@ export function PostprocessingPane(_: PaneProps) {
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<TestStatus | null>(null);
+  const [replacingKey, setReplacingKey] = useState(false);
 
   const keyConfigured = Boolean(
     settings?.keyConfigured ??
@@ -310,7 +305,8 @@ export function PostprocessingPane(_: PaneProps) {
       setEnabled(next.enabled);
       setModelId(next.modelIds?.join(",") ?? next.modelId ?? "");
       setApiKey("");
-      setStatus({ tone: "success", message: "Refine settings saved." });
+      setReplacingKey(false);
+      setStatus({ tone: "success", message: "Saved." });
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -385,7 +381,8 @@ export function PostprocessingPane(_: PaneProps) {
       setSettings(next);
       setEnabled(false);
       setApiKey("");
-      setStatus({ tone: "success", message: "API key cleared. Refine is off." });
+      setReplacingKey(false);
+      setStatus({ tone: "muted", message: "Key removed. Refine is off." });
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -394,24 +391,43 @@ export function PostprocessingPane(_: PaneProps) {
   };
 
   const controlsDisabled = loading || !settings || saving || testing || clearing;
+  const showKeyField = !keyConfigured || replacingKey;
+
+  if (loading && !settings) {
+    return (
+      <Pane title="Refine" description={REFINE_DESCRIPTION}>
+        <div className="loading-row" role="status">
+          <LoaderCircle className="spinning" aria-hidden="true" />
+          Loading…
+        </div>
+      </Pane>
+    );
+  }
+
+  if (error && !settings) {
+    return (
+      <Pane title="Refine" description={REFINE_DESCRIPTION}>
+        <div className="error-empty" role="alert">
+          <AlertCircle aria-hidden="true" />
+          <div>
+            <strong>Refine could not load.</strong>
+            <span>{error}</span>
+          </div>
+          <Button onClick={loadSettings}>
+            <RotateCcw aria-hidden="true" />
+            Retry
+          </Button>
+        </div>
+      </Pane>
+    );
+  }
 
   return (
-    <Pane
-      title="Refine"
-      description="Optional cloud cleanup of finished transcripts. Off by default."
-    >
-      <Group
-        title="OpenRouter"
-        note="Bard sends one finished transcript to the exact model ID you choose. Audio, captures, history, and unrelated items stay on this device."
-      >
+    <Pane title="Refine" description={REFINE_DESCRIPTION}>
+      <Group>
         <Row
-          label={
-            <span className="setting-label-with-tag">
-              Refine transcripts
-              <Tag tone={enabled ? "success" : "muted"}>{enabled ? "On" : "Off"}</Tag>
-            </span>
-          }
-          hint="The local transcript is used unchanged whenever this is off or a request fails."
+          label="Refine transcripts"
+          hint="Only the finished text is sent — never audio, captures or history. If a request fails, the local transcript is used."
         >
           <Toggle
             label="Refine transcripts"
@@ -424,47 +440,82 @@ export function PostprocessingPane(_: PaneProps) {
             }}
           />
         </Row>
+      </Group>
+
+      {enabled || keyConfigured || dirty ? (
+      <Group
+        title="OpenRouter"
+        note={
+          <>
+            Refine uses{" "}
+            <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer">
+              your own OpenRouter key
+            </a>
+            , so you choose the model and pay OpenRouter directly.
+          </>
+        }
+      >
         <Row
-          stacked
-          htmlFor="openrouter-api-key"
-          label="OpenRouter API key"
-          hint={
-            keyConfigured
-              ? "A key is stored in Windows Credential Manager. Enter a new key only to replace it."
-              : "Stored in Windows Credential Manager, never in Bard's database or settings state."
-          }
+          htmlFor={showKeyField ? "openrouter-api-key" : undefined}
+          label="API key"
+          stacked={showKeyField}
+          hint={showKeyField ? undefined : "Saved in Windows Credential Manager."}
         >
-          <TextField
-            id="openrouter-api-key"
-            label="OpenRouter API key"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={apiKey}
-            disabled={controlsDisabled}
-            placeholder={keyConfigured ? "Stored securely — enter a replacement" : "Enter OpenRouter API key"}
-            onChange={(next) => {
-              setApiKey(next);
-              setError(null);
-              setStatus(null);
-            }}
-            onEnter={() => void save()}
-          />
+          {showKeyField ? (
+            <TextField
+              id="openrouter-api-key"
+              label="OpenRouter API key"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={apiKey}
+              disabled={controlsDisabled}
+              placeholder="sk-or-…"
+              onChange={(next) => {
+                setApiKey(next);
+                setError(null);
+                setStatus(null);
+              }}
+              onEnter={() => void save()}
+            />
+          ) : (
+            <div className="row-buttons">
+              <Button onClick={() => setReplacingKey(true)} disabled={controlsDisabled}>
+                Replace
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => void clearKey()}
+                disabled={controlsDisabled}
+                ariaBusy={clearing}
+              >
+                Remove
+              </Button>
+            </div>
+          )}
         </Row>
         <Row
           stacked
           htmlFor="openrouter-model-id"
-          label="Model IDs"
-          hint="Use the provider-prefixed IDs shown by OpenRouter, separated by commas. Bard sends the first ID; it never substitutes a fallback."
+          label="Model"
+          hint={
+            <>
+              Any model ID from{" "}
+              <a href="https://openrouter.ai/models" target="_blank" rel="noreferrer">
+                openrouter.ai/models
+              </a>
+              .
+            </>
+          }
         >
           <TextField
             id="openrouter-model-id"
-            label="OpenRouter model IDs"
+            label="OpenRouter model ID"
             autoComplete="off"
             spellCheck={false}
             value={modelId}
             disabled={controlsDisabled}
-            placeholder="vendor/model"
+            placeholder="anthropic/claude-haiku-4.5"
             onChange={(next) => {
               setModelId(next);
               setError(null);
@@ -473,14 +524,28 @@ export function PostprocessingPane(_: PaneProps) {
             onEnter={() => void save()}
           />
         </Row>
-        <div className="postprocessing-actions">
-          {/*
-            Save appears only when there is something to save. It was the
-            primary button and permanently disabled until the pane was edited,
-            which is a loud blue control that does nothing — a dead control in
-            the most prominent position reads as a broken app, not as a
-            web form's submit button.
-          */}
+        <div className="refine-footer">
+          <div
+            className={`postprocessing-status ${error ? "danger" : status?.tone ?? "muted"}`}
+            role={error || status?.tone === "danger" ? "alert" : "status"}
+            aria-live="polite"
+          >
+            {error ?? status?.message ?? (keyConfigured && savedModelId ? "Ready." : "")}
+          </div>
+          {testing ? (
+            <Button onClick={() => void cancelTest()} ariaBusy={true}>
+              <LoaderCircle className="spinning" aria-hidden="true" />
+              Cancel
+            </Button>
+          ) : (
+            <Button
+              onClick={() => void testConnection()}
+              disabled={controlsDisabled || dirty || !keyConfigured || !savedModelId}
+              title={dirty ? "Save first" : undefined}
+            >
+              Test
+            </Button>
+          )}
           {dirty ? (
             <Button
               variant="primary"
@@ -488,90 +553,25 @@ export function PostprocessingPane(_: PaneProps) {
               disabled={controlsDisabled}
               ariaBusy={saving}
             >
-              {saving ? <LoaderCircle className="spinning" aria-hidden="true" /> : <Save aria-hidden="true" />}
-              {saving ? "Saving…" : "Save changes"}
+              {saving ? "Saving…" : "Save"}
             </Button>
           ) : null}
-          {testing ? (
-            <Button onClick={() => void cancelTest()} ariaBusy={true}>
-              <LoaderCircle className="spinning" aria-hidden="true" />
-              Cancel test
-            </Button>
-          ) : (
-            <Button
-              onClick={() => void testConnection()}
-              disabled={controlsDisabled || dirty}
-              title={dirty ? "Save or discard your changes before testing" : undefined}
-              ariaBusy={false}
-            >
-              <PlugZap aria-hidden="true" />
-              Test connection
-            </Button>
-          )}
-          <Button
-            onClick={() => void clearKey()}
-            disabled={controlsDisabled || (!keyConfigured && !apiKey)}
-            ariaBusy={clearing}
-            title="Clear the stored key and turn Refine off"
-          >
-            {clearing ? <LoaderCircle className="spinning" aria-hidden="true" /> : <Eraser aria-hidden="true" />}
-            Clear key
-          </Button>
-        </div>
-        {/* One icon for one sentence. This said the same thing twice over, with
-            a Shield beside it and a Key inside it. */}
-        <div className="postprocessing-security">
-          <ShieldCheck aria-hidden="true" />
-          <span>
-            The key is sent only when you save and is never included in app state or events.
-          </span>
         </div>
       </Group>
-
-      <Group title="Report">
-        <Row
-          label="Report a refined transcript"
-          hint="If Refine returns something wrong, harmful or inappropriate, send what you said and what came back."
-        >
-          <Button onClick={() => void api.openLink("https://miiso.dev/tools/bard#support")}>Report</Button>
-        </Row>
-      </Group>
-
-      {loading ? (
-        <div className="loading-row" role="status">
-          <LoaderCircle className="spinning" aria-hidden="true" />
-          Loading Refine settings…
-        </div>
-      ) : error && !settings ? (
-        <div className="error-empty" role="alert">
-          <AlertCircle aria-hidden="true" />
-          <div>
-            <strong>Refine settings could not be loaded.</strong>
-            <span>{error}</span>
-          </div>
-          <Button onClick={loadSettings}>
-            <RotateCcw aria-hidden="true" />
-            Retry
-          </Button>
-        </div>
       ) : null}
 
-      {error && settings ? <Note tone="danger">{error}</Note> : null}
-      {status ? (
-        <div
-          className={`postprocessing-status ${status.tone}`}
-          role={status.tone === "danger" ? "alert" : "status"}
-          aria-live="polite"
+      <p className="pane-footnote">
+        Did Refine return something wrong or inappropriate?{" "}
+        <a
+          href="https://miiso.dev/tools/bard#support"
+          onClick={(event) => {
+            event.preventDefault();
+            void api.openLink("https://miiso.dev/tools/bard#support");
+          }}
         >
-          {status.tone === "success" ? <CheckCircle2 aria-hidden="true" /> : <AlertCircle aria-hidden="true" />}
-          {status.message}
-        </div>
-      ) : null}
-
-      <Note>
-        Bard has no account, sync, or telemetry. The only thing that leaves this
-        machine is what the OpenRouter group above says it sends.
-      </Note>
+          Report it
+        </a>
+      </p>
     </Pane>
   );
 }

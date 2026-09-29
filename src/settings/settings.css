@@ -157,13 +157,7 @@
   padding: var(--sp-6) var(--sp-7);
 }
 
-.row + .row,
-.model + .model,
-.model + .row,
-.row + .model,
-.detected-model + .detected-model,
-.detected-model + .row,
-.row + .detected-model { border-top: 1px solid var(--rule); }
+.row + .row { border-top: 1px solid var(--rule); }
 
 .row.stacked {
   flex-direction: column;
@@ -226,8 +220,6 @@
   white-space: nowrap;
 }
 
-.inline-form,
-.postprocessing-actions,
 .repo-form {
   display: flex;
   gap: var(--sp-4);
@@ -244,7 +236,6 @@
   font-size: var(--fs-sm);
 }
 
-.inline-form .field,
 .repo-form .field { flex: 1; min-width: 0; }
 .repo-form .field-control { flex: 1; min-width: 0; }
 
@@ -257,8 +248,10 @@ summary:focus-visible {
   box-shadow: var(--focus-ring);
 }
 
-/* `.btn.danger` and `.segmented button:focus-visible` live in styles.css, beside
-   the primitives they modify, because the panel and the Draw window both render
+/* `.btn.danger` and `.segmented button:focus-visible` live in styles.css,
+beside
+   the primitives they modify,
+because the panel and the Draw window both render
    them and neither loads this file's siblings. */
 
 .btn svg,
@@ -266,237 +259,159 @@ summary:focus-visible {
 .loading-row svg,
 .error-empty > svg,
 .empty-row > svg,
-.file-check-state svg,
 .postprocessing-status svg,
-.postprocessing-security svg,
-.disclosure-icon svg {
+.model-trailing svg {
   width: 1em;
   height: 1em;
   flex: none;
   stroke-width: 1.8;
 }
 
-/* ---------- model manager ---------- */
+/* ---------- models ---------- */
 
-.model,
-.detected-model {
-  padding: var(--sp-7);
-  transition: background var(--t-fast) var(--ease-out);
-}
-
-.model.active,
-.detected-model.active {
-  background: var(--accent-soft);
-}
-
-.model-top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 148px;
-  align-items: start;
-  gap: var(--sp-8);
-}
-
-.model-id { min-width: 0; }
-
-.model-title-line,
-.model-badges,
-.model-meta-row,
-.model-actions,
-.model-fields,
-.detected-title,
-.repo-results-head {
+/*
+  A radio list, the way System Settings picks a voice: one row per model, the
+  one in use carries the check, and the row's own action — Get, Use, or a
+  download's progress — sits at its trailing edge. Provenance is one footnote
+  for the whole pane rather than a repository path on every row.
+*/
+.model-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: var(--sp-4) var(--sp-6);
+  padding: var(--sp-6) var(--sp-7);
 }
 
-.model-title-line {
-  flex-wrap: wrap;
-  gap: var(--sp-3) var(--sp-5);
+.model-row + .model-row { border-top: 1px solid var(--rule); }
+
+.model-choice {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-6);
+  border-radius: var(--r-sm);
+  cursor: default;
+}
+
+.model-choice[aria-disabled="false"]:not([aria-checked="true"]) { cursor: pointer; }
+.model-choice:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.model-radio {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--checkbox-size);
+  height: var(--checkbox-size);
+  margin-top: 1px;
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 0 0 1.5px var(--border-strong);
+  color: var(--text-on-accent);
+  transition: background var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
+}
+
+.model-row.active .model-radio {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.model-radio svg { width: 11px; height: 11px; }
+
+.model-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.model-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  min-width: 0;
 }
 
 .model-name {
-  font-size: var(--fs-md);
-  font-weight: var(--fw-semibold);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
   color: var(--text);
-  overflow-wrap: anywhere;
-  /* A repository id like `onnx-community/whisper-large-v3-turbo` is data a
-     person types into OpenRouter by hand. It has to be selectable. */
-  user-select: text;
-}
-
-.role-label {
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--tr-caption);
-  text-transform: uppercase;
-}
-
-.model-badges {
-  flex-wrap: wrap;
-  gap: var(--sp-3);
-  margin-top: var(--sp-4);
 }
 
 .model-desc {
-  margin: var(--sp-4) 0 0;
   font-size: var(--fs-sm);
   line-height: var(--lh-base);
   color: var(--text-2);
-  overflow-wrap: anywhere;
 }
 
-.model-source {
-  margin-top: var(--sp-2);
+.model-facts {
+  font-size: var(--fs-caption);
   color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
 }
 
-/* What the catalogue says about a model, as fields. File size, language count,
-   parameter count, quantisation and licence were all drawn as pills too, so
-   fourteen different kinds of fact were announced in the same shape. A pill is
-   for state; a field is for a value. */
-.model-fields {
-  flex-wrap: wrap;
-  gap: var(--sp-2) var(--sp-5);
-  margin-top: var(--sp-4);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-base);
+.model-row.compact .model-name {
+  font-weight: var(--fw-normal);
+  font-size: var(--fs-sm);
 }
 
-.model-fields > span { min-width: 0; }
+.model-trailing {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
 
-.model-meters {
+.model-state {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.model-remove {
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.model-row:hover .model-remove,
+.model-remove:focus-visible { opacity: 1; }
+.model-remove:hover { color: var(--danger); }
+
+.model-row > .confirm,
+.model-row > .inline-error {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+
+.inline-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  width: 188px;
+}
+
+.inline-progress .progress { flex: 1; margin: 0; }
+
+.inline-progress-copy {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
-  padding-top: var(--sp-1);
-}
-
-.meter {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-}
-
-.meter-label {
-  width: 48px;
-  text-align: right;
-}
-
-.meter-track {
-  display: block;
-  width: 72px;
-  height: 4px;
-  border-radius: var(--r-pill);
-  background: var(--border);
-  overflow: hidden;
-}
-
-.meter-fill {
-  display: block;
-  height: 100%;
-  border-radius: var(--r-pill);
-  background: var(--accent);
-}
-
-.model-meta-row {
   align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--sp-6);
-  margin-top: var(--sp-6);
-}
-
-.model-badges .tag,
-.detected-title .tag,
-.hf-file-title .tag,
-.setting-label-with-tag .tag {
-  gap: var(--sp-2);
-}
-
-.tag.accent {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-
-.tag.success {
-  background: var(--accent-soft);
-  color: var(--success);
-}
-
-.tag.danger {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.tag.muted {
-  background: var(--surface-2);
-  color: var(--text-2);
-}
-
-.model-actions {
-  flex: none;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--sp-4);
-}
-
-/* A download is a part of the model's row, not a card inside it. It used to be
-   a `--surface-2` slab with its own hairline, inside a `--surface` card, around
-   a `.progress` bar — three nested boxes to say "this one is downloading".
-   A failure is the danger-toned line below it, which is already there. */
-.model-progress {
-  margin-top: var(--sp-6);
-}
-
-.progress-copy {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--sp-6);
-  margin-bottom: var(--sp-4);
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-}
-
-.progress-measure {
-  flex: none;
+  min-width: 44px;
+  font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
-.model-progress .progress { margin: 0; }
+.inline-progress-eta { color: var(--text-3); }
 
-.progress-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: var(--sp-4);
-}
-
-.remove-confirm {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-5);
-  margin-top: var(--sp-5);
-  padding: var(--sp-4) var(--sp-5);
-  border-radius: var(--r-control);
-  background: var(--danger-soft);
-  color: var(--text);
+.inline-progress.failed {
+  width: auto;
+  color: var(--danger);
   font-size: var(--fs-sm);
 }
 
-.remove-confirm-actions {
-  display: flex;
-  flex: none;
-  gap: var(--sp-3);
-}
-
-.inline-error,
-.detected-message {
+.inline-error {
   margin-top: var(--sp-4);
   font-size: var(--fs-sm);
   line-height: var(--lh-base);
@@ -504,38 +419,76 @@ summary:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.detected-model {
+.model-disclosure {
+  margin-bottom: var(--sp-9);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--el-card);
+  overflow: hidden;
+  color: var(--text);
+}
+
+.model-disclosure summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-7);
+  gap: var(--sp-5);
+  padding: var(--sp-6) var(--sp-7);
+  cursor: pointer;
+  list-style: none;
 }
 
-.detected-main { flex: 1; min-width: 0; }
+.model-disclosure summary::-webkit-details-marker { display: none; }
 
-.detected-title {
-  flex-wrap: wrap;
-  gap: var(--sp-3) var(--sp-4);
+.model-disclosure summary::after {
+  content: "";
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg);
+  transition: transform var(--t-fast) var(--ease-out);
 }
 
-.detected-name {
-  min-width: 0;
-  font-size: var(--fs-base);
-  font-weight: var(--fw-semibold);
-  overflow-wrap: anywhere;
-}
+.model-disclosure[open] summary::after { transform: rotate(45deg); }
 
-.detected-source,
-.detected-meta {
-  margin-top: var(--sp-2);
+.model-disclosure summary strong,
+.model-disclosure summary small { display: block; }
+.model-disclosure summary strong { font-size: var(--fs-base); font-weight: var(--fw-normal); }
+.model-disclosure summary small {
+  margin-top: var(--sp-1);
   font-size: var(--fs-sm);
   color: var(--text-2);
-  overflow-wrap: anywhere;
-  /* Filesystem paths — a path a person may need to verify or report. */
-  user-select: text;
 }
 
-.detected-meta { color: var(--text-3); }
+.disclosure-body {
+  padding: var(--sp-6) var(--sp-7) var(--sp-7);
+  border-top: 1px solid var(--rule);
+}
+
+.import-intro {
+  margin: var(--sp-4) var(--sp-1) 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-base);
+  color: var(--text-3);
+}
+
+.repo-form .btn { flex: none; }
+
+.repo-results {
+  margin: var(--sp-6) calc(-1 * var(--sp-7)) calc(-1 * var(--sp-7));
+  border-top: 1px solid var(--rule);
+}
+
+.pane-footnote {
+  margin: 0 var(--sp-1);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-base);
+  color: var(--on-canvas-3);
+}
+
+.pane-footnote a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.pane-footnote a:hover { color: var(--on-canvas-2); }
 
 .loading-row,
 .empty-row,
@@ -570,202 +523,35 @@ summary:focus-visible {
   background: var(--surface-2);
 }
 
-.group-toolbar {
+.refine-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-5);
+  gap: var(--sp-4);
   padding: var(--sp-5) var(--sp-7);
-  border-bottom: 1px solid var(--rule);
-  color: var(--text-3);
-  font-size: var(--fs-sm);
-}
-
-.group-toolbar .btn { flex: none; }
-
-/* ---------- advanced import ---------- */
-
-.model-disclosure {
-  margin-bottom: var(--sp-9);
-  border-radius: var(--r-card);
-  background: var(--surface);
-  box-shadow: var(--el-card);
-  overflow: hidden;
-}
-
-.model-disclosure summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-7);
-  padding: var(--sp-7);
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-}
-
-.model-disclosure summary::-webkit-details-marker { display: none; }
-
-.disclosure-leading {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-5);
-  min-width: 0;
-}
-
-.disclosure-icon {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  flex: none;
-  border-radius: var(--r-control);
+  border-top: 1px solid var(--rule);
   background: var(--surface-2);
-  color: var(--text-2);
-}
-
-.disclosure-leading strong,
-.disclosure-leading small { display: block; }
-.disclosure-leading strong { font-size: var(--fs-base); color: var(--text); }
-.disclosure-leading small {
-  margin-top: var(--sp-1);
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-}
-
-.disclosure-trailing {
-  flex: none;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.disclosure-body {
-  padding: 0 var(--sp-7) var(--sp-7);
-  border-top: 1px solid var(--rule);
-}
-
-.import-intro {
-  margin: var(--sp-6) 0;
-  font-size: var(--fs-sm);
-  line-height: var(--lh-base);
-  color: var(--text-2);
-}
-
-.repo-form .btn { flex: none; }
-
-.repo-results {
-  margin-top: var(--sp-7);
-  border-top: 1px solid var(--rule);
-}
-
-.repo-results-head {
-  justify-content: space-between;
-  gap: var(--sp-6);
-  padding: var(--sp-6) 0;
-}
-
-.repo-results-head strong,
-.repo-results-head span { display: block; }
-.repo-results-head strong { font-size: var(--fs-sm); color: var(--text); }
-.repo-results-head span {
-  margin-top: var(--sp-1);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  overflow-wrap: anywhere;
-}
-
-.hf-file {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--sp-6);
-  padding: var(--sp-6) 0;
-  border-top: 1px solid var(--rule);
-}
-
-.hf-file-main { min-width: 0; }
-
-.hf-file-title {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  min-width: 0;
-}
-
-.hf-file-name {
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  color: var(--text);
-  user-select: text;
-}
-
-.hf-file-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2) var(--sp-5);
-  margin-top: var(--sp-3);
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-}
-
-.hf-file-meta > span { min-width: 0; }
-/* A SHA-256 a person is expected to compare against something else. */
-.hf-file-meta .checksum { font-family: var(--font-mono); user-select: text; }
-.file-check-state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  color: var(--success);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-medium);
-}
-
-.hf-file .model-progress,
-.hf-file .inline-error {
-  grid-column: 1 / -1;
-  margin-top: 0;
-}
-
-/* ---------- post-processing ---------- */
-
-.setting-label-with-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
-}
-
-.postprocessing-actions {
-  flex-wrap: wrap;
-  padding: var(--sp-6) var(--sp-7);
-  border-top: 1px solid var(--rule);
-}
-
-.postprocessing-security {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-4);
-  padding: 0 var(--sp-7) var(--sp-7);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  line-height: var(--lh-base);
-}
-
-.postprocessing-security > span {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-3);
 }
 
 .postprocessing-status {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-4);
-  margin: var(--sp-5) var(--sp-1) 0;
+  flex: 1;
+  min-width: 0;
   font-size: var(--fs-sm);
   line-height: var(--lh-base);
 }
+
+.row-buttons {
+  display: flex;
+  gap: var(--sp-3);
+}
+
+.group-note a,
+.row-hint a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.group-note a:hover,
+.row-hint a:hover { text-decoration: underline; }
 
 .postprocessing-status.success { color: var(--success); }
 .postprocessing-status.danger { color: var(--danger); }
@@ -860,14 +646,6 @@ summary:focus-visible {
 @media (max-width: 720px) {
   .settings-nav { width: 168px; }
   .pane { padding: var(--sp-8) var(--sp-7) var(--sp-10); }
-  .model-top { grid-template-columns: minmax(0, 1fr); }
-  .model-meters { flex-direction: row; flex-wrap: wrap; }
-  .model-meta-row,
-  .detected-model,
-  .hf-file { align-items: flex-start; flex-direction: column; }
-  .detected-model,
-  .hf-file { display: flex; }
-  .model-actions { justify-content: flex-start; }
   .repo-form { align-items: stretch; flex-direction: column; }
 }
 
@@ -894,3 +672,54 @@ summary:focus-visible {
 .color-well::-webkit-color-swatch-wrapper { padding: 3px; }
 .color-well::-webkit-color-swatch { border: none; border-radius: var(--r-pill); }
 .color-well:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* ---------- about ---------- */
+
+.about-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-7);
+  margin: calc(-1 * var(--sp-3)) 0 var(--sp-9);
+}
+
+.about-hero img {
+  flex: none;
+  border-radius: 14px;
+  box-shadow: var(--el-card);
+}
+
+.about-hero p { margin: 0; }
+
+.about-name {
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--on-canvas);
+}
+
+.about-line {
+  margin-top: var(--sp-1) !important;
+  font-size: var(--fs-base);
+  color: var(--on-canvas-2);
+}
+
+.about-version {
+  margin-top: var(--sp-2) !important;
+  font-size: var(--fs-sm);
+  color: var(--on-canvas-3);
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
+
+.about-links {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-7);
+  margin: 0 var(--sp-1);
+  font-size: var(--fs-sm);
+}
+
+.about-copyright {
+  margin-left: auto;
+  color: var(--on-canvas-3);
+}
