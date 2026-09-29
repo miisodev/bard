@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-paste-back"
+description = "Enables the paste_back command without any pre-configured scope."
+commands.allow = ["paste_back"]
+
+[[permission]]
+identifier = "deny-paste-back"
+description = "Denies the paste_back command without any pre-configured scope."
+commands.deny = ["paste_back"]

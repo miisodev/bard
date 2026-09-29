@@ -4,14 +4,14 @@ mod capture;
 mod catalog;
 mod cloud;
 mod commands;
-mod credential;
 mod crash;
+mod credential;
 mod db;
 mod dictation;
 mod gesture;
 mod guardian;
-mod hook;
 mod hf;
+mod hook;
 mod license;
 mod monitor;
 mod packaging;
@@ -245,6 +245,11 @@ fn main() {
                     log::warn!("startup retention pass failed for {origin}: {error}");
                 }
             }
+            match db::sweep_orphaned_images(&handle) {
+                Ok(0) => {}
+                Ok(count) => crate::crash::record_event(&format!("db:orphans-swept:{count}")),
+                Err(error) => log::warn!("orphaned image sweep failed: {error}"),
+            }
 
             monitor::start(handle.clone());
             capture::start(handle.clone());
@@ -341,6 +346,7 @@ fn main() {
             commands::delete_all_data,
             commands::copy_text,
             commands::copy_item,
+            commands::paste_back,
             commands::copy_attachment,
             commands::item_image_data,
             commands::attachment_image_data,

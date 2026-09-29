@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "delete_all_data",
     "copy_text",
     "copy_item",
+    "paste_back",
     "copy_attachment",
     "item_image_data",
     "attachment_image_data",

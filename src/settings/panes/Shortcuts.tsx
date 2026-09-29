@@ -37,8 +37,14 @@ export default function ShortcutsPane() {
       </Group>
 
       <Group title="Inside the panel">
-        <Row label="Copy" hint="Copy the selected item, or the active item.">
+        <Row label="Paste" hint="Paste the selected item into the app you opened Bard over.">
           <Keycaps keys={["Enter"]} />
+        </Row>
+        <Row label="Paste by position" hint="Paste the first to ninth item in the list.">
+          <Keycaps keys={["Ctrl", "1–9"]} />
+        </Row>
+        <Row label="Copy" hint="Copy the selected item without leaving Bard.">
+          <Keycaps keys={["Ctrl", "C"]} />
         </Row>
         <Row label="Copy as list" hint="Copy the selected items as a Markdown list.">
           <Keycaps keys={["Ctrl", "Shift", "M"]} />

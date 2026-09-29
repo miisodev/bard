@@ -43,6 +43,8 @@ export const api = {
   deleteAllData: () => invoke<void>("delete_all_data"),
   copyText: (text: string) => invoke<unknown>("copy_text", { text }),
   copyItem: (id: number) => invoke<unknown>("copy_item", { id }),
+  /** Hide the panel, refocus the app it was opened over, and paste. */
+  pasteBack: () => invoke<void>("paste_back"),
   copyAttachment: (id: number) => invoke<unknown>("copy_attachment", { id }),
   itemImageData: (id: number) => invoke<string | null>("item_image_data", { id }),
   attachmentImageData: (id: number) =>

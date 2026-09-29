@@ -904,6 +904,21 @@ pub fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
     crate::paste::set_text(&app, &text)
 }
 
+/// Put the panel away, give focus back to the app it was summoned over, and
+/// paste what the panel has just written to the clipboard. The caller writes
+/// and verifies the clipboard first (copy_text / copy_item), so a failed write
+/// never turns into pasting whatever was there before.
+#[tauri::command]
+pub fn paste_back(app: AppHandle) {
+    crate::panel::hide_now(&app);
+    std::thread::spawn(move || {
+        // hide_now queues the hide and the foreground restore on the UI
+        // thread; the chord has to land after the target window is active.
+        std::thread::sleep(std::time::Duration::from_millis(160));
+        crate::paste::send_paste(&app);
+    });
+}
+
 #[tauri::command]
 pub fn copy_item(app: AppHandle, id: i64) -> Result<(), String> {
     let items = db::list_items(&app);

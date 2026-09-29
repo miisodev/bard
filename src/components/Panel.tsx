@@ -380,6 +380,14 @@ export default function Panel({
           copySelection(state, actionSel, notify);
           return;
         }
+        if (/^[1-9]$/.test(key) && !e.shiftKey && !e.altKey) {
+          const item = visible[Number(key) - 1];
+          if (item) {
+            e.preventDefault();
+            copySelection(state, [item.id], notify, true);
+          }
+          return;
+        }
         if (key === "m" && e.shiftKey && actionSel.length > 0) {
           e.preventDefault();
           copyAsList(state, actionSel, notify);
@@ -414,10 +422,11 @@ export default function Panel({
           break;
         }
         case "Enter": {
-          // On a control, Enter is that control's own command.
+          // On a control, Enter is that control's own command. Otherwise it
+          // pastes into the app the panel was opened over; Ctrl+C only copies.
           if (!onControl && actionSel.length > 0) {
             e.preventDefault();
-            copySelection(state, actionSel, notify);
+            copySelection(state, actionSel, notify, true);
           }
           break;
         }
@@ -1009,7 +1018,7 @@ const SHORTCUT_GROUPS: { name: string; rows: { keys: string[]; what: string }[] 
       { keys: ["Left Shift", "Left Shift"], what: "Capture the selection" },
       { keys: ["Ctrl", "Ctrl"], what: "Dictate — hold, or tap twice" },
       { keys: ["Right Shift", "Right Shift"], what: "Show or hide Bard" },
-      { keys: ["Right Shift", "Right Shift", "1 / 2 / 3"], what: "Paste a timeline item" },
+      { keys: ["Right Shift", "Right Shift", "1 / 2 / 3"], what: "Paste one of the first three" },
       { keys: ["Left Alt", "Left Alt"], what: "Draw" },
       { keys: ["Right Alt", "Right Alt"], what: "Settings" },
       { keys: ["F11"], what: "Fullscreen Draw" },
@@ -1018,7 +1027,9 @@ const SHORTCUT_GROUPS: { name: string; rows: { keys: string[]; what: string }[] 
   {
     name: "Keys",
     rows: [
-      { keys: ["Enter"], what: "Copy" },
+      { keys: ["Enter"], what: "Paste into your app" },
+      { keys: ["Ctrl", "1–9"], what: "Paste that item" },
+      { keys: ["Ctrl", "C"], what: "Copy" },
       { keys: ["Ctrl", "Shift", "M"], what: "Copy as list" },
       { keys: ["Ctrl", "K"], what: "Sections" },
       { keys: ["Ctrl", "/"], what: "These shortcuts" },
@@ -1152,7 +1163,13 @@ function groupBySection(
   return out;
 }
 
-function copySelection(state: AppState, ids: number[], notify: Notify) {
+/**
+ * Write the items to the clipboard. With `paste`, then hand focus back to the
+ * app the panel was opened over and paste there — CopyCat's Return. The paste
+ * only happens after Rust has confirmed the clipboard write, so a failed write
+ * never pastes whatever was on the clipboard before.
+ */
+function copySelection(state: AppState, ids: number[], notify: Notify, paste = false) {
   if (ids.length === 0) return;
   const items = ids
     .map((id) => state.items.find((i) => i.id === id))
@@ -1173,6 +1190,7 @@ function copySelection(state: AppState, ids: number[], notify: Notify) {
     void write
       .then(() => {
         playCue("copy");
+        if (paste) return api.pasteBack();
         notify("Copied");
       })
       .catch(reportFailure);
@@ -1184,6 +1202,7 @@ function copySelection(state: AppState, ids: number[], notify: Notify) {
     )
     .then(() => {
       playCue("copy");
+      if (paste) return api.pasteBack();
       notify("Copied as list");
     })
     .catch(reportFailure);

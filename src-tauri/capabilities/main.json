@@ -29,6 +29,7 @@
     "allow-delete-all-data",
     "allow-copy-text",
     "allow-copy-item",
+    "allow-paste-back",
     "allow-copy-attachment",
     "allow-item-image-data",
     "allow-attachment-image-data",
