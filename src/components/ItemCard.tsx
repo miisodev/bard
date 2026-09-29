@@ -7,6 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { Copy } from "lucide-react";
+import { colorValue, linkParts } from "../content";
 import { renderInline } from "../markdown";
 import { api } from "../store";
 import type { Attachment, Item } from "../types";
@@ -42,27 +43,6 @@ function preview(item: Item): string {
   const text = item.content.replace(/\s+/g, " ").trim();
   if (!text) return item.kind === "image" ? "image" : "empty note";
   return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…` : text;
-}
-
-/** A card whose whole text is a CSS colour, or null. */
-function colorValue(content: string): string | null {
-  const value = content.trim();
-  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value)) return value;
-  if (/^(?:rgb|hsl|oklch)a?\([^()]{3,60}\)$/i.test(value)) return value;
-  return null;
-}
-
-/** A card that is one web address, split so the site reads first. */
-function linkParts(content: string): { host: string; rest: string } | null {
-  const value = content.trim();
-  if (!/^https?:\/\/\S+$/i.test(value)) return null;
-  try {
-    const url = new URL(value);
-    const rest = `${url.pathname === "/" ? "" : url.pathname}${url.search}${url.hash}`;
-    return { host: url.host.replace(/^www\./, ""), rest };
-  } catch {
-    return null;
-  }
 }
 
 export default function ItemCard({
