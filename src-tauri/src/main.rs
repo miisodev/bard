@@ -10,6 +10,7 @@ mod db;
 mod dictation;
 mod gesture;
 mod guardian;
+mod hook;
 mod hf;
 mod license;
 mod monitor;

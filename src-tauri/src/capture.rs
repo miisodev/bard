@@ -21,7 +21,7 @@ static SYNTHETIC_INPUT: AtomicBool = AtomicBool::new(false);
 static SYNTHETIC_DEPTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static GESTURE_RESET: AtomicBool = AtomicBool::new(false);
 
-/// True only while the raw-input hook thread is inside `rdev::listen`. The worker
+/// True only while the raw-input hook thread is inside `hook::listen`. The worker
 /// reads it to tell a hook that ended from a channel that closed for another
 /// reason, and it is the difference between a diagnosable dead input stack and
 /// an app that is simply unresponsive with nothing in any log.
@@ -196,7 +196,7 @@ fn spawn_listener(sender: mpsc::Sender<Event>) {
     thread::spawn(move || {
         let hook_sender = sender.clone();
         LISTENER_ALIVE.store(true, Ordering::Release);
-        let result = rdev::listen(move |event| {
+        let end = crate::hook::listen(move |event| {
             EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
             // Suppress only the keys Bard itself synthesises, rather than every
             // event. The blanket discard meant that for the whole duration of a
@@ -217,13 +217,7 @@ fn spawn_listener(sender: mpsc::Sender<Event>) {
             }
         });
         LISTENER_ALIVE.store(false, Ordering::Release);
-        match result {
-            Ok(()) => crate::crash::record_event("input:listener-ended"),
-            Err(error) => {
-                crate::crash::record_event("input:listener-failed");
-                log::warn!("rdev listen failed: {error:?}");
-            }
-        }
+        crate::crash::record_event(&format!("input:listener-ended:{end}"));
     });
 }
 
@@ -240,7 +234,7 @@ const LISTENER_RETRY_MAX: Duration = Duration::from_secs(60);
 /// for everything else.
 const HEALTHY_LISTENER_RUN: Duration = Duration::from_secs(30);
 
-/// Start the single raw-input coordinator. The rdev hook only forwards events
+/// Start the single raw-input coordinator. The hook only forwards events
 /// to a normal worker; all timing, state, and application actions happen off
 /// the low-level callback thread.
 ///
