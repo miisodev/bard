@@ -103,7 +103,10 @@
         "type": "embedBootstrapper"
       },
       "nsis": {
-        "installerHooks": "nsis/installer-hooks.nsh"
+        "installerHooks": "nsis/installer-hooks.nsh",
+        "customLanguageFiles": {
+          "English": "nsis/English.nsh"
+        }
       }
     }
   },
