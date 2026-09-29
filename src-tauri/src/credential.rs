@@ -130,9 +130,8 @@ fn worker() -> &'static Sender<Request> {
                 // out and the failure would look like a wedged vault rather than a
                 // bug. If `serve` panics, tell the caller the store is
                 // unavailable rather than leaving it to time out.
-                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    serve(&request)
-                }));
+                let outcome =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| serve(&request)));
                 if outcome.is_err() {
                     request.reply_unavailable();
                 }

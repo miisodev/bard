@@ -487,9 +487,8 @@ fn transcribe_inner(app: &AppHandle, samples: &[f32]) -> Result<String, String> 
         // yet — disabled dictation for the rest of the process with nothing
         // anywhere saying why. The flag now records success, and a failure is
         // reported instead of swallowed.
-        transcribe_cpp::init_backends_default().map_err(|error| {
-            format!("Bard's transcription engine could not start: {error}")
-        })?;
+        transcribe_cpp::init_backends_default()
+            .map_err(|error| format!("Bard's transcription engine could not start: {error}"))?;
         INIT_BACKENDS.store(true, Ordering::SeqCst);
     }
 

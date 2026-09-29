@@ -295,7 +295,10 @@ fn new_machine_id() -> String {
 }
 
 fn is_machine_id(candidate: &str) -> bool {
-    candidate.len() == 32 && candidate.chars().all(|character| character.is_ascii_hexdigit())
+    candidate.len() == 32
+        && candidate
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
 }
 
 /// The stable identifier this installation is bound to.
@@ -511,7 +514,9 @@ fn status_from_receipt(
         && revalidation_current;
     let default_message = match receipt.entitlement.as_str() {
         "suspended" => Some("This Bard licence is temporarily suspended.".into()),
-        "ended" => Some("This Bard licence has ended. Buy another licence to keep creating.".into()),
+        "ended" => {
+            Some("This Bard licence has ended. Buy another licence to keep creating.".into())
+        }
         _ => Some("The Bard licence has expired or is not valid on this computer.".into()),
     };
     LicenseStatus {
@@ -541,7 +546,10 @@ fn status_from_receipt(
         // `valid_until` is the end of that window, so the remaining days are the
         // difference between it and now.
         offline_lease_days_left: (receipt.valid_until > now).then(|| {
-            receipt.valid_until.saturating_sub(now).div_euclid(24 * 60 * 60)
+            receipt
+                .valid_until
+                .saturating_sub(now)
+                .div_euclid(24 * 60 * 60)
         }),
     }
 }
@@ -780,11 +788,8 @@ fn store_response_receipt(
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0)
         .clamp(0, ACTIVATION_LIMIT);
-    let _ = crate::db::set_setting_checked(
-        app,
-        ACTIVATION_COUNT_SETTING,
-        &observed.max(1).to_string(),
-    );
+    let _ =
+        crate::db::set_setting_checked(app, ACTIVATION_COUNT_SETTING, &observed.max(1).to_string());
     crate::db::set_setting_checked(app, LAST_CHECK_SETTING, &now_seconds().to_string()).map_err(
         |_| LicenseError::Service("Bard could not persist its licence check time.".into()),
     )?;
@@ -917,7 +922,7 @@ pub fn spawn_revalidation(app: tauri::AppHandle) {
             ticks += 1;
             // Every four hours, and only while a licence is actually in play.
             // An idle install writes nothing.
-            if ticks % REVALIDATION_HEARTBEAT_TICKS == 0 {
+            if ticks.is_multiple_of(REVALIDATION_HEARTBEAT_TICKS) {
                 let configured = read_key_bounded().is_some();
                 if configured {
                     crate::crash::record_event(&format!("licence:revalidation-alive:{ticks}"));

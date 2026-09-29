@@ -318,7 +318,9 @@ fn path_key(path: &Path) -> PathBuf {
 }
 
 fn compatibility_stamp(path: &Path) -> Option<PinnedFileStamp> {
-    fs::metadata(path).ok().map(|metadata| file_stamp(&metadata))
+    fs::metadata(path)
+        .ok()
+        .map(|metadata| file_stamp(&metadata))
 }
 
 /// What Bard already believes about this exact file, without opening it.
@@ -469,6 +471,7 @@ impl DetectedIndex {
     /// `canonical` is `canonicalize_for_comparison(path)`, computed once by the
     /// caller and reused for the id, the containment test and the registration
     /// lookup.
+    #[allow(clippy::too_many_arguments)]
     fn push(
         &self,
         out: &mut Vec<CachedHfModel>,
@@ -480,17 +483,15 @@ impl DetectedIndex {
         size: u64,
     ) {
         let custom = self.registered.get(canonical);
-        let id = custom
-            .map(|model| model.id.clone())
-            .unwrap_or_else(|| {
-                if repo == "Bard imports" {
-                    detected_path_id(canonical)
-                } else if path_is_within_canonical(&self.cache_root, canonical) {
-                    external_model_id(&repo, &file_name, canonical)
-                } else {
-                    custom_model_id(&repo, &file_name)
-                }
-            });
+        let id = custom.map(|model| model.id.clone()).unwrap_or_else(|| {
+            if repo == "Bard imports" {
+                detected_path_id(canonical)
+            } else if path_is_within_canonical(&self.cache_root, canonical) {
+                external_model_id(&repo, &file_name, canonical)
+            } else {
+                custom_model_id(&repo, &file_name)
+            }
+        });
         let registered = custom.is_some();
         let compatibility = custom
             .map(|model| model.compatibility)
@@ -589,10 +590,7 @@ pub fn cached_models(app: &AppHandle) -> Vec<CachedHfModel> {
                 .unwrap_or(true)
                 || !path_is_within_canonical(&index.app_root, &canonical)
             {
-                log::warn!(
-                    "model:skip-noncontained-import path={}",
-                    path.display()
-                );
+                log::warn!("model:skip-noncontained-import path={}", path.display());
                 continue;
             }
             index.push(
@@ -734,8 +732,8 @@ pub async fn list_repo_files(repo: &str) -> Result<Vec<HfFile>, String> {
         return Err(format!("Listing failed: {}", resp.status()));
     }
     let body = response_text_bounded(resp, MAX_TREE_BYTES).await?;
-    let items: Vec<TreeItem> =
-        serde_json::from_str(&body).map_err(|e| format!("Hugging Face returned an unreadable model listing: {e}"))?;
+    let items: Vec<TreeItem> = serde_json::from_str(&body)
+        .map_err(|e| format!("Hugging Face returned an unreadable model listing: {e}"))?;
     let mut files = Vec::new();
     for item in items {
         if item.kind != "file" || !is_transcript_file(&item.path) {
@@ -1840,10 +1838,8 @@ mod tests {
     fn temp_dir(tag: &str) -> PathBuf {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let unique = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "bard-hf-{tag}-{}-{unique}",
-            crate::db::now_ms()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("bard-hf-{tag}-{}-{unique}", crate::db::now_ms()));
         fs::create_dir_all(&dir).expect("scratch directory");
         dir
     }
@@ -1857,7 +1853,8 @@ mod tests {
     fn sha256_bytes(bytes: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(bytes);
-        hasher.finalize()
+        hasher
+            .finalize()
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect()
@@ -1921,10 +1918,7 @@ mod tests {
     /// once the response has been written.
     fn serve_once(response: TestResponse) -> (String, std::thread::JoinHandle<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-        let port = listener
-            .local_addr()
-            .expect("loopback address")
-            .port();
+        let port = listener.local_addr().expect("loopback address").port();
         let handle = std::thread::spawn(move || {
             let Ok((mut socket, _)) = listener.accept() else {
                 return;
@@ -2302,7 +2296,10 @@ mod tests {
             "github.com",
             "release-assets.githubusercontent.com",
         ] {
-            assert!(is_expected_download_host(host), "{host} must stay reachable");
+            assert!(
+                is_expected_download_host(host),
+                "{host} must stay reachable"
+            );
         }
         for host in [
             "huggingface.co.evil.test",
@@ -2359,7 +2356,10 @@ mod tests {
                 },
             )
         };
-        assert!(second.is_err(), "a queued probe is still waiting for the guard");
+        assert!(
+            second.is_err(),
+            "a queued probe is still waiting for the guard"
+        );
         assert!(
             !ran.load(Ordering::SeqCst),
             "a second model was opened while the first was still resident"
@@ -2370,7 +2370,9 @@ mod tests {
         finished_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("the abandoned load must finish");
-        let third = spawn_probe(PathBuf::from("third.gguf"), Duration::from_secs(30), |_| Ok(()));
+        let third = spawn_probe(PathBuf::from("third.gguf"), Duration::from_secs(30), |_| {
+            Ok(())
+        });
         assert!(
             matches!(third, Ok(Ok(()))),
             "the guard must be released once the abandoned load ends, got {third:?}"
@@ -2453,7 +2455,10 @@ mod tests {
         let part = part_path(&request.destination);
         let partial = fs::read(&part).expect("the partial must survive for a resume");
         assert_eq!(partial.len(), 8191, "every delivered byte must be kept");
-        assert!(body.starts_with(&partial), "surviving bytes must be a prefix");
+        assert!(
+            body.starts_with(&partial),
+            "surviving bytes must be a prefix"
+        );
         assert!(
             !request.destination.exists(),
             "a truncated transfer must never be promoted"
@@ -2538,10 +2543,14 @@ mod tests {
         let request = test_request(&dir, &url, &sha256_bytes(&body), body.len() as u64);
         let polls = std::cell::Cell::new(0_u32);
 
-        let error = transfer(&request, |_, _, _, _| {}, || {
-            polls.set(polls.get() + 1);
-            polls.get() > 1
-        })
+        let error = transfer(
+            &request,
+            |_, _, _, _| {},
+            || {
+                polls.set(polls.get() + 1);
+                polls.get() > 1
+            },
+        )
         .await
         .unwrap_err();
         server.join().expect("server");

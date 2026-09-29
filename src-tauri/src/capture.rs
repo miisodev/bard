@@ -494,17 +494,26 @@ struct CaptureSlot(Mutex<Option<Instant>>);
 
 impl CaptureSlot {
     fn held_for(&self, now: Instant) -> Option<Duration> {
-        let guard = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.map(|since| now.saturating_duration_since(since))
     }
 
     fn claim(&self, now: Instant) {
-        let mut guard = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = Some(now);
     }
 
     fn release(&self) {
-        let mut guard = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = None;
     }
 }

@@ -207,13 +207,11 @@ fn rotate_lifecycle_log(path: &Path) {
     }
 
     let first = numbered_lifecycle_path(parent, 0);
-    if path.exists() {
-        if fs::rename(path, &first).is_err() {
-            // Could not keep the old contents, so do not pretend the file is
-            // bounded: drop it and note that, which is the honest state.
-            let _ = fs::write(path, "[lifecycle log truncated]\n");
-            return;
-        }
+    // Could not keep the old contents, so do not pretend the file is bounded:
+    // drop it and note that, which is the honest state.
+    if path.exists() && fs::rename(path, &first).is_err() {
+        let _ = fs::write(path, "[lifecycle log truncated]\n");
+        return;
     }
 
     // Bound the set the same way crash logs are bounded.

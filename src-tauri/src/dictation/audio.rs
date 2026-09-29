@@ -306,7 +306,11 @@ fn quantise(value: f32, steps: f32) -> f32 {
 
 /// What to publish on the display channel, or nothing if it has not moved.
 /// Pure, so the throttle rule is testable.
-fn mic_level_update(previous: Option<(u32, u32)>, level: f32, probability: f32) -> Option<(f32, f32)> {
+fn mic_level_update(
+    previous: Option<(u32, u32)>,
+    level: f32,
+    probability: f32,
+) -> Option<(f32, f32)> {
     let level = quantise(level, LEVEL_STEPS);
     let probability = quantise(probability, PROBABILITY_STEPS);
     let current = (level.to_bits(), probability.to_bits());
@@ -458,9 +462,10 @@ fn build_stream(
                     }
                     reserve_block(&mut scratch.block, data.len() / channels);
                     for frame in data.chunks_exact(channels) {
-                        scratch
-                            .block
-                            .push(frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>() / channels as f32);
+                        scratch.block.push(
+                            frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
+                                / channels as f32,
+                        );
                     }
                     process_block(
                         &shared,
@@ -672,8 +677,8 @@ mod tests {
         assert!(mic_level_update(last, 0.20, 0.10).is_some());
         // And every published value is on the grid and in range.
         let (level, probability) = mic_level_update(None, 0.3333, 0.7777).expect("first");
-        assert!(level >= 0.0 && level <= 1.0);
-        assert!(probability >= 0.0 && probability <= 1.0);
+        assert!((0.0..=1.0).contains(&level));
+        assert!((0.0..=1.0).contains(&probability));
         assert!((level * LEVEL_STEPS - (level * LEVEL_STEPS).round()).abs() < 1e-4);
         assert!(
             (probability * PROBABILITY_STEPS - (probability * PROBABILITY_STEPS).round()).abs()

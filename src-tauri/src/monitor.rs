@@ -146,7 +146,7 @@ pub fn start(app: AppHandle) {
         loop {
             thread::sleep(Duration::from_millis(300));
             ticks += 1;
-            if ticks % HEARTBEAT_TICKS == 0 {
+            if ticks.is_multiple_of(HEARTBEAT_TICKS) {
                 crate::crash::record_event("monitor:alive");
             }
             let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -288,8 +288,7 @@ impl CappedBytes {
 impl std::io::Write for CappedBytes {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         if self.bytes.len() + buffer.len() > self.cap {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "encoded image exceeds the size Bard stores",
             ));
         }

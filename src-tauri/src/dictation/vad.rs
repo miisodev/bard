@@ -211,13 +211,13 @@ mod tests {
         // 37 frames is 592 ms: still inside the 600 ms hangover, which is
         // observable as the silence clock not running.
         frames(&mut policy, SILENT, HANGOVER_FRAMES - 1);
-        assert_eq!(policy.silence_ms(), 0, "the pause must not release the hangover");
-        policy.feed(SILENT);
         assert_eq!(
             policy.silence_ms(),
-            FRAME_MS,
-            "38 frames is the release"
+            0,
+            "the pause must not release the hangover"
         );
+        policy.feed(SILENT);
+        assert_eq!(policy.silence_ms(), FRAME_MS, "38 frames is the release");
     }
 
     #[test]

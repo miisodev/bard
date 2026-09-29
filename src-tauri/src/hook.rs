@@ -89,8 +89,14 @@ pub fn mouse_event(message: u32, mouse_data: u32) -> Option<EventType> {
         WM_MBUTTONUP => Some(EventType::ButtonRelease(Button::Middle)),
         WM_XBUTTONDOWN => Some(EventType::ButtonPress(x_button())),
         WM_XBUTTONUP => Some(EventType::ButtonRelease(x_button())),
-        WM_MOUSEWHEEL => Some(EventType::Wheel { delta_x: 0, delta_y: 1 }),
-        WM_MOUSEHWHEEL => Some(EventType::Wheel { delta_x: 1, delta_y: 0 }),
+        WM_MOUSEWHEEL => Some(EventType::Wheel {
+            delta_x: 0,
+            delta_y: 1,
+        }),
+        WM_MOUSEHWHEEL => Some(EventType::Wheel {
+            delta_x: 1,
+            delta_y: 0,
+        }),
         _ => None,
     }
 }
@@ -164,11 +170,13 @@ mod native {
         fn GetLastError() -> u32;
     }
 
+    type Callback = Box<dyn FnMut(Event)>;
+
     thread_local! {
         /// The callback for the hooks installed on this thread. Low-level hooks
         /// are called on the thread that installed them, from inside its message
         /// loop, so a thread-local is both sufficient and race-free.
-        static CALLBACK: RefCell<Option<Box<dyn FnMut(Event)>>> = RefCell::new(None);
+        static CALLBACK: RefCell<Option<Callback>> = const { RefCell::new(None) };
     }
 
     fn deliver(event_type: EventType) {
@@ -178,7 +186,11 @@ mod native {
             // than a panic inside a system callback.
             if let Ok(mut slot) = slot.try_borrow_mut() {
                 if let Some(callback) = slot.as_mut() {
-                    callback(Event { time: SystemTime::now(), name: None, event_type });
+                    callback(Event {
+                        time: SystemTime::now(),
+                        name: None,
+                        event_type,
+                    });
                 }
             }
         });

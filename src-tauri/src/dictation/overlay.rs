@@ -664,7 +664,9 @@ mod tests {
         assert!(!holds_clicks(HIDDEN, LISTENING, 0));
         // And the click hold always ends sooner than the take ceiling, so a
         // wedged take never becomes a wedged desktop.
-        assert!(crate::dictation::TAKE_DEADLINE_FLOOR > Duration::from_millis(WORKING_HOLD_LIMIT_MS));
+        assert!(
+            crate::dictation::TAKE_DEADLINE_FLOOR > Duration::from_millis(WORKING_HOLD_LIMIT_MS)
+        );
     }
 
     #[test]

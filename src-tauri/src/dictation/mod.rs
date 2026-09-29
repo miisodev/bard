@@ -479,8 +479,13 @@ pub fn stop(app: &AppHandle) {
                 crate::monitor::note_own_text(&text);
                 match delivery(panel_focused) {
                     Delivery::Timeline => {
-                        let item_id =
-                            crate::db::insert_item_with_origin(&app, &text, "text", None, "dictation");
+                        let item_id = crate::db::insert_item_with_origin(
+                            &app,
+                            &text,
+                            "text",
+                            None,
+                            "dictation",
+                        );
                         if item_id == crate::db::INSERT_FAILED {
                             // The words are on the clipboard either way, so nothing
                             // is lost — but announcing `dictation-panel` for a row
@@ -716,16 +721,26 @@ mod tests {
         ("  東京  ", "東京 "),
         // Mixed scripts, which is ordinary dictation in a bilingual dictation app.
         ("hello 東京 ok", "hello 東京 ok "),
-        ("commit 1234567890abcdef 東京", "commit 1234567890abcdef 東京 "),
+        (
+            "commit 1234567890abcdef 東京",
+            "commit 1234567890abcdef 東京 ",
+        ),
         ("don't", "don't "),
         ("\"quoted\"", "\"quoted\" "),
-        ("version 1.0.0 build 20260926", "version 1.0.0 build 20260926 "),
+        (
+            "version 1.0.0 build 20260926",
+            "version 1.0.0 build 20260926 ",
+        ),
     ];
 
     #[test]
     fn clean_text_preserves_every_character_it_was_given() {
         for (input, expected) in TEXT_CASES {
-            assert_eq!(&clean_text((*input).to_string()), expected, "input {input:?}");
+            assert_eq!(
+                &clean_text((*input).to_string()),
+                expected,
+                "input {input:?}"
+            );
         }
     }
 
@@ -760,7 +775,11 @@ mod tests {
     fn a_stale_release_cannot_stop_a_take_it_does_not_own() {
         // The headline property. A raw key release from an earlier gesture, or
         // from a gesture that never owned anything, must reach nothing.
-        for state in [DictState::Idle, DictState::Recording, DictState::Transcribing] {
+        for state in [
+            DictState::Idle,
+            DictState::Recording,
+            DictState::Transcribing,
+        ] {
             for owner in [None, Some(1_u64), Some(7)] {
                 for held in [
                     Duration::ZERO,
@@ -817,12 +836,7 @@ mod tests {
         // Disowning is what a short tap does. The owner is now None, so the
         // same gesture's release is inert, and only a fresh press ends it.
         let mut owner = Some(1_u64);
-        let release = gesture_release_outcome(
-            DictState::Recording,
-            owner,
-            1,
-            Duration::ZERO,
-        );
+        let release = gesture_release_outcome(DictState::Recording, owner, 1, Duration::ZERO);
         assert_eq!(release, GestureOutcome::Disown);
         owner = None;
         assert_eq!(
@@ -837,7 +851,10 @@ mod tests {
 
     #[test]
     fn a_press_starts_from_idle_and_stops_from_recording() {
-        assert_eq!(gesture_press_outcome(DictState::Idle), GestureOutcome::Start);
+        assert_eq!(
+            gesture_press_outcome(DictState::Idle),
+            GestureOutcome::Start
+        );
         assert_eq!(
             gesture_press_outcome(DictState::Recording),
             GestureOutcome::Stop
@@ -872,12 +889,7 @@ mod tests {
             GestureOutcome::Ignore
         );
         assert_eq!(
-            gesture_release_outcome(
-                DictState::Transcribing,
-                Some(1),
-                1,
-                Duration::from_secs(9)
-            ),
+            gesture_release_outcome(DictState::Transcribing, Some(1), 1, Duration::from_secs(9)),
             GestureOutcome::Ignore
         );
     }
