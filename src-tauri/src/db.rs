@@ -495,11 +495,9 @@ pub fn find_or_create_section(app: &AppHandle, name: &str) -> i64 {
 /// The section every item belongs to when none has been chosen.
 fn default_section(app: &AppHandle) -> i64 {
     with_conn(app, |c| {
-        c.query_row(
-            "SELECT id FROM sections ORDER BY id LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
+        c.query_row("SELECT id FROM sections ORDER BY id LIMIT 1", [], |row| {
+            row.get(0)
+        })
         .unwrap_or(INSERT_FAILED)
     })
 }
@@ -847,6 +845,92 @@ pub fn cleanup_origin(app: &AppHandle, origin: &str) -> Result<(), String> {
     delete_items_with_files(app, &ids)
 }
 
+/// A file written less than this long ago is never swept: a capture writes its
+/// image before the row that references it, and the sweep must not race that.
+const ORPHAN_GRACE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// The files under `images\` that no item and no attachment references, and
+/// that are older than the grace period. Files are matched by name, not path,
+/// case-insensitively: every name is a unique timestamp, and a row written
+/// before the data folder moved still names the same file.
+fn orphaned_images(
+    files: &[(std::path::PathBuf, std::time::SystemTime)],
+    referenced: &std::collections::HashSet<String>,
+    now: std::time::SystemTime,
+) -> Vec<std::path::PathBuf> {
+    files
+        .iter()
+        .filter(|(path, modified)| {
+            let old_enough = now
+                .duration_since(*modified)
+                .map(|age| age >= ORPHAN_GRACE)
+                .unwrap_or(false);
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            old_enough && !name.is_empty() && !referenced.contains(&name)
+        })
+        .map(|(path, _)| path.clone())
+        .collect()
+}
+
+/// Delete image files nothing refers to any more — left behind by a crash
+/// between writing a file and its row, or by an older build's deletion path.
+/// Returns how many went. A read failure sweeps nothing: an unreadable table
+/// would otherwise make every file look orphaned.
+pub fn sweep_orphaned_images(app: &AppHandle) -> Result<usize, String> {
+    let Some(images) = images_root() else {
+        return Ok(0);
+    };
+    let referenced = with_conn(
+        app,
+        |c| -> Result<std::collections::HashSet<String>, String> {
+            let mut paths = std::collections::HashSet::new();
+            for sql in [
+                "SELECT image_path FROM items WHERE image_path IS NOT NULL",
+                "SELECT path FROM attachments",
+            ] {
+                let mut stmt = c
+                    .prepare(sql)
+                    .map_err(|error| format!("Could not read image references: {error}"))?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(|error| format!("Could not read image references: {error}"))?;
+                for path in rows {
+                    let path =
+                        path.map_err(|error| format!("Could not read image references: {error}"))?;
+                    if let Some(name) = std::path::Path::new(&path).file_name() {
+                        paths.insert(name.to_string_lossy().to_lowercase());
+                    }
+                }
+            }
+            Ok(paths)
+        },
+    )?;
+    let Ok(entries) = std::fs::read_dir(&images) else {
+        return Ok(0);
+    };
+    let files: Vec<_> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            Some((entry.path(), meta.modified().ok()?))
+        })
+        .collect();
+    let orphans = orphaned_images(&files, &referenced, std::time::SystemTime::now());
+    let mut removed = 0;
+    for path in orphans {
+        if std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 /// The age applied to a kind of automatic item when the user has expressed no
 /// preference.
 ///
@@ -952,7 +1036,9 @@ fn owned_file_paths(connection: &Connection, ids: &[i64]) -> Result<Vec<String>,
     );
     let bound = ids.iter().chain(ids.iter());
     let rows = statement
-        .query_map(rusqlite::params_from_iter(bound), |row| row.get::<_, String>(0))
+        .query_map(rusqlite::params_from_iter(bound), |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(|error| format!("Could not read attachments: {error}"))?;
     Ok(rows.filter_map(Result::ok).collect())
 }
@@ -1372,6 +1458,26 @@ fn strip_path_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn orphan_sweep_keeps_referenced_and_fresh_files() {
+        use std::collections::HashSet;
+        use std::path::PathBuf;
+        use std::time::{Duration, SystemTime};
+        let now = SystemTime::now();
+        let old = now - Duration::from_secs(2 * 60 * 60);
+        let fresh = now - Duration::from_secs(60);
+        let files = vec![
+            (PathBuf::from(r"C:\Data\images\Kept.png"), old),
+            (PathBuf::from(r"C:\Data\images\orphan.png"), old),
+            (PathBuf::from(r"C:\Data\images\just-written.png"), fresh),
+        ];
+        let referenced: HashSet<String> = ["kept.png".to_string()].into();
+        assert_eq!(
+            orphaned_images(&files, &referenced, now),
+            vec![PathBuf::from(r"C:\Data\images\orphan.png")]
+        );
+    }
     use super::*;
 
     fn item(id: i64, favorite: i64, done: i64) -> Item {
@@ -1450,7 +1556,9 @@ mod tests {
             .expect("insert item");
         let paths = owned_file_paths(&connection, &[1, 99]).expect("paths");
         assert_eq!(paths, ["images/1.png"]);
-        assert!(owned_file_paths(&connection, &[]).expect("empty").is_empty());
+        assert!(owned_file_paths(&connection, &[])
+            .expect("empty")
+            .is_empty());
     }
 
     /// More ids than one chunk holds, because the chunking is the other half of
