@@ -2,8 +2,8 @@
 
 **Capture. Dictate. Keep.**
 
-Bard is a minimal native Windows workspace that merges two things into one
-keyboard-first panel: an advanced clipboard manager and local voice dictation
+Bard is a minimal native Windows workspace that merges three things into one
+keyboard-first panel: an advanced clipboard manager, a sketchpad and local voice dictation
 — inspired by shadcn's Copper and built as something Apple would ship for
 Windows.
 
@@ -34,7 +34,9 @@ Windows.
 | Settings | `Right Alt` `Right Alt` |
 | Draw | `Left Alt` `Left Alt` |
 | Dictate | same-key `Ctrl` `Ctrl` (hold the second press for push-to-talk) |
-| Copy item | `Enter` |
+| Paste into the app you came from | `Enter` |
+| Paste item 1–9 | `Ctrl+1` … `Ctrl+9` |
+| Copy item | `Ctrl+C` |
 | Mark done | `Space` |
 | Delete | `Del` |
 | Switch section | `Ctrl+K` |
