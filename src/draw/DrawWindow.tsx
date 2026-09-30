@@ -15,6 +15,7 @@ import {
   X,
   ChevronDown,
 } from "lucide-react";
+import ResizeHandles from "../components/ResizeHandles";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
 import { DRAW_CANVAS, drawCanvasFor, inkFor, isHexColor, type BackgroundMode } from "../appearance";
@@ -259,11 +260,25 @@ export default function DrawWindow() {
 
   const cancelText = () => setTextField(null);
 
+  const textInputRef = useRef<HTMLInputElement>(null);
+  const textFieldOpen = textField !== null;
+  useEffect(() => {
+    if (!textFieldOpen) return;
+    const id = window.setTimeout(() => textInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [textFieldOpen, textField?.left, textField?.top]);
+
   const onPointerDown = (e: React.PointerEvent) => {
     const p = at(e);
 
     // Before the capture: a field is a field, and the pointer belongs to it.
+    // The click's own default action would move focus to the canvas a moment
+    // after the field mounted, blurring it while still empty, and an empty
+    // blur closes the field: the tool looked dead. Stop that default, and
+    // focus the field once it exists.
     if (tool === "text") {
+      e.preventDefault();
+      if (textField) commitText();
       openTextField(p);
       return;
     }
@@ -484,6 +499,7 @@ export default function DrawWindow() {
 
   return (
     <div className={`draw-root companion${fullscreen ? " fullscreen" : ""}`}>
+      {fullscreen ? null : <ResizeHandles />}
       {/* The header is the handle: an ordinary window can be moved by it. */}
       <header className="draw-head" data-tauri-drag-region>
         <div className="draw-head-lead" data-tauri-drag-region>
@@ -583,9 +599,9 @@ export default function DrawWindow() {
         />
         {textField ? (
           <input
+            ref={textInputRef}
             className="draw-text-input"
             aria-label="Text on the drawing"
-            autoFocus
             value={textField.value}
             style={{
               left: textField.left,

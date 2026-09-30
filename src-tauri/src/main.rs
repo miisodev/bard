@@ -8,6 +8,7 @@ mod crash;
 mod credential;
 mod db;
 mod dictation;
+mod geometry;
 mod gesture;
 mod guardian;
 mod hf;
@@ -257,7 +258,7 @@ fn main() {
 
             tray::create(app)?;
             let main = app.get_webview_window("main").unwrap();
-            panel::position(&main);
+            geometry::restore(app.handle(), &main, panel::PANEL_WIDTH, panel::PANEL_HEIGHT);
 
             // Opening the app should open the app. It lives in the tray, but
             // launching it and being shown nothing reads as a failure to
@@ -287,19 +288,8 @@ fn main() {
                         }
                         panel::focus_panel(window.app_handle());
                     }
-                    // Docked beside the open panel, a companion is part of the
-                    // summoned composition, so leaving Bard from it dismisses
-                    // the whole thing. Opened on its own it is an ordinary
-                    // window and stays put while you work elsewhere.
-                    WindowEvent::Focused(focused) => {
-                        let docked = window
-                            .app_handle()
-                            .get_webview_window("main")
-                            .and_then(|panel| panel.is_visible().ok())
-                            .unwrap_or(false);
-                        if docked {
-                            panel::on_focus_change(window.app_handle(), *focused);
-                        }
+                    WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                        geometry::remember_soon(window.app_handle(), window.label());
                     }
                     _ => {}
                 }
@@ -320,7 +310,7 @@ fn main() {
                 // which is exactly the case that matters, a click into another
                 // application.
                 WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
-                    panel::reposition_companions(window.app_handle());
+                    geometry::remember_soon(window.app_handle(), "main");
                 }
                 WindowEvent::Focused(focused) => {
                     panel::on_focus_change(window.app_handle(), *focused);

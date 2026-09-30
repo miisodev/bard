@@ -119,6 +119,18 @@ body {
   pointer-events: none;
 }
 
+/* A strip across the top of a companion that moves the window: the
+   sidebar alone left almost nothing to grab. It sits under the close button
+   and above the content's top padding. */
+.companion-drag {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  z-index: 40;
+}
+
 .resize-handle {
   position: absolute;
   pointer-events: auto;

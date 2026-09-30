@@ -8,6 +8,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertCircle, LoaderCircle, RotateCcw, X } from "lucide-react";
+import ResizeHandles from "../components/ResizeHandles";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
 import type { AppState, ModelProgress } from "../types";
@@ -256,6 +257,9 @@ export default function SettingsWindow() {
 
   return (
     <div className="settings-root companion">
+      <ResizeHandles />
+      {/* The top strip moves the window from anywhere along it. */}
+      <div className="companion-drag" data-tauri-drag-region aria-hidden="true" />
       {close}
       {/* The sidebar is the handle: opened on its own, Settings moves by it. */}
       <nav className="settings-nav" aria-label="Settings" data-tauri-drag-region>

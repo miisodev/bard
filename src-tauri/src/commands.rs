@@ -673,8 +673,12 @@ pub fn set_microphone(app: AppHandle, name: String) {
 
 #[tauri::command]
 pub fn save_window_geometry(app: AppHandle, x: i32, y: i32, width: u32, height: u32) {
-    let geo = serde_json::json!({ "x": x, "y": y, "width": width, "height": height });
-    db::set_setting(&app, "window_geometry", &geo.to_string());
+    // The panel reports its own resize; what is stored is read back from the
+    // window itself, so a minimised or off-screen rectangle is never kept.
+    let _ = (x, y, width, height);
+    if let Some(win) = app.get_webview_window("main") {
+        crate::geometry::remember(&app, &win);
+    }
 }
 
 #[tauri::command]
@@ -730,39 +734,27 @@ pub fn open_settings(app: AppHandle) {
     show_secondary(&app, "settings", false);
 }
 
+/// Show Settings or Draw where it was last left (centred the first time).
+/// Both are ordinary windows now: movable, resizable, on the taskbar, and
+/// independent of the panel and of each other.
 pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
     use tauri::Manager;
     let Some(win) = app.get_webview_window(label) else {
         return;
     };
-    // The panel owns the composition. Only one companion is visible at a
-    // time, so opening Settings never leaves a stale Draw window behind.
-    let other = if label == "settings" {
-        "draw"
-    } else {
-        "settings"
-    };
-    if let Some(other_window) = app.get_webview_window(other) {
-        if other_window.is_visible().unwrap_or(false) {
-            crate::panel::hide_companion(app, &other_window);
-        }
-    }
     if win.is_fullscreen().unwrap_or(false) {
         let _ = win.set_fullscreen(false);
     }
     let _ = win.unminimize();
+    if !win.is_visible().unwrap_or(false) {
+        crate::geometry::restore(
+            app,
+            &win,
+            crate::panel::COMPANION_WIDTH,
+            crate::panel::COMPANION_HEIGHT,
+        );
+    }
     let _ = win.show();
-    crate::panel::place_companion(app, label);
-    // Beside the open panel a companion is part of the summoned composition:
-    // on top, off the taskbar, dismissed with the panel. Opened on its own —
-    // from the tray or a gesture — it is an ordinary window you can switch
-    // away from and come back to.
-    let docked = app
-        .get_webview_window("main")
-        .and_then(|panel| panel.is_visible().ok())
-        .unwrap_or(false);
-    let _ = win.set_always_on_top(docked);
-    let _ = win.set_skip_taskbar(docked);
     let _ = win.set_focus();
     crate::panel::companions_changed(app);
 }
@@ -819,8 +811,7 @@ fn toggle_secondary_alone(app: &AppHandle, label: &str) {
         crate::panel::hide_companion(app, &win);
         return;
     }
-    // Tray/button entry points keep the side-by-side composition. Gesture
-    // entry points intentionally open one window only.
+    // A gesture opens that one window; the panel steps aside for it.
     hide_panel_for_secondary(app);
     show_secondary(app, label, false);
 }

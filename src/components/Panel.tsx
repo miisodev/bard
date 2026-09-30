@@ -15,31 +15,11 @@ import { api } from "../store";
 import type { AppState, Attachment, Item, Section, SortOrder } from "../types";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
 import ItemCard from "./ItemCard";
+import ResizeHandles from "./ResizeHandles";
 import Menu from "./Menu";
 import SectionSwitcher from "./SectionSwitcher";
 
 const win = getCurrentWindow();
-
-type ResizeDir =
-  | "East"
-  | "North"
-  | "NorthEast"
-  | "NorthWest"
-  | "South"
-  | "SouthEast"
-  | "SouthWest"
-  | "West";
-
-const RESIZE_DIRS: [string, ResizeDir][] = [
-  ["t", "North"],
-  ["b", "South"],
-  ["l", "West"],
-  ["r", "East"],
-  ["lt", "NorthWest"],
-  ["rt", "NorthEast"],
-  ["lb", "SouthWest"],
-  ["rb", "SouthEast"],
-];
 
 /** A confirmation is a receipt. An error is the app reporting a failure. */
 export type ToastTone = "info" | "error";
@@ -286,25 +266,6 @@ export default function Panel({
     };
   }, [soundOnCapture, notify]);
 
-  useEffect(() => {
-    const unlisteners: Promise<() => void>[] = [];
-    let timer: number | undefined;
-    const save = () => {
-      void Promise.all([win.outerPosition(), win.outerSize()]).then(([p, s]) => {
-        void api.saveWindowGeometry(p.x, p.y, s.width, s.height);
-      });
-    };
-    const debounced = () => {
-      if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(save, 400);
-    };
-    unlisteners.push(win.onMoved(debounced));
-    unlisteners.push(win.onResized(debounced));
-    return () => {
-      for (const u of unlisteners) void u.then((fn) => fn());
-      if (timer) window.clearTimeout(timer);
-    };
-  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -497,28 +458,23 @@ export default function Panel({
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
-  // The composer holds focus by default, per the blueprint: "Typing — Goes to
-  // the composer". Without this the panel draws a focus ring on
-  // `.composer-row:focus-within` while nothing inside it is focused, so a
-  // keyboard-first panel looks ready and the first keystrokes go nowhere.
-  //
-  // Focus is re-asserted on every `panel-shown` rather than on mount alone: the
-  // panel window is hidden and shown, never unmounted, so mount fires once and
-  // the second and later openings would silently lose focus again.
+  // Opening the panel lands in search: type to filter, arrow down into the
+  // list, Enter to paste the top match. Re-asserted on every `panel-shown`,
+  // because the window is hidden and shown, never unmounted.
   useEffect(() => {
-    const focusComposer = () => {
-      const composer = composerRef.current;
-      if (!composer || composer.disabled) return;
-      // The window is shown and focused by the time this arrives, but WebView2
-      // can still report the webview as unfocused for a tick, and `focus()` is
-      // then a no-op.
-      window.setTimeout(() => composer.focus(), 0);
+    const focusSearch = () => {
+      // WebView2 can report the webview unfocused for a tick after the native
+      // window takes focus, and `focus()` is a no-op until it catches up.
+      window.setTimeout(() => {
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }, 0);
     };
 
-    focusComposer();
+    focusSearch();
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    void listen("panel-shown", focusComposer).then((off) => {
+    void listen("panel-shown", focusSearch).then((off) => {
       if (cancelled) off();
       else unlisten = off;
     });
@@ -589,12 +545,6 @@ export default function Panel({
     const t = e.target as HTMLElement;
     if (t.closest("button, input, textarea")) return;
     void win.startDragging();
-  };
-
-  const onResizeStart = (dir: ResizeDir) => (e: ReactMouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    void win.startResizeDragging(dir);
   };
 
   const submitComposer = () => {
@@ -697,7 +647,22 @@ export default function Panel({
             className="search"
             placeholder="Search"
             value={query}
+            aria-label="Search"
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              const first = visible[0];
+              if (!first) return;
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSelectedIds(new Set([first.id]));
+                setAnchorId(first.id);
+                markActive(first.id);
+                focusCard(first.id);
+              } else if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                copySelection(state, [first.id], notify, true);
+              }
+            }}
           />
         </div>
         <div className="header-actions" role="group" aria-label="Bard tools">
@@ -737,11 +702,7 @@ export default function Panel({
         </div>
       </header>
 
-      <div className="resize-layer">
-        {RESIZE_DIRS.map(([cls, dir]) => (
-          <div key={cls} className={`resize-handle h-${cls}`} onMouseDown={onResizeStart(dir)} />
-        ))}
-      </div>
+      <ResizeHandles />
 
       {/* The listbox holds the whole timeline: notes, drawings, images and
           dictations alike, which is why it is not labelled "Captured items".
