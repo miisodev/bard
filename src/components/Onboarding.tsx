@@ -162,7 +162,7 @@ export default function Onboarding({
       {step === 0 ? (
         <>
           {/* The brand is the mark above this. The headline is the promise. */}
-          <h1>Capture. Dictate. Keep.</h1>
+          <h1>Clipboard, Draw and Dictate.</h1>
           <p>
             Bard catches anything you copy, turns your voice into text without
             sending audio anywhere, and keeps both on this machine. Refine is

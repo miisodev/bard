@@ -1,6 +1,6 @@
 # Bard
 
-**Capture. Dictate. Keep.**
+**Clipboard, Draw and Dictate.**
 
 Bard is a minimal native Windows workspace that merges three things into one
 keyboard-first panel: an advanced clipboard manager, a sketchpad and local voice dictation

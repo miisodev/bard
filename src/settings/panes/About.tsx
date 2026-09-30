@@ -58,7 +58,7 @@ export default function AboutPane({ state, refresh }: PaneProps) {
         <img src={appIcon} alt="" width={64} height={64} />
         <div>
           <p className="about-name">Bard</p>
-          <p className="about-line">Capture. Dictate. Keep.</p>
+          <p className="about-line">Clipboard, Draw and Dictate</p>
           <p className="about-version">
             Version {state.appVersion}
             {store ? " · Microsoft Store" : ""}

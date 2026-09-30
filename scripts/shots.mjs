@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-const out = resolve(process.argv[2] ?? "../.agents/files/Bard Store submission");
+const out = resolve(process.argv[2] ?? "../.agents/files/Store submission/Screenshots");
 const base = process.argv[3] ?? "http://localhost:1430";
 const edge = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const shots = ["capture", "dictate", "draw", "models", "dark"];

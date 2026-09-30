@@ -112,7 +112,7 @@ $manifest = @"
   <Properties>
     <DisplayName>$escapedDisplayName</DisplayName>
     <PublisherDisplayName>$escapedPublisherName</PublisherDisplayName>
-    <Description>Capture. Dictate. Keep. A local-first Windows workspace.</Description>
+    <Description>Clipboard, Draw and Dictate. A local-first Windows workspace.</Description>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
   <Resources>
@@ -128,7 +128,7 @@ $manifest = @"
   </Capabilities>
   <Applications>
     <Application Id="Bard" Executable="Bard.exe" EntryPoint="Windows.FullTrustApplication" uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
-      <uap:VisualElements DisplayName="Bard" Description="Capture. Dictate. Keep." Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png" BackgroundColor="transparent" />
+      <uap:VisualElements DisplayName="Bard" Description="Clipboard, Draw and Dictate" Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png" BackgroundColor="transparent" />
       <Extensions>
         <desktop:Extension Category="windows.startupTask" Executable="Bard.exe" EntryPoint="Windows.FullTrustApplication">
           <desktop:StartupTask TaskId="BardStartup" Enabled="true" DisplayName="Bard" />

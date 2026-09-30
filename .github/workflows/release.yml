@@ -1,15 +1,15 @@
 name: Bard release
 
+# Manual only. Releases are built and signed locally (scripts/build-release.ps1),
+# where the updater key lives; a tag push used to start this workflow, which
+# cannot sign without a cloud signer, so every release left a cancelled run.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag, for example v0.1.0
+        description: Existing release tag, for example v2.0.0
         required: true
         type: string
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: read

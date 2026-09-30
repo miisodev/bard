@@ -1,6 +1,6 @@
 [package]
 name = "bard"
-version = "2.0.0"
+version = "2.0.1"
 description = "Capture, dictate, ask."
 authors = ["miiso"]
 edition = "2021"
