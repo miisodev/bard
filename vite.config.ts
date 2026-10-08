@@ -23,7 +23,9 @@ export default defineConfig({
   build: {
     // WebView2 is Chromium; Bard runs nowhere else.
     target: ["es2021", "chrome100"],
-    minify: "esbuild",
+    // Vite 8's own minifier. "esbuild" is deprecated there and needs esbuild
+    // installed separately, which nothing declares.
+    minify: true,
     sourcemap: false,
     rollupOptions: {
       input: {
