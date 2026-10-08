@@ -193,7 +193,10 @@ struct ServiceResponse {
     message: Option<String>,
 }
 
+// The three request bodies are a wire contract with the licence broker
+// (miisodev `lib/bard-license.ts`), which reads camelCase.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ActivateRequest<'a> {
     key: &'a str,
     machine_id: &'a str,
@@ -201,14 +204,17 @@ struct ActivateRequest<'a> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ValidateRequest<'a> {
     key: &'a str,
     machine_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
     activation_id: Option<&'a str>,
     app_version: &'a str,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DeactivateRequest<'a> {
     key: &'a str,
     machine_id: &'a str,
@@ -301,6 +307,12 @@ fn is_machine_id(candidate: &str) -> bool {
             .all(|character| character.is_ascii_hexdigit())
 }
 
+/// The one spelling the broker accepts: 32 lowercase hex digits. A stored ID in
+/// any other case is the same installation, so it is lowercased, never reminted.
+fn canonical_machine_id(candidate: &str) -> Option<String> {
+    is_machine_id(candidate).then(|| candidate.to_ascii_lowercase())
+}
+
 /// The stable identifier this installation is bound to.
 ///
 /// The ordering here is the whole point. A credential read that did not *answer*
@@ -315,7 +327,15 @@ fn is_machine_id(candidate: &str) -> bool {
 /// permission to create.
 fn machine_id(app: &tauri::AppHandle) -> Result<String, LicenseError> {
     match read_credential_bounded(INSTALLATION_ID_USERNAME) {
-        CredentialRead::Value(existing) if is_machine_id(&existing) => return Ok(existing),
+        CredentialRead::Value(existing) if is_machine_id(&existing) => {
+            let canonical = existing.to_ascii_lowercase();
+            if canonical != existing {
+                // The broker has never accepted another spelling, so no receipt
+                // can be bound to it and rewriting loses nothing.
+                write_credential_bounded(INSTALLATION_ID_USERNAME, canonical.clone())?;
+            }
+            return Ok(canonical);
+        }
         CredentialRead::Unavailable => {
             crate::crash::record_event("licence:machine-id-unavailable");
             return Err(LicenseError::CredentialStore);
@@ -330,10 +350,10 @@ fn machine_id(app: &tauri::AppHandle) -> Result<String, LicenseError> {
     // valid, then remove it from SQLite. New installations never derive an ID
     // from a computer name, username, or hardware string.
     if let Some(existing) = crate::db::get_setting(app, MACHINE_ID_SETTING) {
-        if is_machine_id(&existing) {
-            write_credential_bounded(INSTALLATION_ID_USERNAME, existing.clone())?;
+        if let Some(canonical) = canonical_machine_id(&existing) {
+            write_credential_bounded(INSTALLATION_ID_USERNAME, canonical.clone())?;
             let _ = crate::db::set_setting_checked(app, MACHINE_ID_SETTING, "");
-            return Ok(existing);
+            return Ok(canonical);
         }
     }
 
@@ -1060,6 +1080,69 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(first.len(), 32);
         assert!(first.chars().all(|character| character.is_ascii_hexdigit()));
+    }
+
+    /// 2.0.0 and 2.0.1 sent snake_case while the broker read camelCase, and
+    /// every activation failed. Pin the field names.
+    #[test]
+    fn requests_use_the_brokers_camel_case_contract() {
+        let id = "db7d4813db8c4d9da34a9bc4329a32d9";
+        let activate = serde_json::to_value(ActivateRequest {
+            key: "k",
+            machine_id: id,
+            app_version: "2.0.2",
+        })
+        .unwrap();
+        assert_eq!(
+            activate,
+            serde_json::json!({"key": "k", "machineId": id, "appVersion": "2.0.2"})
+        );
+        let validate = serde_json::to_value(ValidateRequest {
+            key: "k",
+            machine_id: id,
+            activation_id: Some("a"),
+            app_version: "2.0.2",
+        })
+        .unwrap();
+        assert_eq!(
+            validate,
+            serde_json::json!({"key": "k", "machineId": id, "activationId": "a", "appVersion": "2.0.2"})
+        );
+        let unbound = serde_json::to_value(ValidateRequest {
+            key: "k",
+            machine_id: id,
+            activation_id: None,
+            app_version: "2.0.2",
+        })
+        .unwrap();
+        assert!(unbound.get("activationId").is_none());
+        let deactivate = serde_json::to_value(DeactivateRequest {
+            key: "k",
+            machine_id: id,
+            activation_id: "a",
+            app_version: "2.0.2",
+        })
+        .unwrap();
+        assert_eq!(
+            deactivate,
+            serde_json::json!({"key": "k", "machineId": id, "activationId": "a", "appVersion": "2.0.2"})
+        );
+    }
+
+    /// A reinstall reads back whatever an earlier build stored: any case of a
+    /// well-formed ID is the same installation, sent in the lowercase form the
+    /// broker accepts.
+    #[test]
+    fn stored_ids_are_canonicalised_not_reminted() {
+        let upper = "DB7D4813DB8C4D9DA34A9BC4329A32D9";
+        assert_eq!(
+            canonical_machine_id(upper).as_deref(),
+            Some("db7d4813db8c4d9da34a9bc4329a32d9")
+        );
+        let fresh = new_machine_id();
+        assert_eq!(canonical_machine_id(&fresh), Some(fresh.clone()));
+        assert_eq!(canonical_machine_id("not-an-id"), None);
+        assert_eq!(canonical_machine_id(&upper[..31]), None);
     }
 
     #[test]
