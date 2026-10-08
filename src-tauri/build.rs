@@ -9,6 +9,7 @@ const COMMANDS: &[&str] = &[
     "set_sort",
     "delete_item",
     "set_favorite",
+    "set_pinned",
     "set_done",
     "clear_completed",
     "clear_history",

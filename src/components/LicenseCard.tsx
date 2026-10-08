@@ -35,8 +35,11 @@ function terms(status: LicenseStatus): string[] {
     lines.push(`Active on ${used} of ${limit} PCs`);
   }
   if (typeof status.offlineLeaseDaysLeft === "number") {
+    // The lease renews on every daily check, so this only counts down while the
+    // PC is offline. "30 days left" beside "Licensed" read as the licence
+    // ending in a month; say what the number is.
     const days = Math.max(0, Math.round(status.offlineLeaseDaysLeft));
-    lines.push(`Offline licence · ${days} ${days === 1 ? "day" : "days"} left`);
+    lines.push(`Works offline for ${days} ${days === 1 ? "day" : "days"}`);
   }
   return lines;
 }

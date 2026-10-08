@@ -1305,3 +1305,46 @@ fn unique_image_path(dir: &Path, ext: &str) -> PathBuf {
     }
     dir.join(format!("{}-{}.png", now, std::process::id()))
 }
+
+#[cfg(test)]
+mod acl_tests {
+    /// Tauri refuses any command the ACL does not grant ("Command … not allowed
+    /// by ACL"), and the browser preview's mock cannot see that. 2.0.2 shipped
+    /// `set_pinned` registered but never allow-listed. Every handler in
+    /// `main.rs` must be in `build.rs`'s manifest and granted by a capability.
+    #[test]
+    fn every_registered_command_is_allow_listed() {
+        let main = include_str!("main.rs");
+        let build = include_str!("../build.rs");
+        let capabilities = [
+            include_str!("../capabilities/main.json"),
+            include_str!("../capabilities/settings.json"),
+            include_str!("../capabilities/draw.json"),
+            include_str!("../capabilities/overlay.json"),
+        ]
+        .concat();
+        let handlers = main
+            .split("generate_handler![")
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .expect("main.rs registers commands with generate_handler!");
+        let mut missing = Vec::new();
+        for entry in handlers.split(',') {
+            let Some(name) = entry.trim().rsplit("::").next().filter(|n| !n.is_empty()) else {
+                continue;
+            };
+            if !build.contains(&format!("\"{name}\"")) {
+                missing.push(format!("{name}: not in build.rs COMMANDS"));
+            }
+            let permission = format!("\"allow-{}\"", name.replace('_', "-"));
+            if !capabilities.contains(&permission) {
+                missing.push(format!("{name}: no capability grants {permission}"));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "commands the ACL would refuse:\n{}",
+            missing.join("\n")
+        );
+    }
+}
