@@ -28,11 +28,11 @@ const secs = (ms: number) => Math.floor(ms / 1000);
 let nextId = 100;
 
 const items: Item[] = [
+  text(5, "ffmpeg -i take.wav -ar 16000 -ac 1 take-16k.wav", "clipboard", 41, { favorite: 1, pinnedAt: minutes(30) }),
   text(1, "Ship the V2 release notes before Friday — keep them under 150 words.", "manual", 3),
   text(2, "https://handy.computer/docs/models", "clipboard", 8),
   text(3, "Dictation is local. The audio never leaves this computer, and Refine only ever sees the finished text.", "dictation", 14),
   text(4, "#2f6fed", "clipboard", 26),
-  text(5, "ffmpeg -i take.wav -ar 16000 -ac 1 take-16k.wav", "clipboard", 41, { favorite: 1 }),
   text(6, "Call Lerato about the Cape Town launch venue", "manual", 75, { done: 1 }),
   text(7, "Remember: the three tests. Copper, Handy, and would Apple ship this.", "dictation", 180),
   text(8, "hello@miiso.dev", "clipboard", 320),
@@ -55,6 +55,7 @@ function text(
     origin,
     favorite: 0,
     done: 0,
+    pinnedAt: null,
     createdAt: minutes(age),
     updatedAt: minutes(age),
     ...extra,
@@ -218,6 +219,24 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "set_favorite": {
       const item = state.items.find((i) => i.id === args.id);
       if (item) item.favorite = args.favorite ? 1 : 0;
+      return null;
+    }
+    case "set_pinned": {
+      const item = state.items.find((i) => i.id === args.id);
+      if (!item) throw "That item no longer exists.";
+      if (args.pinned && item.pinnedAt === null) {
+        if (state.items.filter((i) => i.pinnedAt !== null).length >= 3) {
+          throw "Three items are pinned. Unpin one first.";
+        }
+        item.pinnedAt = Date.now();
+      } else if (!args.pinned) {
+        item.pinnedAt = null;
+      }
+      // Rust returns the timeline pins-first; mirror it so the preview's
+      // Ctrl+1–3 and arrow order match the app.
+      const pinned = state.items.filter((i) => i.pinnedAt !== null).sort((a, b) => a.pinnedAt! - b.pinnedAt!);
+      const rest = state.items.filter((i) => i.pinnedAt === null).sort((a, b) => b.createdAt - a.createdAt);
+      state.items = [...pinned, ...rest];
       return null;
     }
     case "delete_item":

@@ -36,6 +36,8 @@ export const api = {
     invoke<void>("update_item", { id, content }),
   setFavorite: (id: number, favorite: boolean) =>
     invoke<void>("set_favorite", { id, favorite }),
+  setPinned: (id: number, pinned: boolean) =>
+    invoke<void>("set_pinned", { id, pinned }),
   setDone: (id: number, done: boolean) => invoke<void>("set_done", { id, done }),
   clearCompleted: () => invoke<void>("clear_completed"),
   clearHistory: () => invoke<void>("clear_history"),

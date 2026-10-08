@@ -3,13 +3,15 @@ import {
   Copy,
   FileText,
   Pencil,
+  Pin,
+  PinOff,
   Star,
   Trash2,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { Item } from "../types";
 
-export type MenuAction = "copy" | "copyList" | "favorite" | "edit" | "caption" | "delete";
+export type MenuAction = "copy" | "copyList" | "favorite" | "pin" | "edit" | "caption" | "delete";
 
 interface ContextMenuProps {
   x: number;
@@ -112,6 +114,17 @@ export default function ContextMenu({
         },
         { label: multi ? "Toggle favorite" : item.favorite ? "Remove favorite" : "Add favorite", action: "favorite", icon: <Star size={14} strokeWidth={1.8} /> },
         {
+          label: multi ? "Toggle pin" : item.pinnedAt !== null ? "Unpin" : "Pin to top",
+          action: "pin",
+          icon:
+            !multi && item.pinnedAt !== null ? (
+              <PinOff size={14} strokeWidth={1.8} />
+            ) : (
+              <Pin size={14} strokeWidth={1.8} />
+            ),
+          hint: "Up to three pins; Right Shift twice, then 1, 2 or 3 pastes them",
+        },
+        {
           label: "Edit",
           action: "edit",
           icon: <Pencil size={14} strokeWidth={1.8} />,
@@ -130,7 +143,7 @@ export default function ContextMenu({
     : [];
 
   const left = Math.max(8, Math.min(x, window.innerWidth - 220));
-  const top = Math.max(8, Math.min(y, window.innerHeight - (multi ? 270 : 290)));
+  const top = Math.max(8, Math.min(y, window.innerHeight - (multi ? 300 : 320)));
 
   return (
     <div

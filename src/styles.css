@@ -1426,6 +1426,14 @@ body {
   color: var(--on-canvas-2);
 }
 
+.group-header.static {
+  cursor: default;
+}
+
+.group-header.static:hover {
+  color: var(--on-canvas-3);
+}
+
 .group-name {
   flex: none;
   white-space: nowrap;

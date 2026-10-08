@@ -329,6 +329,7 @@ fn main() {
             commands::set_sort,
             commands::delete_item,
             commands::set_favorite,
+            commands::set_pinned,
             commands::set_done,
             commands::clear_completed,
             commands::clear_history,

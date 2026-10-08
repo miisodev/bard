@@ -349,6 +349,12 @@ export default function Panel({
           }
           return;
         }
+        if (key === "p" && !e.shiftKey && !e.altKey && actionSel.length > 0) {
+          e.preventDefault();
+          const leadItem = state.items.find((i) => i.id === lead);
+          void setPins(actionSel, leadItem ? leadItem.pinnedAt === null : true, notify, refresh);
+          return;
+        }
         if (key === "m" && e.shiftKey && actionSel.length > 0) {
           e.preventDefault();
           copyAsList(state, actionSel, notify);
@@ -619,6 +625,9 @@ export default function Panel({
         }
         refresh();
         break;
+      case "pin":
+        void setPins(ids, menu.item?.pinnedAt === null, notify, refresh);
+        break;
       case "edit":
         if (menu.item && menu.item.kind === "text") setEditingId(menu.item.id);
         break;
@@ -728,29 +737,37 @@ export default function Panel({
           </div>
         ) : (
           grouped.map((group) => {
-            const groupId = group.section ? `section-${group.section.id}` : "section-inbox";
             return (
-              <div key={groupId} role="group" aria-label={group.section ? group.section.name : "Inbox"}>
+              <div key={group.key} role="group" aria-label={group.label}>
                 {/* A letterspaced label and a hairline reaching the edge — the
                     count and the folder glyph were noise on a list you already
-                    see in full. */}
-                <button
-                  type="button"
-                  className={`group-header${
-                    (group.section ? group.section.id : null) === state.activeSectionId
-                      ? " active"
-                      : ""
-                  }`}
-                  onClick={() => {
-                    void api.setActiveSection(group.section ? group.section.id : null);
-                    refresh();
-                  }}
-                >
-                  <span className="group-name">
-                    {group.section ? group.section.name : "Inbox"}
-                  </span>
-                  <span className="group-rule" aria-hidden="true" />
-                </button>
+                    see in full. Pinned is not a section, so it is a label, not
+                    a button that would change the active section. */}
+                {group.pinned ? (
+                  <div
+                    className="group-header static"
+                    title="Right Shift twice, then 1, 2 or 3, pastes these from any app"
+                  >
+                    <span className="group-name">{group.label}</span>
+                    <span className="group-rule" aria-hidden="true" />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className={`group-header${
+                      (group.section ? group.section.id : null) === state.activeSectionId
+                        ? " active"
+                        : ""
+                    }`}
+                    onClick={() => {
+                      void api.setActiveSection(group.section ? group.section.id : null);
+                      refresh();
+                    }}
+                  >
+                    <span className="group-name">{group.label}</span>
+                    <span className="group-rule" aria-hidden="true" />
+                  </button>
+                )}
                 {group.items.map((it) => (
                   <ItemCard
                     key={it.id}
@@ -979,7 +996,7 @@ const SHORTCUT_GROUPS: { name: string; rows: { keys: string[]; what: string }[] 
       { keys: ["Left Shift", "Left Shift"], what: "Capture the selection" },
       { keys: ["Ctrl", "Ctrl"], what: "Dictate — hold, or tap twice" },
       { keys: ["Right Shift", "Right Shift"], what: "Show or hide Bard" },
-      { keys: ["Right Shift", "Right Shift", "1 / 2 / 3"], what: "Paste one of the first three" },
+      { keys: ["Right Shift", "Right Shift", "1 / 2 / 3"], what: "Paste one of the first three — pins first" },
       { keys: ["Left Alt", "Left Alt"], what: "Draw" },
       { keys: ["Right Alt", "Right Alt"], what: "Settings" },
       { keys: ["F11"], what: "Fullscreen Draw" },
@@ -992,6 +1009,7 @@ const SHORTCUT_GROUPS: { name: string; rows: { keys: string[]; what: string }[] 
       { keys: ["Ctrl", "1–9"], what: "Paste that item" },
       { keys: ["Ctrl", "C"], what: "Copy" },
       { keys: ["Ctrl", "Shift", "M"], what: "Copy as list" },
+      { keys: ["Ctrl", "P"], what: "Pin or unpin" },
       { keys: ["Ctrl", "K"], what: "Sections" },
       { keys: ["Ctrl", "/"], what: "These shortcuts" },
       { keys: ["Space"], what: "Done" },
@@ -1105,21 +1123,45 @@ function filterItems(items: Item[], query: string): Item[] {
   });
 }
 
-function groupBySection(
-  items: Item[],
-  sections: Section[],
-  activeSectionId: number | null,
-): { section: Section | null; items: Item[] }[] {
+/**
+ * Pin or unpin in order, stopping at the first refusal: a fourth pin is
+ * refused by Rust, and the toast says why rather than the list quietly not
+ * changing.
+ */
+async function setPins(ids: number[], pinned: boolean, notify: Notify, refresh: () => void) {
+  try {
+    for (const id of ids) await api.setPinned(id, pinned);
+  } catch (reason) {
+    playCue("error");
+    notify(reason instanceof Error ? reason.message : String(reason ?? "Bard could not save the pin."), "error");
+  } finally {
+    refresh();
+  }
+}
+
+type Group = { key: string; label: string; section: Section | null; pinned: boolean; items: Item[] };
+
+/**
+ * Pins come first as their own group, in timeline order, because they are
+ * slots 1–3 of Right Shift × 2 and Ctrl+1–3: the top of the panel has to be
+ * what those keys paste. Everything else is grouped by section as before.
+ */
+function groupBySection(items: Item[], sections: Section[], activeSectionId: number | null): Group[] {
   const ordered = [...sections];
   if (activeSectionId !== null) {
     ordered.sort((a, b) => (a.id === activeSectionId ? -1 : b.id === activeSectionId ? 1 : a.id - b.id));
   }
-  const out: { section: Section | null; items: Item[] }[] = [];
-  const inbox = items.filter((i) => i.sectionId === null);
-  if (inbox.length > 0) out.push({ section: null, items: inbox });
+  const out: Group[] = [];
+  const pins = items.filter((i) => i.pinnedAt !== null);
+  if (pins.length > 0) out.push({ key: "pinned", label: "Pinned", section: null, pinned: true, items: pins });
+  const rest = items.filter((i) => i.pinnedAt === null);
+  const inbox = rest.filter((i) => i.sectionId === null);
+  if (inbox.length > 0) out.push({ key: "section-inbox", label: "Inbox", section: null, pinned: false, items: inbox });
   for (const section of ordered) {
-    const group = items.filter((i) => i.sectionId === section.id);
-    if (group.length > 0) out.push({ section, items: group });
+    const group = rest.filter((i) => i.sectionId === section.id);
+    if (group.length > 0) {
+      out.push({ key: `section-${section.id}`, label: section.name, section, pinned: false, items: group });
+    }
   }
   return out;
 }

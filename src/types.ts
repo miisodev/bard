@@ -13,6 +13,8 @@ export interface Item {
   done: number;
   createdAt: number;
   updatedAt: number;
+  /** When it was pinned; pins lead the timeline and are gesture slots 1–3. */
+  pinnedAt: number | null;
 }
 
 export interface Attachment {

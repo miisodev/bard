@@ -40,6 +40,9 @@ pub struct Item {
     pub done: i64,
     pub created_at: i64,
     pub updated_at: i64,
+    /// When the item was pinned, or `None`. Pinned items lead the timeline in
+    /// the order they were pinned, so they are slots 1–3 of Right Shift × 2.
+    pub pinned_at: Option<i64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -142,7 +145,8 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
            favorite INTEGER NOT NULL DEFAULT 0,
            done INTEGER NOT NULL DEFAULT 0,
            created_at INTEGER NOT NULL,
-           updated_at INTEGER NOT NULL
+           updated_at INTEGER NOT NULL,
+           pinned_at INTEGER
          );
          CREATE INDEX IF NOT EXISTS idx_items_created ON items(created_at DESC);
          CREATE TABLE IF NOT EXISTS settings(
@@ -188,6 +192,7 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
             "ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL",
         ),
         ("items", "done", "ALTER TABLE items ADD COLUMN done INTEGER NOT NULL DEFAULT 0"),
+        ("items", "pinned_at", "ALTER TABLE items ADD COLUMN pinned_at INTEGER"),
         (
             "items",
             "origin",
@@ -228,7 +233,7 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
     transaction.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_items_origin_created
            ON items(origin, created_at);
-         PRAGMA user_version = 2;",
+         PRAGMA user_version = 3;",
     )?;
     transaction.commit()?;
     Ok(conn)
@@ -421,7 +426,7 @@ pub fn item_by_id(app: &AppHandle, id: i64) -> Option<Item> {
         connection
             .query_row(
                 "SELECT id, section_id, content, kind, image_path, origin, favorite, done,
-                        created_at, updated_at
+                        created_at, updated_at, pinned_at
                  FROM items WHERE id = ?1",
                 params![id],
                 |row| {
@@ -436,6 +441,7 @@ pub fn item_by_id(app: &AppHandle, id: i64) -> Option<Item> {
                         done: row.get(7)?,
                         created_at: row.get(8)?,
                         updated_at: row.get(9)?,
+                        pinned_at: row.get(10)?,
                     })
                 },
             )
@@ -788,7 +794,7 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
         let mut stmt = c
             .prepare(
                 "SELECT id, section_id, content, kind, image_path, origin, favorite, done,
-                        created_at, updated_at
+                        created_at, updated_at, pinned_at
                  FROM items ORDER BY id DESC",
             )
             .unwrap();
@@ -804,6 +810,7 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
                 done: r.get(7)?,
                 created_at: r.get(8)?,
                 updated_at: r.get(9)?,
+                pinned_at: r.get(10)?,
             })
         })
         .unwrap()
@@ -1397,6 +1404,72 @@ pub fn sort_items(items: &mut [Item], order: &str) {
         "completed" => items.sort_by(|a, b| a.done.cmp(&b.done).then(b.id.cmp(&a.id))),
         _ => items.sort_by_key(|item| std::cmp::Reverse(item.id)),
     }
+    // Pins lead whatever the order, oldest pin first, so pinning a new item
+    // never changes which slot the earlier pins answer to. The sort is stable,
+    // so everything unpinned keeps the order chosen above.
+    items.sort_by_key(|item| match item.pinned_at {
+        Some(at) => (0, at, item.id),
+        None => (1, 0, 0),
+    });
+}
+
+/// How many items can be pinned: one per Right Shift × 2 slot.
+pub const PIN_LIMIT: i64 = 3;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PinError {
+    Full,
+    Missing,
+    Database,
+}
+
+impl std::fmt::Display for PinError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Full => "Three items are pinned. Unpin one first.",
+            Self::Missing => "That item no longer exists.",
+            Self::Database => "Bard could not save the pin.",
+        })
+    }
+}
+
+/// Pin or unpin one item. Pinning an item that is already pinned keeps its
+/// place; the limit is checked inside the write, so two pins in quick
+/// succession cannot both take the third slot.
+pub fn pin_item(conn: &Connection, id: i64, pinned: bool, now: i64) -> Result<(), PinError> {
+    let changed = if pinned {
+        conn.execute(
+            "UPDATE items SET pinned_at = COALESCE(pinned_at, ?1), updated_at = ?1
+             WHERE id = ?2
+               AND (pinned_at IS NOT NULL
+                    OR (SELECT COUNT(*) FROM items WHERE pinned_at IS NOT NULL) < ?3)",
+            params![now, id, PIN_LIMIT],
+        )
+    } else {
+        conn.execute(
+            "UPDATE items SET pinned_at = NULL, updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )
+    }
+    .map_err(|_| PinError::Database)?;
+    if changed == 1 {
+        return Ok(());
+    }
+    let exists = conn
+        .query_row("SELECT 1 FROM items WHERE id = ?1", params![id], |_| Ok(()))
+        .is_ok();
+    Err(if exists {
+        PinError::Full
+    } else {
+        PinError::Missing
+    })
+}
+
+pub fn set_pinned(app: &AppHandle, id: i64, pinned: bool) -> Result<(), PinError> {
+    if !is_ready(app) {
+        return Err(PinError::Database);
+    }
+    with_conn_mut(app, |c| pin_item(c, id, pinned, now_ms()))
 }
 
 /// The items in the order the panel shows them. Right Shift × 2 + a number
@@ -1492,6 +1565,7 @@ mod tests {
             done,
             created_at: id,
             updated_at: id,
+            pinned_at: None,
         }
     }
 
@@ -1708,7 +1782,7 @@ mod tests {
         let version: i64 = migrated
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -1735,7 +1809,60 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn pins_lead_every_order_in_the_order_they_were_pinned() {
+        let ids = |items: &[Item]| items.iter().map(|i| i.id).collect::<Vec<_>>();
+        let mut items = vec![item(1, 0, 0), item(2, 1, 0), item(3, 0, 1), item(4, 0, 0)];
+        items[0].pinned_at = Some(20);
+        items[2].pinned_at = Some(10);
+        for order in SORT_ORDERS {
+            sort_items(&mut items, order);
+            assert_eq!(&ids(&items)[..2], [3, 1], "pins lead under {order}");
+        }
+        sort_items(&mut items, "newest");
+        assert_eq!(ids(&items), [3, 1, 4, 2]);
+        sort_items(&mut items, "favorites");
+        assert_eq!(ids(&items), [3, 1, 2, 4]);
+    }
+
+    #[test]
+    fn at_most_three_items_are_pinned() {
+        let dir = std::env::temp_dir().join(format!("bard-pin-test-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = init(&dir.join("test.db")).unwrap();
+        for _ in 0..5 {
+            conn.execute(
+                "INSERT INTO items (content, created_at, updated_at) VALUES ('x', 0, 0)",
+                [],
+            )
+            .unwrap();
+        }
+        let pinned_at = |id: i64| -> Option<i64> {
+            conn.query_row(
+                "SELECT pinned_at FROM items WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        for (id, now) in [(1, 10), (2, 11), (3, 12)] {
+            pin_item(&conn, id, true, now).unwrap();
+        }
+        assert_eq!(pin_item(&conn, 4, true, 13), Err(PinError::Full));
+        assert_eq!(pinned_at(4), None);
+        // Pinning again keeps the original place in the slot order.
+        pin_item(&conn, 1, true, 14).unwrap();
+        assert_eq!(pinned_at(1), Some(10));
+        pin_item(&conn, 2, false, 15).unwrap();
+        assert_eq!(pinned_at(2), None);
+        pin_item(&conn, 4, true, 16).unwrap();
+        assert_eq!(pinned_at(4), Some(16));
+        assert_eq!(pin_item(&conn, 99, true, 17), Err(PinError::Missing));
+        drop(conn);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

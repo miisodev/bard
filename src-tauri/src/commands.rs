@@ -862,6 +862,20 @@ pub fn set_favorite(app: AppHandle, id: i64, favorite: bool) {
     refresh(&app);
 }
 
+/// Pin an item to the top of the panel, where it is one of the three slots
+/// Right Shift × 2 + 1/2/3 pastes. A fourth pin is refused, not rotated in:
+/// silently unpinning something would move what a learned slot pastes.
+#[tauri::command]
+pub fn set_pinned(app: AppHandle, id: i64, pinned: bool) -> Result<(), String> {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error.clone());
+        return Err(error);
+    }
+    let result = db::set_pinned(&app, id, pinned).map_err(|error| error.to_string());
+    refresh(&app);
+    result
+}
+
 #[tauri::command]
 pub fn set_done(app: AppHandle, id: i64, done: bool) {
     if let Err(error) = crate::license::require(&app) {
@@ -928,7 +942,8 @@ pub fn copy_item(app: AppHandle, id: i64) -> Result<(), String> {
     Ok(())
 }
 
-/// Paste one of the first three timeline items into the foreground app.
+/// Paste one of the first three timeline items into the foreground app. Pins
+/// lead the timeline, so slots 1–3 are the pinned items, then the panel order.
 /// The global Right Shift × 2 + number gesture calls this without opening the
 /// panel, so the active application remains the paste target.
 pub fn paste_item(app: &AppHandle, slot: u8) -> Result<(), String> {
