@@ -123,9 +123,17 @@ const WORKING: u8 = 2;
 /// The × hit area in CSS pixels within the 260 × 60 overlay window: the
 /// right end of the 212 px pill (`.overlay-pill` in styles.css), generous on
 /// purpose. The two must move together.
+// The whole guard below — the × hit test, the click hold, the verdicts — is
+// the Windows low-level mouse hook's machinery. On Linux it is inert until
+// the platform input slice replaces it; the allowances are per item so real
+// dead code elsewhere still fails the gate.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const CLOSE_LEFT: f64 = 192.0;
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const CLOSE_RIGHT: f64 = 240.0;
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const CLOSE_TOP: f64 = 10.0;
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const CLOSE_BOTTOM: f64 = 50.0;
 
 /// How long a report stays up when nobody dismisses it.
@@ -134,6 +142,7 @@ const REPORT_LINGER: Duration = Duration::from_millis(3200);
 /// or the × — but transcribing and refining end on their own, and if either
 /// ever stalled, clicks must not stay held behind it. Refining alone is
 /// bounded at 60 s.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const WORKING_HOLD_LIMIT_MS: u64 = 90_000;
 
 static MODE: AtomicU8 = AtomicU8::new(HIDDEN);
@@ -151,11 +160,13 @@ static RECT: [AtomicI32; 4] = [
 ];
 /// Buttons whose press was held back, so their release is held back too and
 /// no application ever sees half a click.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 static HELD_BUTTONS: AtomicU8 = AtomicU8::new(0);
 /// The overlay's scale factor × 1000, for the × hit test.
 static SCALE_MILLI: AtomicU32 = AtomicU32::new(1000);
 static SIGNALS: OnceLock<Sender<Signal>> = OnceLock::new();
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 enum Signal {
     Nudge,
     Dismiss,
@@ -405,6 +416,7 @@ fn remember_rect(win: &tauri::WebviewWindow) {
     SCALE_MILLI.store((scale * 1000.0).round() as u32, Ordering::SeqCst);
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn inside_overlay(x: i32, y: i32) -> bool {
     x >= RECT[0].load(Ordering::SeqCst)
         && y >= RECT[1].load(Ordering::SeqCst)
@@ -412,6 +424,7 @@ fn inside_overlay(x: i32, y: i32) -> bool {
         && y < RECT[3].load(Ordering::SeqCst)
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn on_close(x: i32, y: i32) -> bool {
     let scale = SCALE_MILLI.load(Ordering::SeqCst) as f64 / 1000.0;
     let css_x = (x - RECT[0].load(Ordering::SeqCst)) as f64 / scale;
@@ -422,10 +435,12 @@ fn on_close(x: i32, y: i32) -> bool {
 /// Whether a live take may still hold clicks elsewhere. `elapsed_ms` is how long
 /// the phase on screen has been showing. Pure, so the watchdog's effect on the
 /// desktop's responsiveness is testable.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn holds_clicks(mode: u8, phase: u8, elapsed_ms: u64) -> bool {
     mode == ACTIVE && (phase == LISTENING || elapsed_ms < WORKING_HOLD_LIMIT_MS)
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn holding_clicks() -> bool {
     holds_clicks(
         MODE.load(Ordering::SeqCst),
@@ -435,6 +450,7 @@ fn holding_clicks() -> bool {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 enum Verdict {
     Pass,
     Hold,
@@ -446,6 +462,7 @@ enum Verdict {
 
 /// Where a button event landed, as the guard sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 enum Target {
     Elsewhere,
     Pill,
@@ -455,6 +472,7 @@ enum Target {
 /// What to do with one button event. Pure, so the whole policy is tested.
 /// `mode` is what the pill shows; `holding` is whether a live take may still
 /// hold clicks elsewhere (false once the watchdog has run out).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn judge(mode: u8, holding: bool, target: Target, pressed: bool, press_was_held: bool) -> Verdict {
     if !pressed {
         return if press_was_held {
@@ -479,6 +497,7 @@ fn judge(mode: u8, holding: bool, target: Target, pressed: bool, press_was_held:
 }
 
 /// Called by the hook for every mouse button event; true swallows it.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn on_button(button: u8, pressed: bool, x: i32, y: i32) -> bool {
     let press_was_held = HELD_BUTTONS.load(Ordering::SeqCst) & button != 0;
     let target = if !inside_overlay(x, y) {

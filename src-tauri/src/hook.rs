@@ -22,6 +22,10 @@
 use rdev::{Button, Event, EventType, Key};
 
 /// Why [`listen`] returned. It only returns when something went wrong.
+// The refusal variants are constructed by the Windows low-level hook; the
+// non-windows fallback only ever returns `Quit`. The gateway's Linux slice
+// replaces the fallback and this allowance goes with it.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 #[derive(Debug)]
 pub enum ListenEnd {
     /// `SetWindowsHookExW` refused a hook; the value is `GetLastError`.
@@ -47,6 +51,7 @@ impl std::fmt::Display for ListenEnd {
 /// Alt, so there is no generic-modifier case to resolve. Every other key is
 /// `Unknown(vk)`: distinct per key, which is all the coordinator needs to pair a
 /// press with its release.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn key_from_vk(vk: u32) -> Key {
     match vk {
         0xA0 => Key::ShiftLeft,
@@ -68,6 +73,7 @@ pub fn key_from_vk(vk: u32) -> Key {
 
 /// Translates one low-level mouse message. Movement is dropped here: nothing in
 /// Bard uses it, and forwarding it meant a channel send per pixel of travel.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn mouse_event(message: u32, mouse_data: u32) -> Option<EventType> {
     const WM_LBUTTONDOWN: u32 = 0x0201;
     const WM_LBUTTONUP: u32 = 0x0202;

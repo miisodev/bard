@@ -1,9 +1,14 @@
 use std::{
     hash::{Hash, Hasher},
-    sync::{Mutex, OnceLock},
+    sync::Mutex,
     thread,
     time::Duration,
 };
+
+// The clipboard format registration is a Windows-only path; everything that
+// uses it has a `cfg(not(windows))` sibling below.
+#[cfg(windows)]
+use std::sync::OnceLock;
 
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -364,6 +369,7 @@ fn clipboard_format_dword(format: u16) -> Option<u32> {
     }
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn should_exclude_clipboard(
     explicit_exclusion: bool,
     can_include_in_history: Option<u32>,
