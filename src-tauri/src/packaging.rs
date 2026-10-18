@@ -4,7 +4,9 @@
 //! package through the Microsoft Store. The Store copy runs with a package
 //! identity, is updated by the Store and is started at login by the startup
 //! task its manifest declares — so the direct channel's updater and Run-key
-//! autostart stand down there instead of fighting the platform.
+//! autostart stand down there instead of fighting the platform. Linux copies
+//! (deb, rpm, Flatpak) report their channel too: a Flatpak sandbox identifies
+//! itself through `/.flatpak-info`.
 
 use std::sync::OnceLock;
 
@@ -15,11 +17,32 @@ pub fn is_packaged() -> bool {
 }
 
 pub fn channel() -> &'static str {
-    if is_packaged() {
+    channel_for(is_packaged(), is_flatpak())
+}
+
+/// The channel a copy reports. The Store package identity wins because the
+/// Store owns its updates; a Flatpak sandbox is next; everything else is the
+/// direct download.
+fn channel_for(packaged: bool, flatpak: bool) -> &'static str {
+    if packaged {
         "store"
+    } else if flatpak {
+        "flatpak"
     } else {
         "direct"
     }
+}
+
+/// True when this process runs inside a Flatpak sandbox: flatpak(1) writes
+/// `/.flatpak-info` for every sandboxed process, and nothing else does.
+#[cfg(target_os = "linux")]
+fn is_flatpak() -> bool {
+    std::path::Path::new("/.flatpak-info").exists()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_flatpak() -> bool {
+    false
 }
 
 #[cfg(windows)]
@@ -117,9 +140,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_unpackaged_test_process_reports_the_direct_channel() {
+    fn the_channel_names_the_delivery() {
+        assert_eq!(channel_for(false, false), "direct");
+        assert_eq!(channel_for(false, true), "flatpak");
+        assert_eq!(channel_for(true, false), "store");
+        // The Store package identity and a Flatpak sandbox cannot both be
+        // true in one process; if they ever were, the Store owns its updates.
+        assert_eq!(channel_for(true, true), "store");
+    }
+
+    #[test]
+    fn an_unpackaged_test_process_reports_its_channel() {
         assert!(!is_packaged());
-        assert_eq!(channel(), "direct");
+        // The test binary runs from a plain target directory, so it is the
+        // direct download everywhere the suite runs — Windows and the Linux
+        // CI job alike.
+        assert_eq!(channel(), if is_flatpak() { "flatpak" } else { "direct" });
     }
 
     #[test]

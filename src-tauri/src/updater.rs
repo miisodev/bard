@@ -25,9 +25,18 @@ fn info(update: &tauri_plugin_updater::Update) -> UpdateInfo {
 /// channel's NSIS package from inside it would leave a second, unpackaged Bard.
 const STORE_UPDATES: &str = "Bard updates through the Microsoft Store.";
 
+/// The updater feed serves the Windows NSIS installer only, and a Linux copy
+/// (deb, rpm or Flatpak) is updated by its package manager. The plugin is
+/// registered on every platform — it does nothing until asked — so the gate
+/// lives here, in front of the network.
+const PACKAGE_MANAGER_UPDATES: &str = "Bard updates through your package manager on this platform.";
+
 pub async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
     if crate::packaging::is_packaged() {
         return Err(STORE_UPDATES.into());
+    }
+    if !cfg!(windows) {
+        return Err(PACKAGE_MANAGER_UPDATES.into());
     }
     let updater = app
         .updater_builder()
@@ -43,6 +52,9 @@ pub async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
 pub async fn install(app: &AppHandle) -> Result<(), String> {
     if crate::packaging::is_packaged() {
         return Err(STORE_UPDATES.into());
+    }
+    if !cfg!(windows) {
+        return Err(PACKAGE_MANAGER_UPDATES.into());
     }
     let updater = app
         .updater_builder()
