@@ -544,6 +544,39 @@ because the panel and the Draw window both render
   gap: var(--sp-3);
 }
 
+/*
+  The one confirmation an irreversible action gets (ui.tsx → InlineConfirm).
+  It renders in the settings panes and inside the shelf, and it had no rule at
+  all: a bar of plain text over the thing it was asking about. The danger tone
+  is carried by the border and the soft ground, not a filled red, because the
+  sentence also has to be read.
+*/
+.remove-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  margin-top: var(--sp-5);
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--danger);
+  border-radius: var(--r-control);
+  background: var(--danger-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
+.remove-confirm:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.remove-confirm-actions {
+  flex: none;
+  display: flex;
+  gap: var(--sp-3);
+}
+
 .group-note a,
 .row-hint a {
   color: var(--accent-text);

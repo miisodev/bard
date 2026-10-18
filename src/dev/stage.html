@@ -121,9 +121,18 @@
       const shots = {
         capture: {
           headline: "Everything you copy, one keystroke away.",
-          subline: "Bard keeps what you copy and select in one searchable timeline. Enter pastes it straight back where you were.",
+          subline: "Bard keeps what you copy and select in one searchable shelf. Enter pastes it straight back where you were.",
           keys: [["Left Shift", "×2"], "to keep a selection"],
-          windows: [{ src: "/?bare", x: 1010, y: 105, w: 400, h: 620, scale: 1.12 }],
+          copyTop: true,
+          windows: [{ src: "/?bare", x: 40, y: 560, w: 1520, h: 300, scale: 1 }],
+        },
+        shelf: {
+          headline: "Your clipboard, one shelf away.",
+          subline: "Bard docks to the edge of your screen and floats over your work: every capture in reach, and one Enter puts it back.",
+          keys: [["Right Shift", "×2"], "to open the shelf"],
+          copyTop: true,
+          doc: { x: 210, y: 70, w: 1180, h: 620 },
+          windows: [{ src: "/?bare", x: 40, y: 560, w: 1520, h: 300, scale: 1 }],
         },
         dictate: {
           headline: "Speak. It's typed where you were.",
@@ -147,14 +156,16 @@
         dark: {
           dark: true,
           headline: "Quiet by design.",
-          subline: "A calm, keyboard-first panel in light or dark that stays out of the way until you need it.",
+          subline: "A calm, keyboard-first shelf in light or dark that stays out of the way until you need it.",
           keys: [["Right Shift", "×2"], "to open Bard"],
-          windows: [{ src: "/?bare&theme=dark", x: 1010, y: 105, w: 400, h: 620, scale: 1.12 }],
+          copyTop: true,
+          windows: [{ src: "/?bare&theme=dark", x: 40, y: 560, w: 1520, h: 300, scale: 1 }],
         },
       };
       const name = new URLSearchParams(location.search).get("shot") ?? "capture";
       const shot = shots[name];
       if (shot.dark) document.body.classList.add("dark");
+      if (shot.copyTop) document.querySelector(".copy").style.top = "22%";
       document.getElementById("headline").textContent = shot.headline;
       document.getElementById("subline").textContent = shot.subline;
       const keys = document.getElementById("keys");

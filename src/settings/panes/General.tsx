@@ -67,6 +67,25 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
         </Row>
       </Group>
 
+      <Group title="Shelf">
+        <Row
+          label="Dock edge"
+          hint="Where the shelf sits. Bottom keeps it under your app; the window follows the edge you pick."
+        >
+          <Segmented
+            label="Dock edge"
+            value={state.shelfEdge ?? "bottom"}
+            onChange={(edge) => void api.setShelfEdge(edge).then(refresh)}
+            options={[
+              { value: "bottom", label: "Bottom" },
+              { value: "top", label: "Top" },
+              { value: "left", label: "Left" },
+              { value: "right", label: "Right" },
+            ]}
+          />
+        </Row>
+      </Group>
+
       <Group title="Startup">
         {state.channel === "store" ? (
           // The Store copy starts at login through its declared startup task,

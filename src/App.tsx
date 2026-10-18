@@ -1,9 +1,9 @@
 import { listen } from "@tauri-apps/api/event";
-import { Component, useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "./store";
 import { playCue } from "./audio";
-import type { AppState, ModelProgress } from "./types";
+import type { AppState, ModelProgress, ShelfEdge } from "./types";
 import Panel, { type ToastDetail } from "./components/Panel";
 import Onboarding from "./components/Onboarding";
 import { useTheme } from "./useTheme";
@@ -12,6 +12,29 @@ export interface DictationState {
   listening: boolean;
   transcribing: boolean;
   level: number;
+}
+
+/*
+  The `refresh` event arrives in bursts — a dictation take inserts an item per
+  beat, a bulk action fires one per write — and each one used to cost a full
+  state read. A short trailing debounce coalesces the burst into the last
+  read, which is the only one whose answer is still current.
+*/
+const REFRESH_DEBOUNCE_MS = 50;
+
+/*
+  How long the slide-out may take before Rust is told to proceed anyway. The
+  animation is --t-instant (90ms); the margin is the floor under a missed
+  `animationend`, so a slide that never reports can never hang the hide.
+*/
+const SHELF_OUT_ACK_MS = 140;
+
+function reducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function isShelfEdge(value: unknown): value is ShelfEdge {
+  return value === "bottom" || value === "top" || value === "left" || value === "right";
 }
 
 /**
@@ -96,15 +119,67 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     level: 0,
   });
   const [activeItemId, setActiveItemId] = useState<number | null>(suppliedActiveItemId ?? null);
+  // Which edge the window is docked to. Rust owns the geometry; this drives
+  // the layout, the entry slide and which way it slides.
+  const [edge, setEdge] = useState<ShelfEdge>(() => "bottom");
   // The live input level, and when it was last handed to React. Keeping the
   // rate down here is what stops a take from re-rendering every card 20 times a
   // second — see LEVEL_MIN_INTERVAL_MS.
   const publishedStep = useRef(0);
   const publishedAt = useRef(0);
+  // The slide-out handshake: Rust waits for `shelf_hidden`, so it is sent
+  // exactly once per hide, from whichever signal arrives first.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const ackTimer = useRef<number | undefined>(undefined);
+  const ackSent = useRef(false);
+  const refreshTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     setActiveItemId(suppliedActiveItemId ?? null);
   }, [suppliedActiveItemId]);
+
+  useEffect(() => {
+    if (state?.shelfEdge) setEdge(state.shelfEdge);
+  }, [state?.shelfEdge]);
+
+  /** Rust may proceed: restore the foreground, hide and park the window. */
+  const acknowledgeHide = useCallback(() => {
+    if (ackSent.current) return;
+    ackSent.current = true;
+    if (ackTimer.current !== undefined) {
+      window.clearTimeout(ackTimer.current);
+      ackTimer.current = undefined;
+    }
+    if (rootRef.current) delete rootRef.current.dataset.anim;
+    void api.shelfHidden();
+  }, []);
+
+  /** Slide the band in from its edge. Reduced motion gets the resting state. */
+  const animateIn = useCallback(() => {
+    if (reducedMotion()) return;
+    const el = rootRef.current;
+    if (!el) return;
+    // Clear, commit, re-add: a re-shown window restarts the keyframes rather
+    // than sitting at the end of an animation CSS still considers finished.
+    delete el.dataset.anim;
+    void el.offsetWidth;
+    el.dataset.anim = "in";
+  }, []);
+
+  /** Slide out, then answer. `shelf-hiding` is Rust asking permission to hide. */
+  const animateOut = useCallback(() => {
+    ackSent.current = false;
+    const el = rootRef.current;
+    if (reducedMotion() || !el) {
+      acknowledgeHide();
+      return;
+    }
+    delete el.dataset.anim;
+    void el.offsetWidth;
+    el.dataset.anim = "out";
+    if (ackTimer.current !== undefined) window.clearTimeout(ackTimer.current);
+    ackTimer.current = window.setTimeout(acknowledgeHide, SHELF_OUT_ACK_MS);
+  }, [acknowledgeHide]);
 
   useEffect(() => {
     const pendingUnlisteners: Promise<() => void>[] = [];
@@ -134,6 +209,14 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
         }),
       );
     };
+    /** Coalesce a burst of `refresh` events into one trailing read. */
+    const scheduleRefresh = () => {
+      if (refreshTimer.current !== undefined) window.clearTimeout(refreshTimer.current);
+      refreshTimer.current = window.setTimeout(() => {
+        refreshTimer.current = undefined;
+        refresh();
+      }, REFRESH_DEBOUNCE_MS);
+    };
     const clearDictation = () =>
       setDictation((current) => ({ ...current, listening: false, transcribing: false }));
 
@@ -142,7 +225,7 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
       if (!alive) return;
       setState((current) => (current ? { ...current, license } : current));
     }).catch(() => undefined);
-    subscribe(listen("refresh", refresh));
+    subscribe(listen("refresh", scheduleRefresh));
     subscribe(
       listen("captured", (event) => {
         const id = Number(event.payload);
@@ -152,7 +235,17 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     );
     subscribe(
       listen("panel-shown", () => {
-        refresh();
+        animateIn();
+        // Paint first: the window is already on screen with the state it last
+        // rendered, and the read starts on the next frame so it cannot delay
+        // that first paint.
+        requestAnimationFrame(() => refresh());
+      }),
+    );
+    subscribe(listen("shelf-hiding", animateOut));
+    subscribe(
+      listen("shelf-edge", (event) => {
+        if (isShelfEdge(event.payload)) setEdge(event.payload);
       }),
     );
     subscribe(
@@ -270,13 +363,14 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     return () => {
       alive = false;
       disposed = true;
+      if (refreshTimer.current !== undefined) window.clearTimeout(refreshTimer.current);
       for (const pending of pendingUnlisteners) {
         void pending.then((unlisten) => {
           if (disposed) unlisten();
         });
       }
     };
-  }, []);
+  }, [animateIn, animateOut]);
 
   // One boundary around every screen the shell can show. The panel is the
   // screen that matters and the boot and onboarding states are what it looks
@@ -316,13 +410,27 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
       />
     </div>
   ) : (
-    <div className="app">
+    <div
+      ref={rootRef}
+      className="app"
+      data-edge={edge}
+      onAnimationEnd={(event) => {
+        // A card's own arrival animation bubbles through here too; only the
+        // band's slide is the hide handshake's business.
+        if (event.animationName.startsWith("shelf-out")) {
+          acknowledgeHide();
+        } else if (event.animationName.startsWith("shelf-in")) {
+          delete (event.currentTarget as HTMLElement).dataset.anim;
+        }
+      }}
+    >
       <Panel
         state={state}
         dictation={dictation}
         onState={setState}
         activeItemId={activeItemId}
         onActiveItemChange={setActiveItemId}
+        edge={edge}
       />
     </div>
   );

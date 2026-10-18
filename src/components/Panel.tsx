@@ -1,5 +1,4 @@
-import { Ellipsis, PenTool, Search, Settings, X } from "lucide-react";
-import { playCue } from "../audio";
+import { Ellipsis, Eraser, Package, PenTool, Search, Settings, Star, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -9,22 +8,35 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DictationState } from "../App";
+import { playCue } from "../audio";
+import {
+  clampPage,
+  escapeOutcome,
+  filterItems,
+  nextIndex,
+  pageCount,
+  pageItems,
+  pageSize,
+  shelfCommand,
+  TYPE_FILTERS,
+  type TypeFilter,
+} from "../shelf";
 import { api } from "../store";
-import type { AppState, Attachment, Item, Section, SortOrder } from "../types";
+import type { AppState, Attachment, Item, ShelfEdge, SortOrder } from "../types";
+import { InlineConfirm } from "../settings/ui";
+import ColorPreview from "./ColorPreview";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
+import FilterSwitcher from "./FilterSwitcher";
 import ItemCard from "./ItemCard";
-import ResizeHandles from "./ResizeHandles";
 import Menu from "./Menu";
-import SectionSwitcher from "./SectionSwitcher";
-
-const win = getCurrentWindow();
+import Pager from "./Pager";
+import TypeChips from "./TypeChips";
 
 /** A confirmation is a receipt. An error is the app reporting a failure. */
 export type ToastTone = "info" | "error";
 
-/** What every message in the panel goes through, however it was raised. */
+/** What every message in the shelf goes through, however it was raised. */
 type Notify = (text: string, tone?: ToastTone) => void;
 
 /** The `bard-toast` payload: a bare string is a confirmation. */
@@ -33,26 +45,44 @@ export interface ToastDetail {
   tone?: ToastTone;
 }
 
+/** A length from a computed custom property, with a floor under bad input. */
+function px(value: string, fallback: number): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export default function Panel({
   state,
   dictation,
   onState,
   activeItemId = null,
   onActiveItemChange,
+  edge,
 }: {
   state: AppState;
   dictation: DictationState;
   onState: (s: AppState) => void;
   activeItemId?: number | null;
   onActiveItemChange?: (id: number | null) => void;
+  /** Which edge the window is docked to; the layout follows it. */
+  edge: ShelfEdge;
 }) {
+  const vertical = edge === "left" || edge === "right";
+
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<TypeFilter>("all");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [page, setPage] = useState(0);
+  const [perPage, setPerPage] = useState(5);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [anchorId, setAnchorId] = useState<number | null>(null);
   const [composer, setComposer] = useState("");
-  const [showSwitcher, setShowSwitcher] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [preview, setPreview] = useState<Item | null>(null);
   const [composerMenu, setComposerMenu] = useState<{ x: number; y: number } | null>(null);
   const [toast, setToast] = useState<{ text: string; tone: ToastTone } | null>(null);
   const [menu, setMenu] = useState<{
@@ -63,35 +93,28 @@ export default function Panel({
   } | null>(null);
   const [soundOnCapture, setSoundOnCapture] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
-  // Which companions are out, so their header buttons read as pressed.
+  // Which companions are out, so their rail buttons read as pressed.
   const [companions, setCompanions] = useState({ draw: false, settings: false });
   // The one capture that has not been on screen yet, so only it animates in.
   const [freshId, setFreshId] = useState<number | null>(null);
 
-  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const timelineRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const packsRef = useRef<HTMLElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   // The last id the backend was told about, so focus, clicks and arrow keys all
   // cost one write between them rather than one each.
   const activeReported = useRef<number | null>(activeItemId);
   const seenIds = useRef<Set<number> | null>(null);
-  /** Timeline position to focus once the list next renders — set by a delete. */
   /**
-   * The item to focus once a deletion has rendered: an id, `undefined` for "the
-   * list is now empty, put focus in the composer", or `null` for "nothing to do".
+   * The item to focus once a re-render has happened: an id, `undefined` for
+   * "the shelf is now empty, put focus in the composer", or `null` for
+   * "nothing to do".
    */
   const focusAfterRender = useRef<number | undefined | null>(null);
 
-  /*
-    Everything the timeline draws is derived from `state.items` and `query`,
-    and both change identity on every `refresh` — which fires after every
-    click, keypress, capture and sort change. Derived in the body, that meant
-    re-filtering, re-grouping and re-counting the whole timeline per render,
-    and O(items × attachments) on top of it, 20 times a second during a
-    dictation take. Each one is a memo now, on its own real inputs.
-  */
   const attachmentsByItem = useMemo(() => {
     const index = new Map<number, Attachment[]>();
     for (const attachment of state.attachments) {
@@ -102,7 +125,10 @@ export default function Panel({
     return index;
   }, [state.attachments]);
 
-  const visible = useMemo(() => filterItems(state.items, query), [state.items, query]);
+  const visible = useMemo(
+    () => filterItems(state.items, query, filter, favoritesOnly),
+    [state.items, query, filter, favoritesOnly],
+  );
 
   /** Visible order, by id. Every arrow key and every range is a lookup here. */
   const order = useMemo(() => {
@@ -111,10 +137,20 @@ export default function Panel({
     return index;
   }, [visible]);
 
-  const grouped = useMemo(
-    () => groupBySection(visible, state.sections, state.activeSectionId),
-    [visible, state.sections, state.activeSectionId],
+  const pages = pageCount(visible.length, perPage);
+  const currentPage = Math.min(page, pages - 1);
+  const pageCards = useMemo(
+    () => pageItems(visible, currentPage, perPage),
+    [visible, currentPage, perPage],
   );
+
+  const counts = useMemo(() => {
+    const next = {} as Record<TypeFilter, number>;
+    for (const chip of TYPE_FILTERS) {
+      next[chip.id] = filterItems(state.items, query, chip.id, favoritesOnly).length;
+    }
+    return next;
+  }, [state.items, query, favoritesOnly]);
 
   const doneCount = useMemo(
     () => state.items.reduce((count, item) => (item.done !== 0 ? count + 1 : count), 0),
@@ -122,15 +158,16 @@ export default function Panel({
   );
 
   /**
-   * Roving tabindex: the row the arrows are pointing at is the timeline's only
-   * tab stop. When the active item has been filtered out, or has never been set,
-   * the first visible row takes it — a list whose tab stop is missing cannot be
-   * tabbed into at all.
+   * Roving tabindex: the card the arrows are pointing at is the zone's only
+   * tab stop. When the active card is not on this page, the first card takes
+   * it — a list whose tab stop is missing cannot be tabbed into at all.
    */
   const rovingId = useMemo(() => {
-    if (activeItemId !== null && order.has(activeItemId)) return activeItemId;
-    return visible[0]?.id ?? null;
-  }, [activeItemId, order, visible]);
+    if (activeItemId !== null && order.has(activeItemId) && pageCards.some((item) => item.id === activeItemId)) {
+      return activeItemId;
+    }
+    return pageCards[0]?.id ?? null;
+  }, [activeItemId, order, pageCards]);
 
   useEffect(() => {
     const seen = seenIds.current;
@@ -159,12 +196,9 @@ export default function Panel({
     [onActiveItemChange],
   );
 
-  /** Move DOM focus to a row, and keep it on screen. */
+  /** Move DOM focus to a card. */
   const focusCard = useCallback((id: number) => {
-    const card = timelineRef.current?.querySelector<HTMLElement>(`[data-item-id="${id}"]`);
-    if (!card) return;
-    card.focus();
-    card.scrollIntoView({ block: "nearest" });
+    pageRef.current?.querySelector<HTMLElement>(`[data-item-id="${id}"]`)?.focus();
   }, []);
 
   const notify = useCallback((text: string, tone: ToastTone = "info") => {
@@ -183,37 +217,58 @@ export default function Panel({
     setToast(null);
   }, []);
 
-  // Every overlay takes a stable close: the menus and the shortcut sheet restore
-  // focus and re-focus their first row when `onClose` changes, so a new closure
-  // on each render makes them thrash.
+  // Every overlay takes a stable close: the menus and the sheets restore focus
+  // and re-focus their first row when `onClose` changes, so a new closure on
+  // each render makes them thrash.
   const closeMenu = useCallback(() => setMenu(null), []);
   const closeOverflow = useCallback(() => setShowOverflow(false), []);
   const closeComposerMenu = useCallback(() => setComposerMenu(null), []);
-  const closeSwitcher = useCallback(() => setShowSwitcher(false), []);
+  const closeFilters = useCallback(() => setShowFilters(false), []);
   const closeShortcuts = useCallback(() => setShowShortcuts(false), []);
 
   /*
-    One delete path. Three call sites each used to do the same five things, and
-    each of them dropped the cursor on the floor: the focused card unmounted,
-    focus fell to the document, and the next Tab restarted at the search field.
-    The position is recorded here and the neighbour is focused once the shorter
+    How many cards fit the zone is measured, not assumed: the zones of the four
+    edges are differently sized windows, and the rule is that a page shows only
+    whole cards — a clipped card is a scroller Bard does not have. The card's
+    own size and the gap come from the tokens, so the maths and the layout can
+    never drift apart.
+  */
+  useEffect(() => {
+    const zone = pageRef.current;
+    if (!zone) return;
+    const measure = () => {
+      const style = getComputedStyle(zone);
+      const gap = px(style.getPropertyValue("--shelf-card-gap"), 12);
+      const card = vertical
+        ? px(style.getPropertyValue("--shelf-card-h"), 148)
+        : px(style.getPropertyValue("--shelf-card-w"), 236);
+      const fit = vertical ? zone.clientHeight : zone.clientWidth;
+      setPerPage(pageSize(fit, card, gap));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(zone);
+    return () => observer.disconnect();
+  }, [vertical]);
+
+  /*
+    One delete path. Every call site used to do the same five things, and each
+    of them dropped the cursor on the floor: the focused card unmounted, focus
+    fell to the document, and the next Tab restarted at the search field. The
+    position is recorded here and the neighbour is focused once the shorter
     list has actually rendered.
   */
   const deleteItems = useCallback(
     (ids: number[]) => {
       if (ids.length === 0) return;
-      // Address the neighbour by id, not by index. The old code recorded a
-      // position in the flat visible order and then looked it up in the DOM, which
-      // is in *grouped* order — and the two differ as soon as there is an Inbox
-      // item alongside a section item, because Inbox always renders first. Deleting
-      // the newest item then focused the one above it.
       const visibleIds = visible.map((item) => item.id);
       const at = visibleIds.findIndex((id) => ids.includes(id));
-      const nextId =
-        at < 0
-          ? null
-          : visibleIds[at + ids.length] ?? visibleIds[at - 1] ?? null;
-      focusAfterRender.current = nextId;
+      const remaining = visibleIds.filter((id) => !ids.includes(id));
+      // `undefined` when the zone is now empty: the composer is the natural
+      // place for focus, and returning without moving it drops the person on
+      // `<body>`, which is the defect this was written to fix.
+      focusAfterRender.current =
+        at < 0 ? null : remaining.length === 0 ? undefined : remaining[Math.min(at, remaining.length - 1)];
       for (const id of ids) void api.deleteItem(id);
       setSelectedIds(new Set());
       if (activeItemId !== null && ids.includes(activeItemId)) markActive(null);
@@ -226,15 +281,12 @@ export default function Panel({
     const id = focusAfterRender.current;
     if (id === null) return;
     focusAfterRender.current = null;
-    // Nothing left to land on — the timeline is now empty. The composer is the
-    // natural place for focus, and returning without moving it drops the person on
-    // `<body>`, which is the defect this was written to fix.
     if (id === undefined) {
       composerRef.current?.focus();
       return;
     }
     focusCard(id);
-  }, [visible]);
+  }, [pageCards, focusCard]);
 
   useEffect(() => {
     void api.getState().then(onState);
@@ -266,50 +318,167 @@ export default function Panel({
     };
   }, [soundOnCapture, notify]);
 
+  /*
+    The one movement rule, shared by every key that moves the cursor. The page
+    follows the card, so the end of a page is never a dead end; focus follows
+    the card a frame later when it was not rendered yet.
+  */
+  const moveCursor = useCallback(
+    (delta: -1 | 1, extend: boolean) => {
+      if (visible.length === 0) return;
+      const from = rovingId !== null ? order.get(rovingId) ?? -1 : -1;
+      const next = nextIndex(from, delta, visible.length);
+      if (next < 0) return;
+      const nextItem = visible[next];
+      if (extend && anchorId !== null && order.has(anchorId)) {
+        const a = order.get(anchorId)!;
+        setSelectedIds(new Set(visible.slice(Math.min(a, next), Math.max(a, next) + 1).map((i) => i.id)));
+      } else {
+        setSelectedIds(new Set([nextItem.id]));
+        setAnchorId(nextItem.id);
+        markActive(nextItem.id);
+      }
+      const nextPage = Math.floor(next / perPage);
+      if (nextPage !== currentPage) {
+        setPage(nextPage);
+        focusAfterRender.current = nextItem.id;
+      } else {
+        focusCard(nextItem.id);
+      }
+    },
+    [visible, order, rovingId, anchorId, perPage, currentPage, markActive, focusCard],
+  );
+
+  /** Change page and point the cursor at its first card. */
+  const goToPage = useCallback(
+    (next: number) => {
+      const clamped = clampPage(next, visible.length, perPage);
+      const first = pageItems(visible, clamped, perPage)[0];
+      if (!first) return;
+      setPage(clamped);
+      setSelectedIds(new Set([first.id]));
+      setAnchorId(first.id);
+      markActive(first.id);
+      if (clamped === currentPage) focusCard(first.id);
+      else focusAfterRender.current = first.id;
+    },
+    [visible, perPage, currentPage, markActive, focusCard],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       const typing =
         target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
-      if (menu) {
-        if (e.key === "Escape") setMenu(null);
+
+      // A confirmation is the first thing Escape answers, then any overlay.
+      // Each overlay also owns its keys in the capture phase; this is the
+      // belt for when focus has wandered outside it.
+      if (confirmingClear) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setConfirmingClear(false);
+        }
         return;
       }
-      if (showShortcuts) {
-        if (e.key === "Escape") setShowShortcuts(false);
-        return;
-      }
-      if (showOverflow) {
-        if (e.key === "Escape") setShowOverflow(false);
-        return;
-      }
-      if (showSwitcher) return;
+      if (menu || showShortcuts || showOverflow || showFilters || preview) return;
+
       if (typing) {
-        if (
-          e.key === "Escape" &&
-          (target as HTMLInputElement).value === "" &&
-          target.tagName === "INPUT"
+        if (e.key !== "Escape") return;
+        // Escape reads the fixed order even while a field has focus. A
+        // non-empty search you cannot clear while the caret is in it is the
+        // defect this replaces.
+        switch (
+          escapeOutcome({
+            query,
+            composer,
+            composerFocused: target === composerRef.current,
+            selectionSize: selectedIds.size,
+          })
         ) {
-          void api.hidePanel();
+          case "search":
+            setQuery("");
+            break;
+          case "composer":
+            setComposer("");
+            break;
+          case "selection":
+            setSelectedIds(new Set());
+            break;
+          case "retract":
+            void api.hidePanel();
+            break;
+        }
+        return;
+      }
+
+      const command = shelfCommand(e);
+      if (!command) {
+        // Start typing anywhere and the search begins, as Paste's shelf does.
+        // Space is not a letter: it is the Done key.
+        if (
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey &&
+          !e.isComposing &&
+          e.key.length === 1 &&
+          e.key !== " "
+        ) {
+          e.preventDefault();
+          setSearchOpen(true);
+          setQuery((current) => current + e.key);
+          window.setTimeout(() => {
+            const input = searchRef.current;
+            if (!input) return;
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+          }, 0);
+        }
+        return;
+      }
+
+      if (command.type === "escape") {
+        switch (
+          escapeOutcome({ query, composer, composerFocused: false, selectionSize: selectedIds.size })
+        ) {
+          case "search":
+            e.preventDefault();
+            setQuery("");
+            break;
+          case "selection":
+            e.preventDefault();
+            setSelectedIds(new Set());
+            break;
+          case "retract":
+            e.preventDefault();
+            void api.hidePanel();
+            break;
+          case "composer":
+            // The composer is not focused, so its draft is not what the
+            // person is looking at. Nothing to clear here.
+            break;
         }
         return;
       }
 
       /*
-        The acted-on item is the focused one, never the selection this render
-        happened to capture. A Space or Enter on a card used to run the card's
-        own handler, which changed the selection, and then bubble to here and
-        act on the *previous* selection — so the keys read on the timeline were
-        not the keys that took effect.
+        A control outside a card — a chip, the pager, a rail button — owns its
+        own keys; the shelf only claims what nothing else will. Inside a card,
+        Enter and Space belong to the card's own controls.
       */
-      const row = target instanceof Element ? target.closest<HTMLElement>("[data-item-id]") : null;
-      const focusedId = row?.dataset.itemId ? Number(row.dataset.itemId) : null;
-      // A control inside a card keeps its own Space and Enter; the panel only
-      // claims them where nothing else will.
+      const onCard = target.closest("[data-item-id]") !== null;
       const onControl =
-        target instanceof Element &&
         target.closest('button, a[href], [role="button"], input, textarea, select') !== null;
+      if (command.type === "move" && onControl && !onCard) return;
+      if ((command.type === "paste" || command.type === "toggleDone") && onControl) return;
+
+      /*
+        The acted-on item is the focused one, never the selection this render
+        happened to capture — a Space or Enter used to run the card's own
+        handler, then bubble here and act on the previous selection.
+      */
+      const row = target.closest<HTMLElement>("[data-item-id]");
+      const focusedId = row?.dataset.itemId ? Number(row.dataset.itemId) : null;
       const idx = (id: number) => order.get(id) ?? -1;
       const sel = [...selectedIds].sort((a, b) => idx(a) - idx(b));
       const lead = focusedId ?? sel[0] ?? activeItemId;
@@ -324,91 +493,56 @@ export default function Panel({
               ? [activeItemId]
               : [];
 
-      if (e.ctrlKey || e.metaKey) {
-        const key = e.key.toLowerCase();
-        if (key === "k") {
+      switch (command.type) {
+        case "move":
           e.preventDefault();
-          setShowSwitcher(true);
-          return;
-        }
-        if (key === "/") {
-          e.preventDefault();
-          setShowShortcuts(true);
-          return;
-        }
-        if (key === "c" && actionSel.length > 0) {
-          e.preventDefault();
-          copySelection(state, actionSel, notify);
-          return;
-        }
-        if (/^[1-9]$/.test(key) && !e.shiftKey && !e.altKey) {
-          const item = visible[Number(key) - 1];
-          if (item) {
-            e.preventDefault();
-            copySelection(state, [item.id], notify, true);
-          }
-          return;
-        }
-        if (key === "p" && !e.shiftKey && !e.altKey && actionSel.length > 0) {
-          e.preventDefault();
-          const leadItem = state.items.find((i) => i.id === lead);
-          void setPins(actionSel, leadItem ? leadItem.pinnedAt === null : true, notify, refresh);
-          return;
-        }
-        if (key === "m" && e.shiftKey && actionSel.length > 0) {
-          e.preventDefault();
-          copyAsList(state, actionSel, notify);
-          return;
-        }
-      }
-      switch (e.key) {
-        case "ArrowDown":
-        case "ArrowUp": {
-          e.preventDefault();
-          if (visible.length === 0) break;
-          const delta = e.key === "ArrowDown" ? 1 : -1;
-          const at = idx(rovingId ?? -1);
-          let next: number;
-          if (at < 0) {
-            next = delta > 0 ? visible[0].id : visible[visible.length - 1].id;
-          } else {
-            next = visible[Math.min(visible.length - 1, Math.max(0, at + delta))].id;
-          }
-          if (e.shiftKey && anchorId !== null && idx(anchorId) >= 0) {
-            const a = idx(anchorId);
-            const b = idx(next);
-            setSelectedIds(new Set(visible.slice(Math.min(a, b), Math.max(a, b) + 1).map((i) => i.id)));
-          } else {
-            setSelectedIds(new Set([next]));
-            setAnchorId(next);
-            markActive(next);
-          }
-          // Focus follows the cursor. Without this the ring, the selection and
-          // the next Space keypress were all describing different cards.
-          focusCard(next);
+          moveCursor(command.delta, command.extend);
           break;
-        }
-        case "Enter": {
-          // On a control, Enter is that control's own command. Otherwise it
-          // pastes into the app the panel was opened over; Ctrl+C only copies.
-          if (!onControl && actionSel.length > 0) {
+        case "page":
+          e.preventDefault();
+          goToPage(currentPage + command.delta);
+          break;
+        case "paste":
+          if (actionSel.length > 0) {
             e.preventDefault();
             copySelection(state, actionSel, notify, true);
           }
           break;
+        case "pasteNth": {
+          const card = pageCards[command.index];
+          if (card) {
+            e.preventDefault();
+            copySelection(state, [card.id], notify, true);
+          }
+          break;
         }
-        case "Delete":
-        case "Backspace": {
+        case "copy":
+          if (actionSel.length > 0) {
+            e.preventDefault();
+            copySelection(state, actionSel, notify);
+          }
+          break;
+        case "copyMarkdown":
+          if (actionSel.length > 0) {
+            e.preventDefault();
+            copyAsList(state, actionSel, notify);
+          }
+          break;
+        case "pin":
+          if (actionSel.length > 0) {
+            e.preventDefault();
+            const leadItem = state.items.find((i) => i.id === lead);
+            void setPins(actionSel, leadItem ? leadItem.pinnedAt === null : true, notify, refresh);
+          }
+          break;
+        case "delete":
           if (actionSel.length > 0) {
             e.preventDefault();
             deleteItems(actionSel);
           }
           break;
-        }
-        case " ": {
-          // Space marks done, as in Copper. On a control it is that control's
-          // own key, and running both would toggle the same item twice.
-          if (onControl || actionSel.length === 0) break;
+        case "toggleDone": {
+          if (actionSel.length === 0) break;
           e.preventDefault();
           const leadItem = state.items.find((i) => i.id === lead);
           const next = leadItem ? leadItem.done === 0 : true;
@@ -416,12 +550,14 @@ export default function Panel({
           refresh();
           break;
         }
-        case "Escape": {
-          if (query) setQuery("");
-          else if (selectedIds.size > 0) setSelectedIds(new Set());
-          else void api.hidePanel();
+        case "filters":
+          e.preventDefault();
+          setShowFilters(true);
           break;
-        }
+        case "shortcuts":
+          e.preventDefault();
+          setShowShortcuts(true);
+          break;
       }
     };
     window.addEventListener("keydown", onKey);
@@ -429,18 +565,26 @@ export default function Panel({
   }, [
     state,
     query,
+    composer,
     order,
     visible,
     rovingId,
+    pageCards,
+    perPage,
+    currentPage,
     activeItemId,
     selectedIds,
     anchorId,
     menu,
+    preview,
+    confirmingClear,
     notify,
     markActive,
     refresh,
     deleteItems,
-    showSwitcher,
+    moveCursor,
+    goToPage,
+    showFilters,
     showOverflow,
     showShortcuts,
   ]);
@@ -464,14 +608,15 @@ export default function Panel({
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
-  // Opening the panel lands in search: type to filter, arrow down into the
-  // list, Enter to paste the top match. Re-asserted on every `panel-shown`,
-  // because the window is hidden and shown, never unmounted.
+  // Opening the shelf lands in search: type to filter, Enter pastes the top
+  // match. Re-asserted on every `panel-shown`, because the window is hidden
+  // and shown, never unmounted.
   useEffect(() => {
     const focusSearch = () => {
       // WebView2 can report the webview unfocused for a tick after the native
       // window takes focus, and `focus()` is a no-op until it catches up.
       window.setTimeout(() => {
+        setSearchOpen(true);
         searchRef.current?.focus();
         searchRef.current?.select();
       }, 0);
@@ -547,12 +692,6 @@ export default function Panel({
     };
   }, [notify, refresh]);
 
-  const onDrag = (e: ReactMouseEvent) => {
-    const t = e.target as HTMLElement;
-    if (t.closest("button, input, textarea")) return;
-    void win.startDragging();
-  };
-
   const submitComposer = () => {
     if (!state.license.canUse) {
       notify(state.license.message || "Activate Bard to add captures.", "error");
@@ -560,23 +699,29 @@ export default function Panel({
     }
     const v = composer.trim();
     if (!v) return;
-    if (v.startsWith("#")) {
-      void api.createSection(v.replace(/^#+\s*/, "")).then(() => notify("Section created"));
-    } else {
-      void api.addItem(v);
-    }
+    void api.addItem(v);
     setComposer("");
-    if (composerRef.current) composerRef.current.style.height = "auto";
     refresh();
   };
 
+  /** What a plain click on a card does: paste it and leave. */
+  const pasteItem = (item: Item) => {
+    setSelectedIds(new Set([item.id]));
+    setAnchorId(item.id);
+    markActive(item.id);
+    copySelection(state, [item.id], notify, true);
+  };
+
   const onItemClick = (item: Item, e: ReactMouseEvent) => {
+    // The modifier clicks still select — that is how a mouse reaches the
+    // multi-item commands — and every other click is the paste.
     if (e.ctrlKey || e.metaKey) {
       const next = new Set(selectedIds);
       if (next.has(item.id)) next.delete(item.id);
       else next.add(item.id);
       setSelectedIds(next);
       setAnchorId(item.id);
+      markActive(item.id);
       return;
     }
     if (e.shiftKey && anchorId !== null) {
@@ -587,8 +732,7 @@ export default function Panel({
       }
       return;
     }
-    setSelectedIds(new Set([item.id]));
-    setAnchorId(item.id);
+    pasteItem(item);
   };
 
   const openContextMenu = (item: Item, x: number, y: number) => {
@@ -641,177 +785,251 @@ export default function Panel({
     setMenu(null);
   };
 
-  const activeSectionName =
-    state.sections.find((s) => s.id === state.activeSectionId)?.name ?? null;
+  const clearCaptures = () => {
+    void api
+      .clearCaptures()
+      .then(() => {
+        setConfirmingClear(false);
+        notify("Cleared captures");
+        refresh();
+      })
+      .catch((reason: unknown) => {
+        setConfirmingClear(false);
+        playCue("error");
+        const detail = reason instanceof Error ? reason.message : String(reason ?? "");
+        notify(detail || "Couldn't clear captures.", "error");
+      });
+  };
+
+  const openSearch = () => {
+    setSearchOpen(true);
+    window.setTimeout(() => searchRef.current?.focus(), 0);
+  };
 
   return (
     <>
-      {/* No wordmark and no window controls: the panel is dismissed from the
-          keyboard, and its chrome is a search field and one overflow button. */}
-      <header className="header" onMouseDown={onDrag}>
-        <div className="search-field">
-          <Search size={14} strokeWidth={2} aria-hidden="true" />
-          <input
-            ref={searchRef}
-            className="search"
-            placeholder="Search"
-            value={query}
-            aria-label="Search"
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              const first = visible[0];
-              if (!first) return;
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setSelectedIds(new Set([first.id]));
-                setAnchorId(first.id);
-                markActive(first.id);
-                focusCard(first.id);
-              } else if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                copySelection(state, [first.id], notify, true);
-              }
+      {/* The rail is the shelf's whole chrome: what the All zone is pointed at
+          on the left, the tools it is not on the right. On the side edges it
+          wraps, and the search collapses to an icon until it is wanted. */}
+      <div className="shelf-rail">
+        <div className="rail-start">
+          <button
+            type="button"
+            className={`icon-btn rail-btn${favoritesOnly ? " active" : ""}`}
+            aria-label="Favorites"
+            aria-pressed={favoritesOnly}
+            title="Show favorites only"
+            onClick={() => {
+              setFavoritesOnly((v) => !v);
+              setPage(0);
             }}
-          />
+          >
+            <Star size={16} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="icon-btn rail-btn"
+            aria-label="Clear captures"
+            title="Clear captures…"
+            onClick={() => setConfirmingClear(true)}
+          >
+            <Eraser size={16} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+          {vertical && !searchOpen ? (
+            <button
+              type="button"
+              className="icon-btn rail-btn"
+              aria-label="Search"
+              title="Search"
+              onClick={openSearch}
+            >
+              <Search size={16} strokeWidth={2} aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
-        <div className="header-actions" role="group" aria-label="Bard tools">
+
+        {!vertical || searchOpen ? (
+          <div className="search-field">
+            <Search size={14} strokeWidth={2} aria-hidden="true" />
+            <input
+              ref={searchRef}
+              className="search"
+              placeholder="Search"
+              value={query}
+              aria-label="Search"
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setPage(0);
+              }}
+              onBlur={() => {
+                if (vertical && !query) setSearchOpen(false);
+              }}
+              onKeyDown={(e) => {
+                // Enter in the field pastes the card the arrows last pointed
+                // at, or the first one; ArrowDown drops into the row.
+                const target =
+                  activeItemId !== null && order.has(activeItemId)
+                    ? state.items.find((i) => i.id === activeItemId)
+                    : pageCards[0];
+                if (!target) return;
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSelectedIds(new Set([target.id]));
+                  setAnchorId(target.id);
+                  markActive(target.id);
+                  focusCard(target.id);
+                } else if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  copySelection(state, [target.id], notify, true);
+                }
+              }}
+            />
+          </div>
+        ) : null}
+
+        <TypeChips
+          value={filter}
+          onChange={(next) => {
+            setFilter(next);
+            setPage(0);
+          }}
+        />
+
+        <span className="rail-spring" />
+
+        <div className="rail-end" role="group" aria-label="Bard tools">
           {/* Draw and Settings are toggles: a second click puts the window
               away again, and each reads as pressed while its window is out. */}
           <button
             type="button"
-            className={`icon-btn header-action${companions.draw ? " active" : ""}`}
+            className={`icon-btn rail-btn${companions.draw ? " active" : ""}`}
             aria-label="Draw"
             aria-pressed={companions.draw}
             title="Draw"
             onClick={() => void api.toggleCompanion("draw")}
           >
-            <PenTool size={16} strokeWidth={1.8} />
+            <PenTool size={16} strokeWidth={1.8} aria-hidden="true" />
           </button>
           <button
             type="button"
-            className={`icon-btn header-action${companions.settings ? " active" : ""}`}
+            className={`icon-btn rail-btn${companions.settings ? " active" : ""}`}
             aria-label="Settings"
             aria-pressed={companions.settings}
             title="Settings"
             onClick={() => void api.toggleCompanion("settings")}
           >
-            <Settings size={16} strokeWidth={1.8} />
+            <Settings size={16} strokeWidth={1.8} aria-hidden="true" />
           </button>
           <button
             type="button"
-            className={`icon-btn header-action${showOverflow ? " active" : ""}`}
+            className={`icon-btn rail-btn${showOverflow ? " active" : ""}`}
             aria-label="More"
             title="More"
             aria-haspopup="menu"
             aria-expanded={showOverflow}
             onClick={() => setShowOverflow((v) => !v)}
           >
-            <Ellipsis size={16} strokeWidth={1.8} />
+            <Ellipsis size={16} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
-      </header>
-
-      <ResizeHandles />
-
-      {/* The listbox holds the whole timeline: notes, drawings, images and
-          dictations alike, which is why it is not labelled "Captured items".
-          Its one tab stop is `rovingId`; the arrows move focus with it. */}
-      <div
-        ref={timelineRef}
-        className="timeline"
-        role="listbox"
-        aria-label="Timeline"
-        aria-multiselectable="true"
-        // The container takes the tab stop when the list is empty. Every card is
-        // `tabIndex={-1}` in that case — there is no row to point at — so without
-        // this the timeline cannot be reached by Tab at all and the next Tab
-        // restarts from the search field.
-        tabIndex={rovingId === null ? 0 : -1}
-      >
-        {state.items.length === 0 ? (
-          <EmptyState section={activeSectionName} />
-        ) : grouped.length === 0 ? (
-          <div className="empty-state">
-            <div className="title">No matches</div>
-            <div className="hint">Nothing here matches “{query}”.</div>
-          </div>
-        ) : (
-          grouped.map((group) => {
-            return (
-              <div key={group.key} role="group" aria-label={group.label}>
-                {/* A letterspaced label and a hairline reaching the edge — the
-                    count and the folder glyph were noise on a list you already
-                    see in full. Pinned is not a section, so it is a label, not
-                    a button that would change the active section. */}
-                {group.pinned ? (
-                  <div
-                    className="group-header static"
-                    title="Right Shift twice, then 1, 2 or 3, pastes these from any app"
-                  >
-                    <span className="group-name">{group.label}</span>
-                    <span className="group-rule" aria-hidden="true" />
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className={`group-header${
-                      (group.section ? group.section.id : null) === state.activeSectionId
-                        ? " active"
-                        : ""
-                    }`}
-                    onClick={() => {
-                      void api.setActiveSection(group.section ? group.section.id : null);
-                      refresh();
-                    }}
-                  >
-                    <span className="group-name">{group.label}</span>
-                    <span className="group-rule" aria-hidden="true" />
-                  </button>
-                )}
-                {group.items.map((it) => (
-                  <ItemCard
-                    key={it.id}
-                    item={it}
-                    attachments={attachmentsByItem.get(it.id) ?? EMPTY_ATTACHMENTS}
-                    selected={selectedIds.has(it.id)}
-                    active={rovingId === it.id}
-                    fresh={freshId === it.id}
-                    editing={editingId === it.id}
-                    search={query}
-                    onClick={(e) => onItemClick(it, e)}
-                    onFocus={() => markActive(it.id)}
-                    onContextMenu={(e) => onContextMenu(it, e)}
-                    onOpenContextMenu={(event) => {
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      openContextMenu(it, rect.left + rect.width / 2, rect.top + rect.height / 2);
-                    }}
-                    onCopyImage={() => {
-                      copySelection(state, [it.id], notify);
-                      markActive(it.id);
-                    }}
-                    onToggleDone={() => {
-                      void api.setDone(it.id, it.done === 0).then(refresh);
-                    }}
-                    onDelete={() => deleteItems([it.id])}
-                    onEdit={() => setEditingId(it.id)}
-                    onEditDone={() => setEditingId(null)}
-                  />
-                ))}
-              </div>
-            );
-          })
-        )}
       </div>
 
-      {/* The foot is a positioning context, so the toast sits directly above the
-          composer at any composer height — it was pinned to `bottom: 14px`,
-          which put it on top of the field you were typing into. */}
-      <div className="panel-foot">
+      <div className="shelf-body">
+        {/* The All zone: the current page of cards, and the pager. Its one tab
+            stop is the roving card; the pager is its own group of buttons. */}
+        <section className="shelf-zone all" aria-label="Cards">
+          <div
+            ref={pageRef}
+            id="shelf-cards"
+            className="shelf-page"
+            role="listbox"
+            aria-label="Cards"
+            aria-multiselectable="true"
+            // The container takes the tab stop when the zone is empty. Every
+            // card is `tabIndex={-1}` in that case — there is no row to point
+            // at — so without this the zone cannot be reached by Tab at all.
+            tabIndex={rovingId === null ? 0 : -1}
+          >
+            {state.items.length === 0 ? (
+              <EmptyState query={query} filter={filter} favoritesOnly={favoritesOnly} empty />
+            ) : pageCards.length === 0 ? (
+              <EmptyState query={query} filter={filter} favoritesOnly={favoritesOnly} empty={false} />
+            ) : (
+              pageCards.map((item, index) => (
+                <ItemCard
+                  key={item.id}
+                  item={item}
+                  index={index}
+                  attachments={attachmentsByItem.get(item.id) ?? EMPTY_ATTACHMENTS}
+                  selected={selectedIds.has(item.id)}
+                  active={rovingId === item.id}
+                  fresh={freshId === item.id}
+                  editing={editingId === item.id}
+                  search={query}
+                  onClick={(e) => onItemClick(item, e)}
+                  onFocus={() => markActive(item.id)}
+                  onContextMenu={(e) => onContextMenu(item, e)}
+                  onMore={({ x, y }) => openContextMenu(item, x, y)}
+                  onToggleDone={() => {
+                    void api.setDone(item.id, item.done === 0).then(refresh);
+                  }}
+                  onCopy={() => {
+                    copySelection(state, [item.id], notify);
+                    markActive(item.id);
+                  }}
+                  onFavorite={() => {
+                    void api.setFavorite(item.id, item.favorite === 0);
+                    refresh();
+                  }}
+                  onPreview={() => setPreview(item)}
+                  onDelete={() => deleteItems([item.id])}
+                  onEditDone={() => setEditingId(null)}
+                />
+              ))
+            )}
+          </div>
+          <Pager page={currentPage} pages={pages} onPage={goToPage} label="Card pages" />
+        </section>
+
+        <div className="shelf-divider" aria-hidden="true" />
+
+        {/* The packs shell: the zone, its label, and the empty state a new
+            shelf shows until packs arrive. The dividers and the layout are
+            final; the feature lands in a later lane. */}
+        <section
+          ref={packsRef}
+          id="shelf-packs"
+          className="shelf-zone packs"
+          aria-label="Packs"
+          tabIndex={0}
+        >
+          <h2 className="packs-title">Packs</h2>
+          <div className="packs-empty">
+            <Package size={18} strokeWidth={1.6} aria-hidden="true" />
+            <div className="title">No packs yet</div>
+            <div className="hint">Packs will hold the items you paste together.</div>
+          </div>
+        </section>
+      </div>
+
+      {/* The foot is a positioning context, so the toast and the confirmation
+          sit directly above the composer whatever its height. */}
+      <div className="shelf-foot">
         {state.license.state === "restricted" ? (
           <div className="license-gate" role="status">
             <span>{state.license.message || "Activate Bard to continue capturing."}</span>
             <button type="button" className="btn" onClick={() => void api.openSettings()}>Activate</button>
           </div>
+        ) : null}
+
+        {confirmingClear ? (
+          <InlineConfirm
+            confirmLabel="Clear captures"
+            onCancel={() => setConfirmingClear(false)}
+            onConfirm={clearCaptures}
+          >
+            Remove automatic clipboard and dictation history? Your notes and favourites stay.
+          </InlineConfirm>
         ) : null}
 
         <div className="composer">
@@ -850,20 +1068,14 @@ export default function Panel({
                 e.target.value = "";
               }}
             />
-            <textarea
+            <input
               ref={composerRef}
               className="composer-input"
-              rows={1}
+              type="text"
               disabled={!state.license.canUse}
-              placeholder={`Add a note or a prompt${
-                activeSectionName ? ` (${activeSectionName.toLowerCase()})` : ""
-              }`}
+              placeholder="Add a note"
               value={composer}
-              onChange={(e) => {
-                setComposer(e.target.value);
-                e.target.style.height = "auto";
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-              }}
+              onChange={(e) => setComposer(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -944,19 +1156,28 @@ export default function Panel({
         />
       ) : null}
 
-      {showSwitcher ? (
-        <SectionSwitcher
-          state={state}
-          onClose={closeSwitcher}
-          onPicked={(id) => {
-            void api.setActiveSection(id);
-            setShowSwitcher(false);
-            refresh();
+      {showFilters ? (
+        <FilterSwitcher
+          value={filter}
+          counts={counts}
+          onClose={closeFilters}
+          onPick={(next) => {
+            setFilter(next);
+            setPage(0);
+            setShowFilters(false);
+          }}
+          onPacks={() => {
+            setShowFilters(false);
+            window.requestAnimationFrame(() => packsRef.current?.focus());
           }}
         />
       ) : null}
 
       {showShortcuts ? <ShortcutSheet onClose={closeShortcuts} /> : null}
+
+      {preview ? (
+        <ColorPreview item={preview} onClose={() => setPreview(null)} notify={notify} />
+      ) : null}
 
       {menu ? (
         <ContextMenu
@@ -975,7 +1196,7 @@ export default function Panel({
 /** Shared by every card with no attachments, so the prop keeps one identity. */
 const EMPTY_ATTACHMENTS: Attachment[] = [];
 
-/** The timeline's orders, in the menu's order. Newest first is the default. */
+/** The All zone's orders, in the menu's order. Newest first is the default. */
 const SORT_ORDERS: [SortOrder, string][] = [
   ["newest", "Newest first"],
   ["oldest", "Oldest first"],
@@ -985,7 +1206,7 @@ const SORT_ORDERS: [SortOrder, string][] = [
 
 /*
   The fixed gesture map, read off gesture.rs: Left Shift captures, Ctrl
-  dictates, Right Shift opens the panel, Left Alt draws, Right Alt opens
+  dictates, Right Shift opens the shelf, Left Alt draws, Right Alt opens
   Settings. The sheet is the only place in the app that states all of them, so
   a row that names the wrong side teaches the wrong gesture.
 */
@@ -995,7 +1216,7 @@ const SHORTCUT_GROUPS: { name: string; rows: { keys: string[]; what: string }[] 
     rows: [
       { keys: ["Left Shift", "Left Shift"], what: "Capture the selection" },
       { keys: ["Ctrl", "Ctrl"], what: "Dictate — hold, or tap twice" },
-      { keys: ["Right Shift", "Right Shift"], what: "Show or hide Bard" },
+      { keys: ["Right Shift", "Right Shift"], what: "Show or hide the shelf" },
       { keys: ["Right Shift", "Right Shift", "1 / 2 / 3"], what: "Paste one of the first three — pins first" },
       { keys: ["Left Alt", "Left Alt"], what: "Draw" },
       { keys: ["Right Alt", "Right Alt"], what: "Settings" },
@@ -1006,23 +1227,25 @@ const SHORTCUT_GROUPS: { name: string; rows: { keys: string[]; what: string }[] 
     name: "Keys",
     rows: [
       { keys: ["Enter"], what: "Paste into your app" },
-      { keys: ["Ctrl", "1–9"], what: "Paste that item" },
+      { keys: ["Ctrl", "1–9"], what: "Paste that card" },
+      { keys: ["←", "→"], what: "Move between cards" },
+      { keys: ["Shift", "←/→"], what: "Extend the selection" },
+      { keys: ["PgUp", "PgDn"], what: "Change page" },
       { keys: ["Ctrl", "C"], what: "Copy" },
-      { keys: ["Ctrl", "Shift", "M"], what: "Copy as list" },
+      { keys: ["Ctrl", "Shift", "M"], what: "Copy as Markdown" },
       { keys: ["Ctrl", "P"], what: "Pin or unpin" },
-      { keys: ["Ctrl", "K"], what: "Sections" },
+      { keys: ["Ctrl", "K"], what: "Filters and packs" },
       { keys: ["Ctrl", "/"], what: "These shortcuts" },
       { keys: ["Space"], what: "Done" },
-      { keys: ["Esc"], what: "Close" },
+      { keys: ["Esc"], what: "Clear search, then selection, then close" },
     ],
   },
 ];
 
 /**
  * The shortcut sheet is a modal, so it behaves like one: a scrim that the
- * timeline cannot be clicked through, focus that starts inside and cannot Tab
- * out, Escape to leave, and the focus returned to wherever it came from. The
- * previous version declared `aria-modal` and none of that.
+ * cards cannot be clicked through, focus that starts inside and cannot Tab
+ * out, Escape to leave, and the focus returned to wherever it came from.
  */
 function ShortcutSheet({ onClose }: { onClose: () => void }) {
   const cardRef = useRef<HTMLDivElement>(null);
@@ -1062,12 +1285,12 @@ function ShortcutSheet({ onClose }: { onClose: () => void }) {
       }
     };
 
-    // Capture: the panel's own handler would otherwise hide the whole window
-    // before the sheet ever saw the key.
+    // Capture: the shelf's own handler would otherwise act on the key before
+    // the sheet ever saw it.
     window.addEventListener("keydown", onKey, true);
     return () => {
       window.removeEventListener("keydown", onKey, true);
-      restoreFocusTo.current?.focus();
+      if (restoreFocusTo.current?.isConnected) restoreFocusTo.current.focus();
     };
   }, [onClose]);
 
@@ -1114,13 +1337,68 @@ function ShortcutSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
-function filterItems(items: Item[], query: string): Item[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return items;
-  return items.filter((it) => {
-    if (it.kind === "image") return false;
-    return it.content.toLowerCase().includes(q);
-  });
+/**
+ * The zone with nothing to show. It names the reason — nothing captured, no
+ * matches, the favourite view, the active chip — because "nothing here" on a
+ * shelf holding two hundred items is a lie.
+ */
+function EmptyState({
+  query,
+  filter,
+  favoritesOnly,
+  empty,
+}: {
+  query: string;
+  filter: TypeFilter;
+  favoritesOnly: boolean;
+  empty: boolean;
+}) {
+  if (empty) {
+    return (
+      <div className="empty-state">
+        <EmptyGlyph />
+        <div className="title">What should we build?</div>
+        <div className="hint">
+          Select text anywhere, then tap <kbd>Left Shift</kbd> twice.
+        </div>
+      </div>
+    );
+  }
+  if (query.trim()) {
+    return (
+      <div className="empty-state">
+        <div className="title">No matches</div>
+        <div className="hint">Nothing here matches “{query.trim()}”.</div>
+      </div>
+    );
+  }
+  if (favoritesOnly) {
+    return (
+      <div className="empty-state">
+        <div className="title">No favorites yet</div>
+        <div className="hint">Star an item and it stays within reach.</div>
+      </div>
+    );
+  }
+  const chip = TYPE_FILTERS.find((entry) => entry.id === filter);
+  return (
+    <div className="empty-state">
+      <div className="title">No {chip ? chip.label.toLowerCase() : "cards"} yet</div>
+      <div className="hint">Capture something and it lands here.</div>
+    </div>
+  );
+}
+
+function EmptyGlyph() {
+  return (
+    <svg className="empty-glyph" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9.25" fill="none" strokeWidth="1.5" />
+      <path d="M8.6 14.2a4.2 4.2 0 0 0 6.8 0" fill="none" strokeWidth="1.5"
+            strokeLinecap="round" />
+      <circle cx="9.2" cy="10" r="1" stroke="none" />
+      <circle cx="14.8" cy="10" r="1" stroke="none" />
+    </svg>
+  );
 }
 
 /**
@@ -1139,36 +1417,9 @@ async function setPins(ids: number[], pinned: boolean, notify: Notify, refresh: 
   }
 }
 
-type Group = { key: string; label: string; section: Section | null; pinned: boolean; items: Item[] };
-
-/**
- * Pins come first as their own group, in timeline order, because they are
- * slots 1–3 of Right Shift × 2 and Ctrl+1–3: the top of the panel has to be
- * what those keys paste. Everything else is grouped by section as before.
- */
-function groupBySection(items: Item[], sections: Section[], activeSectionId: number | null): Group[] {
-  const ordered = [...sections];
-  if (activeSectionId !== null) {
-    ordered.sort((a, b) => (a.id === activeSectionId ? -1 : b.id === activeSectionId ? 1 : a.id - b.id));
-  }
-  const out: Group[] = [];
-  const pins = items.filter((i) => i.pinnedAt !== null);
-  if (pins.length > 0) out.push({ key: "pinned", label: "Pinned", section: null, pinned: true, items: pins });
-  const rest = items.filter((i) => i.pinnedAt === null);
-  const inbox = rest.filter((i) => i.sectionId === null);
-  if (inbox.length > 0) out.push({ key: "section-inbox", label: "Inbox", section: null, pinned: false, items: inbox });
-  for (const section of ordered) {
-    const group = rest.filter((i) => i.sectionId === section.id);
-    if (group.length > 0) {
-      out.push({ key: `section-${section.id}`, label: section.name, section, pinned: false, items: group });
-    }
-  }
-  return out;
-}
-
 /**
  * Write the items to the clipboard. With `paste`, then hand focus back to the
- * app the panel was opened over and paste there — CopyCat's Return. The paste
+ * app the shelf was opened over and paste there — CopyCat's Return. The paste
  * only happens after Rust has confirmed the clipboard write, so a failed write
  * never pastes whatever was on the clipboard before.
  */
@@ -1178,7 +1429,7 @@ function copySelection(state: AppState, ids: number[], notify: Notify, paste = f
     .map((id) => state.items.find((i) => i.id === id))
     .filter((i): i is Item => !!i);
   // Rust verifies the clipboard write and returns an error when it could not be
-  // confirmed, so an unhandled rejection here used to leave the panel playing a
+  // confirmed, so an unhandled rejection here used to leave the shelf playing a
   // success cue and claiming "Copied" for a copy that never happened. A person
   // who walks away from a confirmed copy pastes whatever was there before.
   const reportFailure = (reason: unknown) => {
@@ -1267,32 +1518,4 @@ function readBlob(file: File): Promise<{ b64: string; ext: string }> {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-}
-
-/*
-  The empty state asks about the section you are actually in — "What should we
-  build in ui?" rather than a generic nothing-here. It is the one place the app
-  addresses you, so it stays a question, and the hint under it exists only
-  because a first-run user cannot know the capture gesture yet. It names Left
-  Shift: Right Shift opens the panel, and a user who taps the wrong one decides
-  the product is broken.
-*/
-function EmptyState({ section }: { section: string | null }) {
-  return (
-    <div className="empty-state">
-      <svg className="empty-glyph" viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="12" cy="12" r="9.25" fill="none" strokeWidth="1.5" />
-        <path d="M8.6 14.2a4.2 4.2 0 0 0 6.8 0" fill="none" strokeWidth="1.5"
-              strokeLinecap="round" />
-        <circle cx="9.2" cy="10" r="1" stroke="none" />
-        <circle cx="14.8" cy="10" r="1" stroke="none" />
-      </svg>
-      <div className="title">
-        What should we build{section ? ` in ${section}` : ""}?
-      </div>
-      <div className="hint">
-        Select text anywhere, then tap <kbd>Left Shift</kbd> twice.
-      </div>
-    </div>
-  );
 }

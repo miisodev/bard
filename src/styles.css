@@ -69,15 +69,123 @@ body {
   color: var(--on-canvas);
 }
 
-/* ---------- header ---------- */
+/* Docked to the top edge the band mirrors: the composer stays against the
+   screen edge and the rail moves down to the band's lower side, so the
+   controls never crowd the edge the window is anchored to. */
+.app[data-edge="top"] {
+  flex-direction: column-reverse;
+}
 
-.header {
+.app[data-edge="top"] .toast-layer {
+  bottom: auto;
+  top: 100%;
+  padding: var(--sp-4) var(--sp-6) 0;
+}
+
+/* ---------- shelf motion ---------- */
+
+/*
+  The band arrives from, and leaves towards, the edge it is docked to: the
+  window itself is placed at its final rectangle first, and only the content
+  moves — transform on the compositor, no layout. Reduced motion zeroes the
+  durations in tokens.css, and App.tsx answers Rust immediately instead of
+  waiting on a slide it is not going to draw.
+*/
+.app[data-anim="in"][data-edge="bottom"] { animation: shelf-in-bottom var(--t-base) var(--ease-out); }
+.app[data-anim="in"][data-edge="top"] { animation: shelf-in-top var(--t-base) var(--ease-out); }
+.app[data-anim="in"][data-edge="left"] { animation: shelf-in-left var(--t-base) var(--ease-out); }
+.app[data-anim="in"][data-edge="right"] { animation: shelf-in-right var(--t-base) var(--ease-out); }
+
+.app[data-anim="out"][data-edge="bottom"] { animation: shelf-out-bottom var(--t-instant) var(--ease-in-out) forwards; }
+.app[data-anim="out"][data-edge="top"] { animation: shelf-out-top var(--t-instant) var(--ease-in-out) forwards; }
+.app[data-anim="out"][data-edge="left"] { animation: shelf-out-left var(--t-instant) var(--ease-in-out) forwards; }
+.app[data-anim="out"][data-edge="right"] { animation: shelf-out-right var(--t-instant) var(--ease-in-out) forwards; }
+
+@keyframes shelf-in-bottom {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+@keyframes shelf-in-top {
+  from { transform: translateY(-100%); }
+  to { transform: none; }
+}
+
+@keyframes shelf-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+
+@keyframes shelf-in-right {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+
+@keyframes shelf-out-bottom {
+  to { transform: translateY(100%); }
+}
+
+@keyframes shelf-out-top {
+  to { transform: translateY(-100%); }
+}
+
+@keyframes shelf-out-left {
+  to { transform: translateX(-100%); }
+}
+
+@keyframes shelf-out-right {
+  to { transform: translateX(100%); }
+}
+
+/* ---------- shelf rail ---------- */
+
+/*
+  The rail is the shelf's one strip of chrome: what the All zone is pointed at
+  — favourites, clear, search, the type chips — on the left, and the tools on
+  the right. It is the first element of the band on the bottom, left and right
+  edges; on the top edge the band mirrors and it sits at the band's lower
+  side. On the side edges it wraps, and the search collapses to an icon until
+  it is wanted.
+*/
+.shelf-rail {
+  flex: none;
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  padding: var(--sp-6) var(--sp-6) var(--sp-4);
-  background: transparent;
+  min-height: var(--shelf-rail-h);
+  padding: var(--sp-5) var(--sp-6);
 }
+
+.rail-start,
+.rail-end {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+}
+
+.rail-spring {
+  flex: 1;
+  min-width: var(--sp-4);
+}
+
+/* The rail buttons are the shelf's own ghost size, a size up from the 30px
+   they were in the panel: a 32px target with a 16px glyph. */
+.rail-btn {
+  width: var(--icon-control);
+  height: var(--icon-control);
+  border-radius: var(--r-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--on-canvas-2);
+}
+
+.rail-btn:hover {
+  background: var(--canvas-hover);
+  color: var(--on-canvas);
+}
+
+/* ---------- search ---------- */
 
 .search {
   flex: 1;
@@ -91,23 +199,105 @@ body {
 }
 
 .search-field {
-  flex: 1;
-  min-width: 0;
+  flex: 0 1 260px;
+  min-width: 140px;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  height: 34px;
-  padding: 0 var(--sp-6);
+  height: 32px;
+  padding: 0 var(--sp-5);
   border-radius: var(--r-pill);
   background: var(--surface-2);
   color: var(--text-3);
   box-shadow: inset 0 0 0 1px var(--border);
   transition: box-shadow var(--t-fast) var(--ease-out);
-  -webkit-app-region: no-drag;
 }
 
 .search-field:focus-within {
   box-shadow: var(--focus-ring);
+}
+
+.search::placeholder {
+  color: var(--text-3);
+}
+
+/* ---------- type chips ---------- */
+
+.chips {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--sp-5);
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
+}
+
+.chip:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* The active chip is bolder as well as tinted: the weight is the signal that
+   survives for anyone the tint does not reach. */
+.chip.on {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: var(--fw-semibold);
+}
+
+.chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The side edges wrap the rail: the icons stay on one line, and the search —
+   collapsed to an icon until it is wanted — takes a line of its own when it
+   opens, with the chips under it. */
+.app[data-edge="left"] .shelf-rail,
+.app[data-edge="right"] .shelf-rail {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  row-gap: var(--sp-4);
+  overflow: hidden;
+}
+
+.app[data-edge="left"] .rail-start,
+.app[data-edge="right"] .rail-start,
+.app[data-edge="left"] .rail-end,
+.app[data-edge="right"] .rail-end,
+.app[data-edge="left"] .rail-spring,
+.app[data-edge="right"] .rail-spring {
+  order: 1;
+}
+
+.app[data-edge="left"] .search-field,
+.app[data-edge="right"] .search-field {
+  order: 2;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.app[data-edge="left"] .chips,
+.app[data-edge="right"] .chips {
+  order: 3;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
 }
 
 /* ---------- resize handles ---------- */
@@ -146,15 +336,6 @@ body {
 .h-rb { right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; }
 
 
-.search::placeholder {
-  color: var(--text-3);
-}
-
-.search:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent-soft);
-}
-
 .icon-btn {
   display: grid;
   place-items: center;
@@ -187,65 +368,209 @@ body {
   background: var(--accent-soft);
 }
 
-.header-actions {
+/* ---------- shelf zones ---------- */
+
+/*
+  The body is two zones divided where the mockup puts the rule: the All zone's
+  page of cards on one side, the packs pane on the other. The band's edge
+  decides the axis — a horizontal band lays the zones out left to right with
+  the cards in a row; a vertical band stacks them, and the cards with them.
+*/
+.shelf-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  flex: none;
+  gap: var(--sp-6);
+  padding: 0 var(--sp-6) var(--sp-5);
 }
 
-.header-action {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--r-sm);
+.app[data-edge="left"] .shelf-body,
+.app[data-edge="right"] .shelf-body {
+  flex-direction: column;
+}
+
+.shelf-zone {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.shelf-zone.all {
+  flex: 1;
+}
+
+.shelf-divider {
+  flex: none;
+  background: var(--canvas-rule);
+}
+
+.app[data-edge="bottom"] .shelf-divider,
+.app[data-edge="top"] .shelf-divider {
+  width: 1px;
+}
+
+.app[data-edge="left"] .shelf-divider,
+.app[data-edge="right"] .shelf-divider {
+  height: 1px;
+}
+
+/* The zone whose page size is measured. Only whole cards ever render: the page
+   size comes from this box and the card's own size in the tokens. */
+.shelf-page {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  gap: var(--shelf-card-gap);
+  overflow: hidden;
+}
+
+.app[data-edge="left"] .shelf-page,
+.app[data-edge="right"] .shelf-page {
+  flex-direction: column;
+}
+
+/* The zone is a tab stop when it is empty (there is no card to point at), so
+   it owes the keyboard a visible focus ring of its own. */
+.shelf-page:focus-visible {
+  outline: none;
+  border-radius: var(--r-card);
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------- pager ---------- */
+
+.pager {
+  flex: none;
+  height: var(--shelf-pager-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+}
+
+.pager-page {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--r-pill);
   background: transparent;
-  box-shadow: none;
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+
+.pager-page:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* The current page is bolder as well as tinted: colour is never the only
+   carrier, and at a glance bold is what makes the position readable. */
+.pager-page.on {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: var(--fw-semibold);
+}
+
+.pager-page:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.pager-gap {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+/* ---------- packs pane ---------- */
+
+.shelf-zone.packs {
+  flex: none;
+  outline: none;
+}
+
+.app[data-edge="bottom"] .shelf-zone.packs,
+.app[data-edge="top"] .shelf-zone.packs {
+  width: var(--shelf-packs-w);
+}
+
+.app[data-edge="left"] .shelf-zone.packs,
+.app[data-edge="right"] .shelf-zone.packs {
+  height: var(--shelf-packs-h);
+}
+
+.shelf-zone.packs:focus-visible {
+  border-radius: var(--r-card);
+  box-shadow: var(--focus-ring);
+}
+
+.packs-title {
+  margin: 0 0 var(--sp-5);
+  font-family: var(--font-small);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-caption);
+  text-transform: uppercase;
+  color: var(--on-canvas-3);
+}
+
+.packs-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  padding: var(--sp-6);
+  text-align: center;
   color: var(--on-canvas-2);
 }
 
-.header-action:hover {
-  background: var(--canvas-hover);
+.packs-empty svg {
+  color: var(--on-canvas-3);
+}
+
+.packs-empty .title {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
   color: var(--on-canvas);
 }
 
-.header-action:disabled {
-  opacity: 0.35;
-  cursor: default;
+.packs-empty .hint {
+  max-width: 26ch;
+  font-size: var(--fs-caption);
 }
 
-.header-action:disabled:hover {
-  background: transparent;
-  color: var(--on-canvas-2);
-}
-
-/* ---------- timeline ---------- */
-
-.timeline {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0 var(--sp-6) var(--sp-6);
-  scroll-behavior: auto;
-  display: flex;
-  flex-direction: column;
-}
-
-.timeline > div {
-  display: flex;
-  flex-direction: column;
-  gap: var(--card-gap);
-}
+/* ---------- card ---------- */
 
 .item-card {
   position: relative;
+  flex: none;
   display: flex;
-  align-items: flex-start;
-  gap: var(--sp-5);
-  padding: var(--card-pad-y) var(--card-pad-x);
+  flex-direction: column;
+  width: var(--shelf-card-w);
+  height: 100%;
   border-radius: var(--r-card);
   background: var(--surface);
   box-shadow: var(--el-card);
   cursor: pointer;
+  overflow: hidden;
   transition: background var(--t-fast) var(--ease-out);
+}
+
+.app[data-edge="left"] .item-card,
+.app[data-edge="right"] .item-card {
+  width: 100%;
+  height: var(--shelf-card-h);
 }
 
 /* Only a capture that has not been on screen before arrives with motion. The
@@ -266,10 +591,10 @@ body {
   box-shadow: var(--el-card), var(--focus-ring);
 }
 
-/* Selection is a ring, never a fill: a filled card competes with the done
-   state, and the two are read together constantly. */
+/* Selection is a ring, never a fill and never a scale: a filled card competes
+   with the done state, and a scaled one reflows the text inside it. */
 .item-card.selected {
-  box-shadow: var(--el-card), 0 0 0 2px var(--accent);
+  box-shadow: var(--el-card), var(--focus-ring);
 }
 
 /* The keyboard cursor: a lifted surface and a soft accent hairline — present
@@ -294,107 +619,105 @@ body {
   opacity: 0.5;
 }
 
-/* The checkbox sits on the first text line's optical centre, not the card's —
-   on a three-line card, centring it on the box looks like a mistake. */
+/* ---------- card head ---------- */
+
+/*
+  The head strip: the kind, written and glyphed, over a tint that is the third
+  signal — never the only one. The tint-and-ink pairs are AA-checked in
+  tokens.css.
+*/
+.card-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--shelf-card-head);
+  padding: 0 var(--sp-3) 0 var(--sp-2);
+  background: var(--kind-text);
+  color: var(--kind-text-ink);
+}
+
+.card-head[data-kind="image"] { background: var(--kind-image); color: var(--kind-image-ink); }
+.card-head[data-kind="link"] { background: var(--kind-link); color: var(--kind-link-ink); }
+.card-head[data-kind="color"] { background: var(--kind-color); color: var(--kind-color-ink); }
+.card-head[data-kind="dictation"] { background: var(--kind-dictation); color: var(--kind-dictation-ink); }
+.card-head[data-kind="draw"] { background: var(--kind-draw); color: var(--kind-draw-ink); }
+
+.card-label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-signs {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.card-glyph {
+  display: inline-flex;
+  opacity: 0.85;
+}
+
+/* The quick-paste badge: the first five cards of a page are Ctrl+1–5. */
+.card-key {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--sp-2);
+  border-radius: 5px;
+  background: var(--keycap-bg);
+  color: var(--keycap-ink);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The checkbox: 24px of hit area around a 17px ring, on the head strip. */
 .check {
   flex: none;
   display: grid;
   place-items: center;
-  width: var(--checkbox-size);
-  height: var(--checkbox-size);
-  margin-top: 2px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: none;
-  background: none;
-  color: color-mix(in srgb, var(--text-3) 70%, transparent);
-  cursor: pointer;
   border-radius: var(--r-pill);
-  transition: color var(--t-fast) var(--ease-out);
+  background: none;
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+  transition: opacity var(--t-fast) var(--ease-out);
 }
 
 .check svg {
-  width: 100%;
-  height: 100%;
+  width: 17px;
+  height: 17px;
   stroke: currentColor;
 }
 
-.check:hover {
-  color: var(--text-2);
-}
-
-/* A copied colour shows the colour. */
-.item-swatch {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  margin-right: var(--sp-4);
-  vertical-align: -2px;
-  border-radius: 4px;
-  box-shadow: inset 0 0 0 1px var(--border-strong);
-}
-
-.item-link-host { color: var(--accent-text); }
-.item-link-rest { color: var(--text-3); overflow-wrap: anywhere; }
-
-.item-body.is-color {
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-}
-
-.item-copy {
-  flex: none;
-  align-self: flex-start;
-  display: grid;
-  place-items: center;
-  width: var(--icon-control);
-  height: var(--icon-control);
-  margin: -7px -9px -7px calc(var(--sp-2) * -1 - 3px);
-  padding: 0;
-  border: none;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  /* Visible at rest. The design system states it twice — "The Copy button is
-     never removed from layout" and "At rest it uses --text-3" — and the surfaces
-     blueprint says "one visible Copy button". Hiding it until hover meant the
-     panel's only direct command was invisible on a product whose entire claim is
-     that it is a natural extension of your input. */
+.card-head .check:hover,
+.card-head .check:focus-visible {
   opacity: 1;
-  transition: opacity var(--t-fast) var(--ease-out),
-              background var(--t-fast) var(--ease-out),
-              color var(--t-fast) var(--ease-out);
 }
 
-/* Lucide draws itself: the glyph carries its own 1.8 stroke and geometry, so
-   overriding fill and stroke here is what used to make it look hand-made next to
-   the header's icons. Only the size is ours. */
-.item-copy svg {
-  width: var(--icon-glyph);
-  height: var(--icon-glyph);
-}
-
-.item-card:hover .item-copy,
-.item-card:focus-within .item-copy,
-.item-card.selected .item-copy,
-.item-card.active .item-copy {
-  opacity: 1;
-  color: var(--text);
-}
-
-.item-copy:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.item-copy:focus-visible {
+.check:focus-visible {
   outline: none;
-  opacity: 1;
-  pointer-events: auto;
   box-shadow: var(--focus-ring);
 }
 
 .item-card.done .check {
+  opacity: 1;
   color: var(--accent);
 }
 
@@ -406,19 +729,213 @@ body {
   stroke: var(--text-on-accent);
 }
 
-.check:focus-visible {
+/* ---------- card body ---------- */
+
+.card-body {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5) 0;
+  overflow: hidden;
+}
+
+/* Media bleeds edge to edge, as Paste's media cards do. */
+.item-card[data-shelf-kind="image"] .card-body,
+.item-card[data-shelf-kind="draw"] .card-body {
+  padding: 0;
+  gap: 0;
+}
+
+.item-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.item-image-pending {
+  flex: 1;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.item-missing {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.item-link-host { color: var(--accent-text); }
+.item-link-rest { color: var(--text-3); overflow-wrap: anywhere; }
+
+/* ---------- colour card ---------- */
+
+.card-color {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  text-align: center;
+}
+
+.color-chip {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.color-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.color-name {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.color-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* On a side band the card is short: the swatch sits beside its name instead
+   of above it, so both keep their room. */
+.app[data-edge="left"] .card-color,
+.app[data-edge="right"] .card-color {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: var(--sp-5);
+  text-align: left;
+}
+
+.app[data-edge="left"] .color-chip,
+.app[data-edge="right"] .color-chip {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+}
+
+.app[data-edge="left"] .color-text,
+.app[data-edge="right"] .color-text {
+  align-items: flex-start;
+}
+
+/* ---------- card foot ---------- */
+
+/*
+  The foot answers the one question the content cannot: where a link points,
+  how long a note is, how large an image is. A colour card puts its own three
+  controls here instead — favourite, preview, more — and keeps the Copy.
+*/
+.card-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--shelf-card-foot);
+  padding: 0 var(--sp-4) 0 var(--sp-5);
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.card-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-spring {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-tools {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.card-tool {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+
+.card-tool:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.card-tool.on {
+  color: var(--accent-text);
+}
+
+.card-tool:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
 
-.item-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
+/* Visible at rest. The design system states it twice — "The Copy button is
+   never removed from layout" and "At rest it uses --text-3" — and the surfaces
+   blueprint says "one visible Copy button". Hiding it until hover meant the
+   shelf's only direct command was invisible on a product whose entire claim is
+   that it is a natural extension of your input. */
+.item-copy {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 1;
+  transition: background var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
 }
 
+.item-copy:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.item-copy:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
 
 /* On a clipboard manager the content is the product, so it is selectable: a
    note you cannot drag out of the window is a note you can only copy back
@@ -432,14 +949,15 @@ body {
   word-break: break-word;
   user-select: text;
   display: -webkit-box;
-  -webkit-line-clamp: 6;
+  -webkit-line-clamp: 8;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-/* Six lines then a hard edge, with nothing to say that there was more. The
-   class is measured, not assumed: a three-line note gets no fade, because a
-   fade over text that is all there is worse than a clean cut. */
+/* The clamp's hard edge gets a fade only where text is actually hidden, which
+   CSS cannot tell on its own. The class is measured, not assumed: a three-line
+   note gets no fade, because a fade over text that is all there is worse than
+   a clean cut. */
 .item-body.clamped {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent 100%);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent 100%);
@@ -465,29 +983,6 @@ body {
   padding: 0 1px;
 }
 
-.item-image-pending {
-  height: 72px;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-}
-
-.item-missing {
-  display: flex;
-  align-items: center;
-  min-height: 22px;
-  font-size: var(--fs-sm);
-  color: var(--text-3);
-}
-
-.item-image {
-  max-width: 100%;
-  max-height: 180px;
-  border-radius: var(--r-sm);
-  display: block;
-  transition: opacity var(--t-fast) var(--ease-out);
-}
-
-
 @keyframes card-in {
   from {
     opacity: 0;
@@ -501,13 +996,14 @@ body {
 
 .empty-state {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: var(--sp-5);
   padding: var(--sp-8);
-  padding-bottom: 88px;   /* optical centre: the composer occupies the foot */
   text-align: center;
   color: var(--on-canvas-2);
   animation: card-in var(--t-slow) var(--ease-out);
@@ -549,32 +1045,15 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
-  padding: var(--sp-4) var(--sp-6) var(--sp-6);
   background: transparent;
-}
-
-.context-chip button {
-  border: none;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-}
-
-.context-chip button:hover {
-  background: rgba(0, 0, 0, 0.08);
 }
 
 .composer-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--sp-3);
-  padding: var(--sp-4) var(--sp-5);
-  border-radius: var(--r-card);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-control);
   background: var(--surface-2);
   box-shadow: inset 0 0 0 1px var(--border);
   transition: box-shadow var(--t-fast) var(--ease-out);
@@ -587,18 +1066,16 @@ body {
 .composer-input {
   flex: 1;
   min-width: 0;
-  min-height: 26px;
-  max-height: 120px;
-  resize: none;
+  height: 26px;
   border: none;
   background: none;
   box-shadow: none;
   outline: none;
   color: var(--text);
   font-family: inherit;
-  font-size: var(--fs-md);
+  font-size: var(--fs-base);
   line-height: var(--lh-base);
-  padding: 2px 0;
+  padding: 0;
 }
 
 .composer-input::placeholder {
@@ -633,31 +1110,6 @@ body {
     opacity: 0.45;
     transform: scale(0.8);
   }
-}
-
-.attach-btn.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent);
-}
-
-.send-btn:hover {
-  background: var(--accent-strong);
-}
-
-.send-btn:active {
-  transform: scale(0.94);
-}
-
-.send-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.send-btn.busy {
-  pointer-events: none;
-  background: var(--accent-soft);
-  color: var(--accent);
 }
 
 /* ---------- ask result ---------- */
@@ -1316,8 +1768,13 @@ body {
 /* The foot is a positioning context, so the toast is placed above the composer
    by geometry rather than by a magic offset. It was pinned to `bottom: 14px`,
    which put it on top of the field the user was typing into. */
-.panel-foot {
+.shelf-foot {
   position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-6) var(--sp-6);
 }
 
 .toast-layer {
@@ -1371,8 +1828,8 @@ body {
   flex: none;
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: none;
   border-radius: var(--r-pill);
@@ -1400,56 +1857,6 @@ body {
     opacity: 1;
     transform: none;
   }
-}
-
-.group-header {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-5);
-  width: 100%;
-  border: none;
-  background: none;
-  cursor: pointer;
-  padding: var(--sp-8) var(--sp-2) var(--sp-4);
-  font: inherit;
-  font-family: var(--font-small);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--tr-caption);
-  text-transform: uppercase;
-  color: var(--on-canvas-3);
-  transition: color var(--t-fast) var(--ease-out);
-}
-
-.group-header:hover,
-.group-header.active {
-  color: var(--on-canvas-2);
-}
-
-.group-header.static {
-  cursor: default;
-}
-
-.group-header.static:hover {
-  color: var(--on-canvas-3);
-}
-
-.group-name {
-  flex: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 70%;
-}
-
-.group-rule {
-  flex: 1;
-  height: 1px;
-  background: var(--canvas-rule);
-}
-
-.group-header:first-child {
-  padding-top: 4px;
 }
 
 .inline-edit {
@@ -1602,6 +2009,7 @@ body {
 .switcher-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   border: none;
   background: transparent;
@@ -1613,9 +2021,27 @@ body {
   text-align: left;
 }
 
+.switcher-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .switcher-row.on {
   background: var(--accent-soft);
   color: var(--accent-text);
+}
+
+.switcher-count {
+  flex: none;
+  min-width: 18px;
+  text-align: right;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.switcher-row.on .switcher-count {
+  color: inherit;
 }
 
 mark {
@@ -1711,17 +2137,18 @@ mark {
   flex: none;
   display: grid;
   place-items: center;
-  width: 22px;
+  width: 24px;
   height: 26px;
   border: none;
+  border-radius: var(--r-sm);
   background: none;
   color: var(--text-3);
   cursor: pointer;
-  transition: color var(--t-fast) var(--ease-out);
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
 }
 
 .composer-add:hover {
-  background: var(--surface-2);
+  background: var(--surface-3);
   color: var(--text-2);
 }
 
