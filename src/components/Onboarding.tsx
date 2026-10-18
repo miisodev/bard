@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowRight, ChevronLeft, Download, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "../store";
 import LicenseCard from "./LicenseCard";
@@ -13,6 +13,14 @@ const WAVE = (
 );
 
 const STEPS = 4;
+
+/** What each step calls itself, for the announcement when it arrives. */
+const STEP_TITLES = [
+  "Clipboard, Draw and Dictate",
+  "Offline voice",
+  "Make it yours",
+  "You're set",
+];
 
 /**
  * The step you are on, in a lighter tint; the steps behind you are solid. The
@@ -59,6 +67,9 @@ export default function Onboarding({
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
   const [license, setLicense] = useState(state.license);
+  const [announcement, setAnnouncement] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const primaryRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -88,6 +99,32 @@ export default function Onboarding({
   const activeProgress = progressForModel && !progressForModel.error ? progressForModel : null;
   const displayInstallError = installError ?? progressForModel?.error ?? null;
   const working = installing || activating;
+
+  /*
+    Every step change lands focus on that step's primary action and has the
+    live region say which step arrived. Without it each step change unmounted
+    the control that had focus — Continue, Back, Download — and focus fell to
+    <body>, so the next Tab restarted at the top of the window. The arriving
+    primary also takes focus when it replaces another mid-step: the download
+    swaps itself for Continue.
+  */
+  const bindPrimary = useCallback((node: HTMLButtonElement | null) => {
+    primaryRef.current = node;
+    if (!node) return;
+    const active = document.activeElement;
+    const root = rootRef.current;
+    // Someone is already working inside this screen on something else; the
+    // arriving primary must not snatch focus from them.
+    if (active instanceof HTMLElement && root && active !== root && root.contains(active)) return;
+    node.focus();
+  }, []);
+
+  useEffect(() => {
+    // A step whose primary is not up yet — the download, mid-flight — still
+    // keeps focus inside the screen rather than dropping it on <body>.
+    if (!primaryRef.current) rootRef.current?.focus();
+    setAnnouncement(`Step ${step + 1} of ${STEPS} — ${STEP_TITLES[step]}`);
+  }, [step]);
 
   const installModel = async () => {
     if (!model || working) return;
@@ -157,26 +194,49 @@ export default function Onboarding({
   };
 
   return (
-    <div className="onboarding">
+    // The screen itself is a focus fallback: a step whose primary is mid-flight
+    // hands focus here rather than letting it fall to <body>.
+    <div className="onboarding" ref={rootRef} tabIndex={-1}>
       <div className="mark">{WAVE}</div>
-      {step === 0 ? (
-        <>
-          {/* The brand is the mark above this. The headline is the promise. */}
-          <h1>Clipboard, Draw and Dictate.</h1>
-          <p>
-            Bard catches anything you copy, turns your voice into text without
-            sending audio anywhere, and keeps both on this machine. Refine is
-            always opt-in.
-          </p>
-        </>
-      ) : step === 1 ? (
-        <>
-          <h1>Offline voice</h1>
-          <p>
-            {model
-              ? `${model.name} runs here, on this machine. Nothing in this step leaves it.`
-              : "One model runs here, on this machine. Nothing in this step leaves it."}
-          </p>
+
+      {/* The promise. One column on a side edge; on a band it sits beside the
+          body instead of above it, so a 250px-tall window keeps its room. */}
+      <div className="onb-copy">
+        {step === 0 ? (
+          <>
+            {/* The brand is the mark above this. The headline is the promise. */}
+            <h1>Clipboard, Draw and Dictate.</h1>
+            <p>
+              Bard catches anything you copy, turns your voice into text without
+              sending audio anywhere, and keeps both on this machine. Refine is
+              always opt-in.
+            </p>
+          </>
+        ) : step === 1 ? (
+          <>
+            <h1>Offline voice</h1>
+            <p>
+              {model
+                ? `${model.name} runs here, on this machine. Nothing in this step leaves it.`
+                : "One model runs here, on this machine. Nothing in this step leaves it."}
+            </p>
+          </>
+        ) : step === 2 ? (
+          <>
+            <h1>Make it yours</h1>
+            <p>Two taps of a modifier do the everyday work, in any app. These gestures are fixed and always available.</p>
+          </>
+        ) : (
+          <>
+            <h1>You're set</h1>
+            <p>Start with a 14-day local trial, or enter the licence key from your purchase email.</p>
+          </>
+        )}
+      </div>
+
+      {/* The one step being asked about. */}
+      <div className="onb-step">
+        {step === 1 ? (
           <div className="model-card">
             <div className="name">{model?.name ?? (modelsLoading ? "Preparing model…" : "Voice model")}</div>
             <div className="meta">
@@ -210,6 +270,7 @@ export default function Onboarding({
             {displayInstallError ? <div className="meta" role="alert">{displayInstallError}</div> : null}
             {modelsError ? (
               <button
+                ref={bindPrimary}
                 className="btn"
                 onClick={() => setModelsAttempt((attempt) => attempt + 1)}
                 disabled={modelsLoading}
@@ -219,6 +280,7 @@ export default function Onboarding({
               </button>
             ) : !modelReady && model && !working ? (
               <button
+                ref={bindPrimary}
                 className="btn primary"
                 onClick={() => void installModel()}
                 disabled={Boolean(activeProgress)}
@@ -232,11 +294,9 @@ export default function Onboarding({
               </button>
             ) : null}
           </div>
-        </>
-      ) : step === 2 ? (
-        <>
-          <h1>Make it yours</h1>
-          <p>Two taps of a modifier do the everyday work, in any app. These gestures are fixed and always available.</p>
+        ) : null}
+
+        {step === 2 ? (
           <div className="shortcut-list" aria-label="Bard keyboard shortcuts">
             <div><kbd>Left Shift</kbd><kbd>Left Shift</kbd><span>Capture</span></div>
             <div><kbd>Right Shift</kbd><kbd>Right Shift</kbd><kbd>1 / 2 / 3</kbd><span>Paste item</span></div>
@@ -245,104 +305,114 @@ export default function Onboarding({
             <div><kbd>Left Alt</kbd><kbd>Left Alt</kbd><span>Draw</span></div>
             <div><kbd>Ctrl</kbd><kbd>Ctrl</kbd><span>Dictate — hold to talk</span></div>
           </div>
-        </>
-      ) : (
-        <>
-          <h1>You're set</h1>
-          <p>Start with a 14-day local trial, or enter the licence key from your purchase email.</p>
-          <LicenseCard status={license} onStatus={setLicense} compact />
-          <div className="setting-row">
-            <span>
-              <div className="label">Start Bard at login</div>
-              <div className="sub">Runs quietly in the tray</div>
-            </span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={autostart}
-              aria-label="Start Bard at login"
-              className={`toggle${autostart ? " on" : ""}`}
-              onClick={() => setAutostart((current) => !current)}
-            >
-              <span className="knob" />
-            </button>
-          </div>
-          {finishError ? <div className="meta" role="alert">{finishError}</div> : null}
-        </>
-      )}
+        ) : null}
 
-      {/*
-        The position is announced once, by the bar. The segments are pictures of
-        it, so they are hidden from assistive technology — and `aria-current`
-        was on a `<div>` with no role, which named nothing.
-      */}
-      <div
-        className="steps"
-        role="progressbar"
-        aria-label="Onboarding progress"
-        aria-valuemin={1}
-        aria-valuemax={STEPS}
-        aria-valuenow={step + 1}
-        aria-valuetext={`Step ${step + 1} of ${STEPS}`}
-      >
-        {Array.from({ length: STEPS }, (_, index) => (
-          <span
-            key={index}
-            className={`step${index < step ? " on" : ""}`}
-            aria-hidden="true"
-            style={index === step ? CURRENT_STEP : undefined}
-          />
-        ))}
+        {step === 3 ? (
+          <>
+            <LicenseCard status={license} onStatus={setLicense} compact />
+            <div className="setting-row">
+              <span>
+                <div className="label">Start Bard at login</div>
+                <div className="sub">Runs quietly in the tray</div>
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autostart}
+                aria-label="Start Bard at login"
+                className={`toggle${autostart ? " on" : ""}`}
+                onClick={() => setAutostart((current) => !current)}
+              >
+                <span className="knob" />
+              </button>
+            </div>
+            {finishError ? <div className="meta" role="alert">{finishError}</div> : null}
+          </>
+        ) : null}
       </div>
 
-      <div className="actions">
-        {/* Every step after the first can be left the way it came, including the
-            one that downloads two hundred megabytes. */}
-        {step > 0 ? (
-          <button
-            className="btn"
-            onClick={() => setStep((current) => current - 1)}
-            disabled={working || finishing}
-          >
-            <ChevronLeft aria-hidden="true" />
-            Back
-          </button>
-        ) : null}
-        {step === 0 ? (
-          <button className="btn primary" onClick={() => setStep(1)}>
-            Continue
-            <ArrowRight aria-hidden="true" />
-          </button>
-        ) : step === 1 ? (
-          working ? null : (
-            <>
-              {modelReady ? (
-                <button
-                  className="btn primary"
-                  onClick={() => void activateAndContinue()}
-                  disabled={activating}
-                  autoFocus
-                >
-                  {activating ? <LoaderCircle aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
-                  {activating ? "Activating…" : "Continue"}
+      <div className="onb-foot">
+        {/*
+          The position is announced once, by the bar. The segments are pictures of
+          it, so they are hidden from assistive technology — and `aria-current`
+          was on a `<div>` with no role, which named nothing.
+        */}
+        <div
+          className="steps"
+          role="progressbar"
+          aria-label="Onboarding progress"
+          aria-valuemin={1}
+          aria-valuemax={STEPS}
+          aria-valuenow={step + 1}
+          aria-valuetext={`Step ${step + 1} of ${STEPS}`}
+        >
+          {Array.from({ length: STEPS }, (_, index) => (
+            <span
+              key={index}
+              className={`step${index < step ? " on" : ""}`}
+              aria-hidden="true"
+              style={index === step ? CURRENT_STEP : undefined}
+            />
+          ))}
+        </div>
+
+        <div className="actions">
+          {/* Every step after the first can be left the way it came, including the
+              one that downloads two hundred megabytes. */}
+          {step > 0 ? (
+            <button
+              className="btn"
+              onClick={() => setStep((current) => current - 1)}
+              disabled={working || finishing}
+            >
+              <ChevronLeft aria-hidden="true" />
+              Back
+            </button>
+          ) : null}
+          {step === 0 ? (
+            <button ref={bindPrimary} className="btn primary" onClick={() => setStep(1)}>
+              Continue
+              <ArrowRight aria-hidden="true" />
+            </button>
+          ) : step === 1 ? (
+            working ? null : (
+              <>
+                {modelReady ? (
+                  <button
+                    ref={bindPrimary}
+                    className="btn primary"
+                    onClick={() => void activateAndContinue()}
+                    disabled={activating}
+                  >
+                    {activating ? <LoaderCircle aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
+                    {activating ? "Activating…" : "Continue"}
+                  </button>
+                ) : null}
+                <button className="btn" onClick={() => setStep(2)} disabled={installing || activating}>
+                  Skip for now
                 </button>
-              ) : null}
-              <button className="btn" onClick={() => setStep(2)} disabled={installing || activating}>
-                Skip for now
-              </button>
-            </>
-          )
-        ) : step === 2 ? (
-          <button className="btn primary" onClick={() => setStep(3)}>
-            Continue
-            <ArrowRight aria-hidden="true" />
-          </button>
-        ) : (
-          <button className="btn primary" onClick={() => void finish()} disabled={finishing}>
-            {finishing ? <LoaderCircle aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
-            {finishing ? "Starting Bard…" : "Start using Bard"}
-          </button>
-        )}
+              </>
+            )
+          ) : step === 2 ? (
+            <button ref={bindPrimary} className="btn primary" onClick={() => setStep(3)}>
+              Continue
+              <ArrowRight aria-hidden="true" />
+            </button>
+          ) : (
+            <button ref={bindPrimary} className="btn primary" onClick={() => void finish()} disabled={finishing}>
+              {finishing ? <LoaderCircle aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
+              {finishing ? "Starting Bard…" : "Start using Bard"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/*
+        What each step arriving is called, for a screen reader. The bar above
+        states the position; this states the step, once, as it changes.
+      */}
+      <div className="sr-only" role="status" aria-live="polite">
+        {announcement}
       </div>
     </div>
   );

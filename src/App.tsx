@@ -398,7 +398,7 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
       </div>
     </div>
   ) : !state.onboardingCompleted ? (
-    <div className="app">
+    <div className="app" data-edge={edge}>
       <Onboarding
         state={state}
         modelProgress={modelProgress}

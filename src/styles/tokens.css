@@ -86,6 +86,12 @@
   --t-base: 180ms;
   --t-slow: 260ms;
 
+  /* The one breathing rhythm for a "live" indicator — the shelf's dictation
+     dot and the overlay pill's. It is deliberately not one of the transition
+     durations: a pulse repeats, so it is gated off under reduced motion
+     rather than zeroed (a 0s infinite animation never settles). */
+  --t-pulse: 1.1s;
+
   /* ─── Layout ──────────────────────────────────────────────────────────── */
 
   --checkbox-size: 18px;
@@ -143,13 +149,35 @@
   --danger-soft: rgba(229, 72, 77, 0.12);
   --success: #2c9e5b;
 
+  /* Danger and success as *text*. The pair above is tuned for icons and
+     borders, where 3:1 is the bar; as body copy #e5484d measured 3.72:1 on
+     --surface, 3.56 on --surface-2 and 3.17 on --canvas, and #2c9e5b 3.25,
+     3.11 and 2.76 — all below AA. These are the same hues, darkened so every
+     ground the app draws them on clears 4.5:1 — including the danger-soft
+     ground a danger button hovers into:
+       --danger-text  #b4232a  6.21 / 5.94 / 5.28  (surface / surface-2 / canvas)
+       --success-text #14713c  5.78 / 5.52 / 4.91
+     The dark theme keeps the pair above. */
+  --danger-text: #b4232a;
+  --success-text: #14713c;
+
+  /* Placeholder ink. In light it is the same step as --text-3 (measured
+     5.36 / 5.12 on --surface / --surface-2); in dark the field steps up to
+     --text-2, because --text-3 landed at 4.09:1 there. */
+  --placeholder: var(--text-3);
+
+  /* The 1px line of the focus ring, apart from --accent because a ring is a
+     graphic that has to hold 3:1 against whatever it lands on — see the dark
+     block. */
+  --ring: var(--accent);
+
   --el-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
   --el-pop: 0 8px 32px rgba(0, 0, 0, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
   --el-panel: 0 16px 56px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.1);
 
   --scrim: rgba(0, 0, 0, 0.26);
   --scrollbar: rgba(0, 0, 0, 0.22);
-  --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--accent);
+  --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--ring);
 
   /* ══ Kind tints ══════════════════════════════════════════════════════════
      The strip across a card's head. Every pair is measured for AA against its
@@ -210,13 +238,30 @@
   --danger-soft: rgba(255, 99, 105, 0.16);
   --success: #43c07c;
 
+  /* In dark the pair above is already light enough to write with, so the text
+     pair is the same colour: #ff6369 measures 5.20 / 4.66 / 4.52 and #43c07c
+     6.51 / 5.83 / 5.66 against --surface / --surface-2 / --surface-3. */
+  --danger-text: var(--danger);
+  --success-text: var(--success);
+
+  /* --text-3 is 4.09:1 on the fields — under AA for copy a person reads
+     before it is replaced by what they type. Placeholders step up to
+     --text-2, measured 5.23 there. */
+  --placeholder: var(--text-2);
+
+  /* The ring over a popover. --accent (#3f73d8) measured 2.91:1 against
+     --surface-3, where menus and sheets live; #5b8def — the pre-darkening
+     accent — measures 4.06 against --surface-3, 4.18 against --surface-2 and
+     4.67 against --surface, so the ring reads wherever it lands. */
+  --ring: #5b8def;
+
   --el-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
   --el-pop: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.07);
   --el-panel: 0 16px 56px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
 
   --scrim: rgba(0, 0, 0, 0.45);
   --scrollbar: rgba(255, 255, 255, 0.2);
-  --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--accent);
+  --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--ring);
 
   /* Deep, desaturated kind strips. Ratios are 7.5:1 or better against their
      inks, and the keycap is a dark chip rather than a white one, which would

@@ -377,6 +377,14 @@
 
 .canvas-match:hover { text-decoration: underline; }
 
+/* Like its sibling in the settings panes: a real control owed the token ring,
+   not the UA's. */
+.canvas-match:focus-visible {
+  outline: none;
+  border-radius: var(--r-sm);
+  box-shadow: var(--focus-ring);
+}
+
 .draw-swatch.custom {
   position: relative;
   display: inline-block;
