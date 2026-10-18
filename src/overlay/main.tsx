@@ -10,7 +10,7 @@ import ReviewSheet from "./ReviewSheet";
 import { reviewReduce, type ReviewEvent, type ReviewState } from "./review";
 import "../styles.css";
 
-type Phase = "listening" | "transcribing" | "finishing" | "cancelling";
+type Phase = "listening" | "transcribing" | "finishing" | "cancelling" | "review";
 
 /** How many meter bars the pill draws. */
 const LEVEL_BARS = 12;

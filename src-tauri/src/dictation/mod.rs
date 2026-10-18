@@ -861,11 +861,19 @@ fn confirm_foreground(app: &AppHandle, text: String, hwnd: isize) -> Result<(), 
 /// File the confirmed words in Bard's timeline, exactly as a direct take with
 /// Bard focused would have been filed the moment it finished.
 ///
-/// There is no clipboard write in this arm: the words are going into Bard
-/// itself, and the timeline is where they live. A failed insert keeps the sheet
-/// open — the words exist only in the sheet at that point, and closing it would
-/// lose them.
+/// The clipboard is written before the words are filed, as every delivery has
+/// done since before the review step: the card keeps them, and the person's
+/// Ctrl+V still works wherever they go next. A failed write keeps the sheet
+/// open — the words exist only in the sheet at that point.
 fn confirm_timeline(app: &AppHandle, text: String) -> Result<(), String> {
+    crate::paste::set_text(app, &text).map_err(|error| {
+        let message = format!(
+            "Bard could not put this dictation on the clipboard, so it was not filed: {error}"
+        );
+        let _ = app.emit("dictation-review-error", message.clone());
+        message
+    })?;
+    crate::monitor::note_own_text(&text);
     let item_id = crate::db::insert_item_with_origin(app, &text, "text", None, "dictation");
     if item_id == crate::db::INSERT_FAILED {
         let message =
