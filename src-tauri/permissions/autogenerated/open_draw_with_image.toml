@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-draw-with-image"
+description = "Enables the open_draw_with_image command without any pre-configured scope."
+commands.allow = ["open_draw_with_image"]
+
+[[permission]]
+identifier = "deny-open-draw-with-image"
+description = "Denies the open_draw_with_image command without any pre-configured scope."
+commands.deny = ["open_draw_with_image"]

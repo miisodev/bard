@@ -1,12 +1,13 @@
 //! The foreground window, in one place.
 //!
-//! Two features need it and they must agree: the panel remembers the window it
-//! was summoned over so hiding can give the foreground back, and dictation
+//! Three features need it and they must agree: the panel remembers the window
+//! it was summoned over so hiding can give the foreground back, dictation
 //! remembers the window a take started in so a confirmed review can give the
-//! foreground back before the paste chord. The helpers used to live inside
-//! `panel.rs`, where dictation could not reach them without a copy — and a
-//! second copy of a Win32 foreground query is exactly the kind of thing that
-//! drifts.
+//! foreground back before the paste chord, and Draw remembers the window a
+//! sketch is made over so a send can bring it forward before its own paste.
+//! The helpers used to live inside `panel.rs`, where dictation could not reach
+//! them without a copy — and a second copy of a Win32 foreground query is
+//! exactly the kind of thing that drifts.
 
 /// The window the person is working in right now, or 0 when there is none.
 pub fn current() -> isize {
@@ -20,6 +21,16 @@ pub fn focus(hwnd: isize) {
     if hwnd != 0 {
         native::focus(hwnd);
     }
+}
+
+/// Does this window belong to us?
+///
+/// The window-specific form of [`foreground_is_ours`], for a handle that has
+/// been remembered rather than queried: Draw carries the window it was opened
+/// over for as long as a sketch is made, and by delivery time it must not be
+/// one of Bard's own.
+pub fn is_ours(hwnd: isize) -> bool {
+    native::is_ours(hwnd)
 }
 
 /// Does the foreground window belong to us?
@@ -53,8 +64,7 @@ mod native {
         }
     }
 
-    pub fn foreground_is_ours() -> bool {
-        let hwnd = current();
+    pub fn is_ours(hwnd: isize) -> bool {
         if hwnd == 0 {
             return false;
         }
@@ -64,6 +74,10 @@ mod native {
         }
         pid == std::process::id()
     }
+
+    pub fn foreground_is_ours() -> bool {
+        is_ours(current())
+    }
 }
 
 #[cfg(not(windows))]
@@ -72,6 +86,9 @@ mod native {
         0
     }
     pub fn focus(_hwnd: isize) {}
+    pub fn is_ours(_hwnd: isize) -> bool {
+        false
+    }
     pub fn foreground_is_ours() -> bool {
         false
     }

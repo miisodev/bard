@@ -15,6 +15,12 @@
     "core:event:allow-unlisten",
     "allow-get-state",
     "allow-add-image",
-    "allow-copy-item"
+    "allow-copy-item",
+    "allow-send-drawing",
+    "allow-save-svg",
+    "allow-open-draw-with-image",
+    "allow-item-image-data",
+    "allow-set-draw-prefs",
+    "dialog:allow-save"
   ]
 }
