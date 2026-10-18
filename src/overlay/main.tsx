@@ -1,10 +1,13 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { X } from "lucide-react";
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { boot } from "../dev/boot";
+import type { DictationReviewPayload } from "../types";
 import { useTheme } from "../useTheme";
+import ReviewSheet from "./ReviewSheet";
+import { reviewReduce, type ReviewEvent, type ReviewState } from "./review";
 import "../styles.css";
 
 type Phase = "listening" | "transcribing" | "finishing" | "cancelling";
@@ -18,14 +21,24 @@ const IDLE_BAR_HEIGHT = 0.08;
   The pill shows a live take or a short report of why one ended. Rust decides
   when it is on screen; this only draws what it is told. While a take is live
   a click elsewhere is held back and the × flashes red — it is the way out.
+
+  A take that opens for review grows the same window into the sheet; Rust
+  resizes and re-anchors it, and owns Escape, which is why nothing here binds
+  it.
 */
 function Overlay() {
   useTheme();
   const [phase, setPhase] = useState<Phase | null>(null);
   const [report, setReport] = useState<string | null>(null);
   const [nudge, setNudge] = useState(0);
+  const [review, setReview] = useState<ReviewState | null>(null);
   const [levels, setLevels] = useState<number[]>(() =>
     new Array(LEVEL_BARS).fill(IDLE_BAR_HEIGHT),
+  );
+
+  const dispatchReview = useCallback(
+    (event: ReviewEvent) => setReview((state) => reviewReduce(state, event)),
+    [],
   );
 
   useEffect(() => {
@@ -58,6 +71,30 @@ function Overlay() {
       }),
     );
     subscribe(
+      listen("dictation-review", (e) => {
+        if (!alive) return;
+        const payload = e.payload as DictationReviewPayload | string | null;
+        const text = typeof payload === "string" ? payload : payload?.text ?? "";
+        setNudge(0);
+        dispatchReview({ type: "open", text });
+      }),
+    );
+    subscribe(
+      listen("dictation-review-error", (e) => {
+        if (!alive) return;
+        const message =
+          typeof e.payload === "string" && e.payload.trim() ? e.payload : "Review failed.";
+        dispatchReview({ type: "failed", message });
+      }),
+    );
+    // Rust's dismiss path, Escape included, closes the sheet; the command
+    // itself is Rust's, so this only lets go of the state.
+    subscribe(
+      listen("dictation-cancelled", () => {
+        if (alive) dispatchReview({ type: "close" });
+      }),
+    );
+    subscribe(
       listen("mic-level", (e) => {
         const [level] = e.payload as [number, number];
         if (!alive) return;
@@ -77,8 +114,15 @@ function Overlay() {
       alive = false;
       for (const unlisten of pending) void unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [dispatchReview]);
 
+  if (review) {
+    return (
+      <div className="overlay-stage">
+        <ReviewSheet review={review} onEvent={dispatchReview} />
+      </div>
+    );
+  }
   if (!phase && !report) return null;
   const label = report
     ? report

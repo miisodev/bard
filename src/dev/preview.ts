@@ -7,8 +7,9 @@
   a shelf that is DWM-composited and always on top is awkward to capture, and a
   fixture is reproducible where a person's live data is neither.
 
-  Query parameters: theme=light|dark, scene=empty|trial|restricted|recording,
-  pane=<settings section>, edge=bottom|top|left|right.
+  Query parameters: theme=light|dark, scene=empty|trial|restricted|recording|review,
+  pane=<settings section>, edge=bottom|top|left|right, review=error (scene=review
+  only, to open the sheet in its refused state).
 */
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
@@ -250,7 +251,23 @@ function requirePack(id: unknown): FixturePack {
 const settings: Record<string, string> = {
   dictation_overlay_position: "bottom-middle",
   microphone: "",
+  // Only the review scene turns the sheet on; every other scene shows the
+  // shipped default, paste directly.
+  dictation_review: scene === "review" ? "1" : "0",
 };
+
+/*
+  The take the review scene opens: Rust would have inserted it when the
+  transcript landed, and each command writes the edited body back onto it.
+*/
+const REVIEW_TEXT =
+  "Dictation is local. The audio never leaves this computer, and Refine only ever sees the finished text.";
+let reviewTake: Item | null = null;
+
+/** The clipboard when the browser allows it; the preview does not design the refusal. */
+function writeClipboard(text: string) {
+  void navigator.clipboard?.writeText(text).catch(() => undefined);
+}
 
 function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
   switch (cmd) {
@@ -421,6 +438,23 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "set_active_item":
       state.activeItemId = (args.id as number | null) ?? null;
       return null;
+    // The review sheet, as Rust runs it: every command carries the edited
+    // body back onto the take. Rust hides the overlay when one lands; the
+    // preview cannot hide its own window, so the sheet stays put to be
+    // looked at, which is what this scene is for.
+    case "dictation_confirm":
+    case "dictation_copy":
+    case "dictation_dismiss": {
+      const body = String(args.text ?? "");
+      if (reviewTake) reviewTake.content = body;
+      if (cmd === "dictation_copy") writeClipboard(body);
+      if (cmd === "dictation_confirm") void emit("dictation-pasted");
+      if (cmd === "dictation_dismiss") void emit("dictation-cancelled");
+      return null;
+    }
+    case "set_dictation_review":
+      settings.dictation_review = args.enabled ? "1" : "0";
+      return null;
     default:
       return null;
   }
@@ -435,6 +469,7 @@ export function install(label: "main" | "settings" | "draw" | "overlay") {
   document.documentElement.dataset.preview = label;
   if (params.has("bare")) document.documentElement.dataset.bare = "";
   if (label === "overlay" && scene === "recording") playRecording();
+  if (label === "overlay" && scene === "review") playReview();
   if (label === "draw" && scene === "sketch") {
     (window as { __bardPreviewShapes?: Shape[] }).__bardPreviewShapes = SKETCH;
   }
@@ -455,6 +490,28 @@ function playRecording() {
     const level = 0.35 + 0.45 * Math.abs(Math.sin(t / 2.3) * Math.cos(t / 5.1)) + 0.15 * Math.random();
     void emit("mic-level", [level, 0.9]);
   }, 60);
+}
+
+/** A finished take, opening the review sheet the way Rust does. */
+function playReview() {
+  window.setTimeout(() => {
+    const take = text(nextId++, REVIEW_TEXT, "dictation", 0);
+    reviewTake = take;
+    state.items.unshift(take);
+    void emit("dictation-review", { text: REVIEW_TEXT });
+    // `review=error` opens the sheet already refused, for designing retry.
+    if (params.get("review") === "error") {
+      window.setTimeout(
+        () => void emit("dictation-review-error", "Bard couldn't reach the app it started in."),
+        400,
+      );
+    }
+  }, 150);
+  // Escape is Rust's, globally; the preview stands that hook in so the
+  // sheet's close path is real in the browser.
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") void emit("dictation-cancelled");
+  });
 }
 
 const INK = "#1d1d1f";

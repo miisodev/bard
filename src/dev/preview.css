@@ -43,6 +43,11 @@ html[data-preview="overlay"] #root {
   --preview-h: 60px;
   box-shadow: none;
 }
+/* The review sheet is the pill grown: the same window at its review size. */
+html[data-preview="overlay"] #root:has(.overlay-sheet) {
+  --preview-w: 420px;
+  --preview-h: 300px;
+}
 
 /* Inside the screenshot stage: no desktop, the window fills its frame. */
 html[data-bare],

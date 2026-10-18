@@ -47,10 +47,24 @@ function overlayParts(position: OverlayPosition): [OverlayVertical, OverlayHoriz
   return [vertical as OverlayVertical, horizontal as OverlayHorizontal];
 }
 
+/** What happens the moment a take is transcribed. */
+type TakeEnd = "paste" | "review";
+
+const TAKE_END_OPTIONS: { value: TakeEnd; label: string }[] = [
+  { value: "paste", label: "Paste directly" },
+  { value: "review", label: "Review then paste" },
+];
+
+/** Rust stores the flag as "1"/"0"; anything else is the untouched default. */
+function parseTakeEnd(value: string): TakeEnd {
+  return value === "1" ? "review" : "paste";
+}
+
 export default function DictationPane(_: PaneProps) {
   const [microphones, setMicrophones] = useState<string[]>([]);
   const [selectedMic, setSelectedMic] = useState("");
   const [overlayPosition, setOverlayPosition] = useState<OverlayPosition>(DEFAULT_OVERLAY_POSITION);
+  const [takeEnd, setTakeEnd] = useState<TakeEnd>("paste");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,12 +79,14 @@ export default function DictationPane(_: PaneProps) {
       api.getMicrophones(),
       api.getSettingStr("selected_microphone"),
       api.getSettingStr("dictation_overlay_position"),
+      api.getSettingStr("dictation_review"),
     ])
-      .then(([available, selected, position]) => {
+      .then(([available, selected, position, review]) => {
         if (!alive) return;
         setMicrophones(available);
         setSelectedMic(selected);
         setOverlayPosition(parseOverlayPosition(position));
+        setTakeEnd(parseTakeEnd(review));
         setError(null);
       })
       .catch((reason: unknown) => {
@@ -92,6 +108,16 @@ export default function DictationPane(_: PaneProps) {
     setError(null);
     void api.setDictationOverlayPosition(next).catch((reason: unknown) => {
       setOverlayPosition(previous);
+      setError(errorText(reason));
+    });
+  };
+
+  const changeTakeEnd = (next: TakeEnd) => {
+    const previous = takeEnd;
+    setTakeEnd(next);
+    setError(null);
+    void api.setDictationReview(next === "review").catch((reason: unknown) => {
+      setTakeEnd(previous);
       setError(errorText(reason));
     });
   };
@@ -137,6 +163,21 @@ export default function DictationPane(_: PaneProps) {
             options={OVERLAY_HORIZONTAL_OPTIONS}
             disabled={loading || Boolean(loadError)}
             onChange={(value) => changeOverlayPosition(overlayVertical, value)}
+          />
+        </Row>
+      </Group>
+
+      <Group title="When a take ends">
+        <Row
+          label="Finished takes"
+          hint="Paste straight into the app you were in, or read the transcript over before it goes."
+        >
+          <Segmented
+            label="When a take ends"
+            value={takeEnd}
+            options={TAKE_END_OPTIONS}
+            disabled={loading || Boolean(loadError)}
+            onChange={changeTakeEnd}
           />
         </Row>
       </Group>

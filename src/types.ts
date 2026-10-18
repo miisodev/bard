@@ -155,6 +155,11 @@ export type OverlayVertical = "top" | "bottom";
 export type OverlayHorizontal = "left" | "middle" | "right";
 export type OverlayPosition = `${OverlayVertical}-${OverlayHorizontal}`;
 
+/** The `dictation-review` payload: the finished take, open for review. */
+export interface DictationReviewPayload {
+  text: string;
+}
+
 /** The timeline's order; newest first is the default. */
 export type SortOrder = "newest" | "oldest" | "favorites" | "completed";
 
