@@ -82,6 +82,38 @@ export function filterItems(
   });
 }
 
+/** Long enough to identify an item, short enough to be read out loud. */
+const PREVIEW_CHARS = 48;
+
+/**
+ * What an item reads as on one line: its text, or what it is when it has none.
+ * Nine rows all reading "Copy text" is nine identical controls; the preview is
+ * what a control acts on, so it belongs in the name.
+ */
+export function itemPreview(item: Item, max = PREVIEW_CHARS): string {
+  const text = item.content.replace(/\s+/g, " ").trim();
+  if (!text) return item.kind === "image" ? "image" : "empty note";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/** The one sentence a refused pack paste gets, said the same way everywhere. */
+export const PACK_NO_TEXT = "This pack has no text to paste.";
+
+/**
+ * What pasting a pack writes: the text-bearing members in pack order, one per
+ * line — notes, dictations, links and colours. Images and drawings carry no
+ * text to paste, so they are skipped, and so is a note that has edited down to
+ * nothing. An empty string means there is no text in the pack; that is what
+ * disables the paste and carries {@link PACK_NO_TEXT} as the reason.
+ */
+export function packText(items: Item[]): string {
+  return items
+    .filter((item) => item.kind !== "image")
+    .map((item) => item.content.trim())
+    .filter((text) => text !== "")
+    .join("\n");
+}
+
 /** How many cards fit a zone, given one card's size and the gap after it. */
 export function pageSize(fit: number, card: number, gap: number): number {
   if (!(card > 0) || !Number.isFinite(fit)) return 1;

@@ -14,7 +14,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { Shape } from "../draw/shapes";
 import catalog from "../../src-tauri/src/catalog/catalog.json";
-import type { AppState, Item, ModelInfo } from "../types";
+import type { AppState, Item, ModelInfo, PackSummary } from "../types";
 import "./preview.css";
 
 const params = new URLSearchParams(location.search);
@@ -189,6 +189,64 @@ const models: ModelInfo[] = (catalog.models as CatalogRow[]).map((row) => ({
   hosted: true,
 }));
 
+/*
+  Fixture packs over the same items, one of each shape the zone has to carry:
+  a mixed pack whose collage shows four kinds, an all-text pack that pastes,
+  and a pictures-only pack the paste refuses. The scene decides whether they
+  exist at all, as it does for the items.
+*/
+interface FixturePack {
+  id: number;
+  name: string;
+  itemIds: number[];
+}
+
+let nextPackId = 10;
+
+const packs: FixturePack[] =
+  scene === "empty"
+    ? []
+    : [
+        { id: 1, name: "Launch kit", itemIds: [1, 2, 11, 13, 5] },
+        { id: 2, name: "Release checklist", itemIds: [5, 6, 9] },
+        { id: 3, name: "Paper trail", itemIds: [11, 12] },
+      ];
+
+/** The summary Rust sends: the leading members, in pack order. */
+function packSummary(pack: FixturePack): PackSummary {
+  return {
+    id: pack.id,
+    name: pack.name,
+    itemCount: pack.itemIds.length,
+    previewItemIds: pack.itemIds.slice(0, 4),
+  };
+}
+
+/** The members, in pack order, as `get_pack` joins them. */
+function packMembers(pack: FixturePack): Item[] {
+  return pack.itemIds
+    .map((id) => state.items.find((item) => item.id === id))
+    .filter((item): item is Item => item !== undefined);
+}
+
+/** Appends the ids that exist and are not members yet, as Rust's insert does. */
+function appendToPack(pack: FixturePack, ids: number[]): number[] {
+  const landed: number[] = [];
+  for (const id of ids) {
+    if (pack.itemIds.includes(id)) continue;
+    if (!state.items.some((item) => item.id === id)) continue;
+    pack.itemIds.push(id);
+    landed.push(id);
+  }
+  return landed;
+}
+
+function requirePack(id: unknown): FixturePack {
+  const pack = packs.find((entry) => entry.id === Number(id));
+  if (!pack) throw "That pack no longer exists.";
+  return pack;
+}
+
 const settings: Record<string, string> = {
   dictation_overlay_position: "bottom-middle",
   microphone: "",
@@ -241,10 +299,65 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
       return true;
     case "item_image_data":
       return IMAGES.get(Number(args.id)) ?? null;
-    // The packs zone is a shell until its lane lands; the command is mocked so
-    // the first consumer can be wired without changing the preview.
+    // The packs commands, with the behaviour Rust has: summaries carry the
+    // leading members, mutations move the same rows, and a refusal is a
+    // sentence rather than a code.
     case "list_packs":
-      return [];
+      return packs.map(packSummary);
+    case "get_pack": {
+      const pack = requirePack(args.id);
+      return { pack: packSummary(pack), items: packMembers(pack) };
+    }
+    case "create_pack": {
+      const name = String(args.name ?? "").trim();
+      if (!name) throw "Give the pack a name.";
+      if ([...name].length > 60) throw "Pack names can be at most 60 characters.";
+      const pack: FixturePack = { id: nextPackId++, name, itemIds: [] };
+      const added = appendToPack(pack, (args.itemIds as number[]) ?? []);
+      packs.push(pack);
+      return {
+        id: pack.id,
+        name: pack.name,
+        itemCount: added.length,
+        previewItemIds: added.slice(0, 4),
+      };
+    }
+    case "rename_pack": {
+      const name = String(args.name ?? "").trim();
+      if (!name) throw "Give the pack a name.";
+      if ([...name].length > 60) throw "Pack names can be at most 60 characters.";
+      requirePack(args.id).name = name;
+      return null;
+    }
+    case "delete_pack": {
+      const pack = requirePack(args.id);
+      packs.splice(packs.indexOf(pack), 1);
+      return null;
+    }
+    case "pack_add_items": {
+      const pack = requirePack(args.id);
+      appendToPack(pack, (args.itemIds as number[]) ?? []);
+      return null;
+    }
+    case "pack_remove_items": {
+      const pack = requirePack(args.id);
+      const ids = (args.itemIds as number[]) ?? [];
+      pack.itemIds = pack.itemIds.filter((id) => !ids.includes(id));
+      return null;
+    }
+    case "pack_reorder": {
+      const pack = requirePack(args.id);
+      const ids = (args.itemIds as number[]) ?? [];
+      const current = [...pack.itemIds];
+      // Rust refuses a stale order rather than dropping members it did not see.
+      const same =
+        current.length === ids.length &&
+        current.every((id) => ids.includes(id)) &&
+        ids.every((id) => current.includes(id));
+      if (!same) throw "The pack's items changed. Reopen it and try again.";
+      pack.itemIds = ids;
+      return null;
+    }
     case "set_shelf_edge": {
       state.shelfEdge = args.edge as AppState["shelfEdge"];
       void emit("shelf-edge", args.edge);
@@ -299,6 +412,8 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     }
     case "delete_item":
       state.items = state.items.filter((i) => i.id !== args.id);
+      // The rows cascade: a deleted item leaves every pack it was in.
+      for (const pack of packs) pack.itemIds = pack.itemIds.filter((id) => id !== args.id);
       return null;
     case "set_sort":
       state.sort = args.order as AppState["sort"];

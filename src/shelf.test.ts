@@ -5,8 +5,11 @@ import {
   escapeOutcome,
   filterItems,
   itemKind,
+  itemPreview,
   matchesFilter,
   nextIndex,
+  PACK_NO_TEXT,
+  packText,
   pageCount,
   pageItems,
   pageNumbers,
@@ -161,6 +164,48 @@ describe("nextIndex", () => {
     expect(nextIndex(-1, 1, 5)).toBe(0);
     expect(nextIndex(-1, -1, 5)).toBe(4);
     expect(nextIndex(0, 1, 0)).toBe(-1);
+  });
+});
+
+describe("itemPreview", () => {
+  it("collapses whitespace and truncates at the limit", () => {
+    expect(itemPreview(item({ content: "  two\n  lines  " }))).toBe("two lines");
+    expect(itemPreview(item({ content: "abcdef" }), 4)).toBe("abcd…");
+    expect(itemPreview(item({ content: "abc" }), 4)).toBe("abc");
+  });
+
+  it("names what has no text to read", () => {
+    expect(itemPreview(item({ kind: "image", content: "" }))).toBe("image");
+    expect(itemPreview(item({ content: "   " }))).toBe("empty note");
+  });
+});
+
+describe("packText", () => {
+  const members = [
+    item({ id: 1, content: "Ship the release notes" }),
+    item({ id: 2, content: "https://miiso.dev/docs" }),
+    item({ id: 3, content: "#2f6fed" }),
+    item({ id: 4, kind: "image", content: "" }),
+    item({ id: 5, kind: "image", origin: "manual", content: "" }),
+    item({ id: 6, content: "dictated line", origin: "dictation" }),
+    item({ id: 7, content: "   " }),
+  ];
+
+  it("joins the text-bearing members in pack order, one per line", () => {
+    expect(packText(members)).toBe(
+      "Ship the release notes\nhttps://miiso.dev/docs\n#2f6fed\ndictated line",
+    );
+  });
+
+  it("skips images and drawings, and a note that is only whitespace", () => {
+    const text = packText([members[3], members[4]]);
+    expect(text).toBe("");
+    expect(packText([members[0], members[4], members[6]])).toBe("Ship the release notes");
+  });
+
+  it("returns nothing for an empty pack", () => {
+    expect(packText([])).toBe("");
+    expect(PACK_NO_TEXT).toBe("This pack has no text to paste.");
   });
 });
 

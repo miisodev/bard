@@ -11,6 +11,8 @@ export interface MenuEntry {
   checked?: boolean;
   /** One of a set of mutually exclusive choices, such as a sort order. */
   radio?: boolean;
+  /** The entry removes something; it reads in the danger tone, unfilled. */
+  danger?: boolean;
 }
 
 /*
@@ -98,6 +100,7 @@ export default function Menu({
                 e.checked === undefined ? "menuitem" : e.radio ? "menuitemradio" : "menuitemcheckbox"
               }
               aria-checked={e.checked}
+              className={e.danger ? "danger" : undefined}
               disabled={e.disabled}
               onClick={() => {
                 if (e.disabled) return;
