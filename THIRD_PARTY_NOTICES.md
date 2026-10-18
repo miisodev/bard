@@ -10,6 +10,7 @@ components are used or offered by the product and retain their own notices.
 - React and React DOM — MIT
 - Lucide — ISC
 - Inter — SIL Open Font License 1.1
+- meodai/color-names — MIT (bundled "Best of" colour-name dataset, © David Aerne)
 - Microsoft Edge WebView2 — Microsoft runtime licence
 - Microsoft Windows Credential Manager — Windows platform component
 - rusqlite — MIT
