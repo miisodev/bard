@@ -140,6 +140,13 @@ export type OverlayPosition = `${OverlayVertical}-${OverlayHorizontal}`;
 /** The timeline's order; newest first is the default. */
 export type SortOrder = "newest" | "oldest" | "favorites" | "completed";
 
+/**
+ * Which screen edge the shelf docks to. Rust anchors and sizes the window;
+ * this only drives the frontend's layout, so an older payload that does not
+ * carry it still lays out — as `bottom`.
+ */
+export type ShelfEdge = "bottom" | "top" | "left" | "right";
+
 export interface AppState {
   sections: Section[];
   items: Item[];
@@ -161,6 +168,8 @@ export interface AppState {
   background: "theme" | "light" | "dark" | "custom";
   backgroundColor: string;
   sort: SortOrder;
+  /** Absent on a build before the shelf; the shell then reads it as `bottom`. */
+  shelfEdge?: ShelfEdge;
 }
 
 export interface LicenseStatus {

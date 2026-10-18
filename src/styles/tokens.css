@@ -88,17 +88,27 @@
 
   /* ─── Layout ──────────────────────────────────────────────────────────── */
 
-  --panel-w: 380px;
-  --panel-pad: var(--sp-6);
-  --card-pad-y: var(--sp-5);
-  --card-pad-x: var(--sp-6);
-  --card-gap: var(--sp-3);
   --checkbox-size: 18px;
-  /* The design system names a single 32px hit area and a 17px glyph for every
-     icon control. The build had seven control sizes from 16px to 34px and eleven
-     glyph sizes, all as literals. These are the canonical pair. */
+  /* The design system names a single 32px hit area for every icon control.
+     The build had seven control sizes from 16px to 34px, all as literals.
+     This is the canonical pair. */
   --icon-control: 32px;
-  --icon-glyph: 17px;
+
+  /* ─── Shelf ───────────────────────────────────────────────────────────── */
+  /*
+     The edge-docked shelf. The window itself is anchored and sized by Rust;
+     these are what the cards, the rail and the zones are laid out from, and
+     the page size is measured against them at runtime.
+  */
+  --shelf-rail-h: 48px;
+  --shelf-card-w: 236px;      /* horizontal bands: one card's width */
+  --shelf-card-h: 148px;      /* vertical bands: one card's height */
+  --shelf-card-gap: 12px;
+  --shelf-card-head: 32px;
+  --shelf-card-foot: 28px;
+  --shelf-pager-h: 24px;
+  --shelf-packs-w: 264px;     /* bottom/top: the packs pane's width */
+  --shelf-packs-h: 148px;     /* left/right: the packs pane's height */
 }
 
 /* ══ Light ═══════════════════════════════════════════════════════════════ */
@@ -138,6 +148,28 @@
   --scrim: rgba(0, 0, 0, 0.26);
   --scrollbar: rgba(0, 0, 0, 0.22);
   --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--accent);
+
+  /* ══ Kind tints ══════════════════════════════════════════════════════════
+     The strip across a card's head. Every pair is measured for AA against its
+     own ink, and the kind is always also written and glyphed — the tint is a
+     second signal, never the only one. Light tints are pastel strips; dark
+     tints are deep and desaturated, so a wall of cards stays quiet. */
+  --kind-text: #eceef2;
+  --kind-text-ink: #39414d;
+  --kind-image: #e6f2ea;
+  --kind-image-ink: #1f5340;
+  --kind-link: #e7eefb;
+  --kind-link-ink: #24479a;
+  --kind-color: #f3ebf7;
+  --kind-color-ink: #63347a;
+  --kind-dictation: #fbece6;
+  --kind-dictation-ink: #8a4227;
+  --kind-draw: #faf1df;
+  --kind-draw-ink: #755314;
+
+  /* The quick-paste badge, on the head strip of the first five cards. */
+  --keycap-bg: #ffffff;
+  --keycap-ink: #414b59;
 }
 
 /* ══ Dark ════════════════════════════════════════════════════════════════ */
@@ -183,6 +215,25 @@
   --scrim: rgba(0, 0, 0, 0.45);
   --scrollbar: rgba(255, 255, 255, 0.2);
   --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--accent);
+
+  /* Deep, desaturated kind strips. Ratios are 7.5:1 or better against their
+     inks, and the keycap is a dark chip rather than a white one, which would
+     glare on a dark shelf. */
+  --kind-text: #2b2e36;
+  --kind-text-ink: #cfd6e2;
+  --kind-image: #1f352c;
+  --kind-image-ink: #a6d8bd;
+  --kind-link: #22304a;
+  --kind-link-ink: #a9c5f4;
+  --kind-color: #33263a;
+  --kind-color-ink: #d9b6e4;
+  --kind-dictation: #3a2822;
+  --kind-dictation-ink: #ecb7a2;
+  --kind-draw: #372e1e;
+  --kind-draw-ink: #e6c98e;
+
+  --keycap-bg: rgba(0, 0, 0, 0.35);
+  --keycap-ink: #eef1f7;
 }
 
 /* ══ Canvas ink ══════════════════════════════════════════════════════════ */

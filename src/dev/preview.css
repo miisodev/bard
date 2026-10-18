@@ -27,6 +27,11 @@ html[data-preview="settings"] #root,
 html[data-preview="draw"] #root {
   --preview-w: 720px;
 }
+/* The shelf is an edge band: wide and short, like the window Rust anchors. */
+html[data-preview="main"] #root {
+  --preview-w: 1280px;
+  --preview-h: 300px;
+}
 html[data-preview="overlay"] #root {
   --preview-w: 260px;
   --preview-h: 60px;

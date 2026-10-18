@@ -36,8 +36,13 @@ export default function Menu({
   label?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
+    // Focus comes back to the control that opened the menu when it closes —
+    // without this, dismissing a menu put the keyboard on `<body>` and the
+    // next Tab restarted from the search field.
+    previousFocus.current = document.activeElement as HTMLElement | null;
     const first = ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
     first?.focus();
     const onKey = (e: KeyboardEvent) => {
@@ -58,12 +63,20 @@ export default function Menu({
     // Capture phase: the panel's own Escape handling would otherwise hide the
     // whole window before the menu ever saw the key.
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      if (previousFocus.current?.isConnected) previousFocus.current.focus();
+    };
   }, [onClose]);
 
+  // A point-anchored menu opens whichever way has room: below the point when
+  // it is in the upper half of the window, above it otherwise. That is what
+  // makes the composer's attach menu work on any of the four edges.
   const style =
     anchor === "point" && at
-      ? { left: at.x, bottom: `calc(100% - ${at.y}px)` }
+      ? at.y < window.innerHeight / 2
+        ? { left: at.x, top: at.y + 4 }
+        : { left: at.x, bottom: `calc(100% - ${at.y}px)` }
       : undefined;
 
   return (

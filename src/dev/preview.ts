@@ -4,11 +4,11 @@
   Dev-only: each entry imports this when it runs outside Tauri, so
   `bun run dev` + http://localhost:1420/?preview renders the real components
   against fixture data. It exists for design work and for Store screenshots —
-  a panel that is DWM-composited and always on top is awkward to capture, and a
+  a shelf that is DWM-composited and always on top is awkward to capture, and a
   fixture is reproducible where a person's live data is neither.
 
   Query parameters: theme=light|dark, scene=empty|trial|restricted|recording,
-  pane=<settings section>.
+  pane=<settings section>, edge=bottom|top|left|right.
 */
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
@@ -20,6 +20,9 @@ import "./preview.css";
 const params = new URLSearchParams(location.search);
 const scene = params.get("scene") ?? "";
 const theme = params.get("theme") ?? "light";
+const edgeParam = params.get("edge");
+const shelfEdge: AppState["shelfEdge"] =
+  edgeParam === "top" || edgeParam === "left" || edgeParam === "right" ? edgeParam : "bottom";
 const now = Date.now();
 const minutes = (n: number) => now - n * 60_000;
 /** Licence timestamps are Unix seconds. */
@@ -27,11 +30,42 @@ const secs = (ms: number) => Math.floor(ms / 1000);
 
 let nextId = 100;
 
+/**
+ * A stand-in capture for the preview's image cards: a soft gradient drawn
+ * inline, so the fixture needs no binary and still exercises the cover crop.
+ */
+function imageData(start: string, end: string, label: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420">` +
+    `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
+    `<stop offset="0" stop-color="${start}"/><stop offset="1" stop-color="${end}"/>` +
+    `</linearGradient></defs><rect width="640" height="420" fill="url(#g)"/>` +
+    `<text x="32" y="382" font-family="Segoe UI" font-size="40" fill="rgba(255,255,255,0.85)">${label}</text>` +
+    `</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+const IMAGES = new Map<number, string>([
+  [11, imageData("#f2b880", "#8a5a2a", "San Francisco")],
+  [12, imageData("#8fb3ff", "#3a4fb8", "Flow sketch")],
+]);
+
+function shot(id: number, origin: Item["origin"], age: number, caption = ""): Item {
+  return { ...text(id, caption, origin, age), kind: "image" };
+}
+
+/*
+  Ordered so the first page shows one of every kind the shelf knows: a pinned
+  command, a link, a colour, a captured image, a drawing and a dictation.
+*/
 const items: Item[] = [
   text(5, "ffmpeg -i take.wav -ar 16000 -ac 1 take-16k.wav", "clipboard", 41, { favorite: 1, pinnedAt: minutes(30) }),
-  text(1, "Ship the V2 release notes before Friday — keep them under 150 words.", "manual", 3),
   text(2, "https://handy.computer/docs/models", "clipboard", 8),
+  text(13, "#6f4a4a", "clipboard", 60),
+  shot(11, "clipboard", 2),
+  shot(12, "manual", 34),
   text(3, "Dictation is local. The audio never leaves this computer, and Refine only ever sees the finished text.", "dictation", 14),
+  text(1, "Ship the V2 release notes before Friday — keep them under 150 words.", "manual", 3),
   text(4, "#2f6fed", "clipboard", 26),
   text(6, "Call Lerato about the Cape Town launch venue", "manual", 75, { done: 1 }),
   text(7, "Remember: the three tests. Copper, Handy, and would Apple ship this.", "dictation", 180),
@@ -120,6 +154,7 @@ const state: AppState = {
   background: "theme",
   backgroundColor: "#e6e7ea",
   sort: "newest",
+  shelfEdge,
 };
 
 interface CatalogRow {
@@ -204,6 +239,29 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
       return "C:\\Users\\you\\Documents\\Bard";
     case "get_sound_on_capture":
       return true;
+    case "item_image_data":
+      return IMAGES.get(Number(args.id)) ?? null;
+    // The packs zone is a shell until its lane lands; the command is mocked so
+    // the first consumer can be wired without changing the preview.
+    case "list_packs":
+      return [];
+    case "set_shelf_edge": {
+      state.shelfEdge = args.edge as AppState["shelfEdge"];
+      void emit("shelf-edge", args.edge);
+      return null;
+    }
+    case "clear_captures": {
+      // The Rust semantics: clipboard and dictation history go, favourites and
+      // hand-made items stay.
+      state.items = state.items.filter((i) => i.origin === "manual" || i.favorite !== 0);
+      return null;
+    }
+    // Rust hides the window when this arrives. The preview cannot, and must
+    // not: the shelf is the whole surface being looked at.
+    case "shelf_hidden":
+    case "hide_panel":
+    case "paste_back":
+      return null;
     case "get_crash_report":
     case "check_for_update":
       return null;

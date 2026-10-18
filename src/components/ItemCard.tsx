@@ -1,35 +1,57 @@
 import {
+  Copy,
+  Droplet,
+  Ellipsis,
+  Eye,
+  Image as ImageIcon,
+  Link as LinkIcon,
+  Mic,
+  PenTool,
+  Star,
+  Type,
+} from "lucide-react";
+import {
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
-import { Copy } from "lucide-react";
-import { colorValue, linkParts } from "../content";
+import { colorName } from "../color/names";
+import { linkParts } from "../content";
 import { renderInline } from "../markdown";
+import { KIND_LABEL, colorChannels, itemKind, toHex, type ShelfKind } from "../shelf";
 import { api } from "../store";
 import type { Attachment, Item } from "../types";
 
 /*
-  A card is a checkbox, its text, and a quiet Copy that surfaces only on the
-  card you are pointing at or working on.
+  One shelf card: a checkbox, its content and one Copy.
 
-  Copper puts no timestamp, no action row and no branding on a card: everything
-  else a card can do is reachable from the keyboard or the context menu, which
-  keeps the list scannable at a glance and stops the chrome competing with the
-  content. Resist adding affordances here — the empty space is the design.
+  The head strip carries the kind — written, glyphed and tinted, in that order
+  of authority — with the quick-paste badge on the first five cards of a page.
+  The body is the content. The foot answers the one question the content
+  cannot: where a link points, how long a note is, how large an image is. No
+  timestamps and no chrome beyond the card's own commands.
 
-  The row is one tab stop in the timeline, not one per card: the listbox owns
-  the cursor, `tabIndex` roves, and the buttons inside stay in the tab order so
-  a card's own commands are one Tab away. The row therefore handles no key
-  itself — every command on it is the panel's, and duplicating them here is
-  what used to make Space both select and complete.
+  The card is one tab stop in the zone, not one per card: the listbox owns the
+  cursor, `tabIndex` roves, and the buttons inside stay in the tab order so a
+  card's own commands are one Tab away. The row therefore handles no key
+  itself — every command on it is the panel's.
 */
 
 /** Long enough to identify a card, short enough to be read out loud. */
 const PREVIEW_CHARS = 48;
+
+/** The kind's glyph, always beside the written label — colour is never alone. */
+const GLYPHS: Record<ShelfKind, ReactNode> = {
+  text: <Type size={13} strokeWidth={2} />,
+  image: <ImageIcon size={13} strokeWidth={2} />,
+  link: <LinkIcon size={13} strokeWidth={2} />,
+  color: <Droplet size={13} strokeWidth={2} />,
+  dictation: <Mic size={13} strokeWidth={2} />,
+  draw: <PenTool size={13} strokeWidth={2} />,
+};
 
 /**
  * What a screen reader should call this card, and what the Copy button should
@@ -45,6 +67,11 @@ function preview(item: Item): string {
   return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…` : text;
 }
 
+function countCharacters(text: string): string {
+  const length = [...text].length;
+  return length === 1 ? "1 character" : `${length.toLocaleString()} characters`;
+}
+
 export default function ItemCard({
   item,
   attachments,
@@ -53,14 +80,16 @@ export default function ItemCard({
   fresh = false,
   editing,
   search,
+  index,
   onClick,
   onFocus,
   onContextMenu,
-  onOpenContextMenu,
+  onMore,
   onToggleDone,
-  onCopyImage,
+  onCopy,
+  onFavorite,
+  onPreview,
   onDelete,
-  onEdit,
   onEditDone,
 }: {
   item: Item;
@@ -72,27 +101,46 @@ export default function ItemCard({
   fresh?: boolean;
   editing: boolean;
   search: string;
+  /** The card's position on its page, for the quick-paste badge. */
+  index: number;
   onClick: (e: ReactMouseEvent) => void;
   /** The row — or anything inside it — took DOM focus. */
   onFocus: () => void;
   onContextMenu: (e: ReactMouseEvent) => void;
-  onOpenContextMenu: (e: ReactKeyboardEvent<HTMLDivElement>) => void;
+  /** Open the context menu at a point, from the More control or the key. */
+  onMore: (at: { x: number; y: number }) => void;
   onToggleDone: () => void;
-  onCopyImage: () => void;
+  onCopy: () => void;
+  onFavorite: () => void;
+  onPreview: () => void;
   onDelete: () => void;
-  onEdit: () => void;
+  /** The inline edit finished — committed, cancelled or blurred away. */
   onEditDone: () => void;
 }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageMissing, setImageMissing] = useState(false);
+  const [dimensions, setDimensions] = useState<string | null>(null);
   const [draft, setDraft] = useState(item.content);
   const [thumbUrls, setThumbUrls] = useState<Map<number, string>>(new Map());
   const [clamped, setClamped] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  const kind = itemKind(item);
+  const label = KIND_LABEL[kind];
   const done = item.done !== 0;
-  const color = item.kind === "text" ? colorValue(item.content) : null;
-  const link = item.kind === "text" ? linkParts(item.content) : null;
+  const color = kind === "color" ? item.content.trim() : null;
+  const channels = color ? colorChannels(color) : null;
+  const hex = channels ? toHex(channels) : null;
+  const colorLabel = channels && hex ? colorName(hex) : "Color";
+  const link = kind === "link" ? linkParts(item.content) : null;
+  const meta =
+    kind === "link" && link
+      ? link.host
+      : kind === "image" || kind === "draw"
+        ? dimensions
+        : kind === "color"
+          ? null
+          : countCharacters(item.content);
 
   useEffect(() => {
     if (item.kind !== "image") return;
@@ -124,9 +172,9 @@ export default function ItemCard({
     setDraft(item.content);
   }, [item.content]);
 
-  // The six-line clamp hides the rest of a note with nothing to say so. CSS
-  // cannot tell a clamped box from a short one, so the fade is measured: once
-  // per content change, and again only when the box itself changes size.
+  // The clamp hides the rest of a note with nothing to say so. CSS cannot tell
+  // a clamped box from a short one, so the fade is measured: once per content
+  // change, and again only when the box itself changes size.
   useLayoutEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
@@ -155,9 +203,10 @@ export default function ItemCard({
       // Roving: one card is in the tab order, the rest are reached by arrow keys.
       tabIndex={active ? 0 : -1}
       aria-selected={selected}
-      aria-label={preview(item)}
+      aria-label={color ? `${colorLabel} ${hex ?? color}` : `${label}: ${preview(item)}`}
       data-item-id={item.id}
       data-item-kind={item.kind}
+      data-shelf-kind={kind}
       onClick={onClick}
       onFocus={onFocus}
       onContextMenu={onContextMenu}
@@ -168,35 +217,47 @@ export default function ItemCard({
         if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
           event.preventDefault();
           event.stopPropagation();
-          onOpenContextMenu(event);
+          const rect = event.currentTarget.getBoundingClientRect();
+          onMore({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
         }
       }}
     >
-      <button
-        type="button"
-        className="check"
-        role="checkbox"
-        aria-checked={done}
-        aria-label={done ? "Mark as not done" : "Mark as done"}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleDone();
-        }}
-      >
-        {done ? (
-          <svg viewBox="0 0 18 18" aria-hidden="true">
-            <circle cx="9" cy="9" r="9" />
-            <path d="M5 9.2l2.6 2.6L13 6.6" fill="none" strokeWidth="2"
-                  strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 18 18" aria-hidden="true">
-            <circle cx="9" cy="9" r="8.25" fill="none" strokeWidth="1.5" />
-          </svg>
-        )}
-      </button>
+      <div className="card-head" data-kind={kind}>
+        <button
+          type="button"
+          className="check"
+          role="checkbox"
+          aria-checked={done}
+          aria-label={done ? "Mark as not done" : "Mark as done"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleDone();
+          }}
+        >
+          {done ? (
+            <svg viewBox="0 0 18 18" aria-hidden="true">
+              <circle cx="9" cy="9" r="9" />
+              <path d="M5 9.2l2.6 2.6L13 6.6" fill="none" strokeWidth="2"
+                    strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 18 18" aria-hidden="true">
+              <circle cx="9" cy="9" r="8.25" fill="none" strokeWidth="1.5" />
+            </svg>
+          )}
+        </button>
+        <span className="card-label">{label}</span>
+        <span className="card-signs">
+          <span className="card-glyph" aria-hidden="true">{GLYPHS[kind]}</span>
+          {index < 5 ? (
+            <kbd className="card-key" title={`Ctrl+${index + 1} pastes this card`} aria-hidden="true">
+              {index + 1}
+            </kbd>
+          ) : null}
+        </span>
+      </div>
 
-      <div className="item-main">
+      <div className="card-body">
         {item.kind === "image" && !imageUrl ? (
           // An image row must never render as an empty card: while it loads it
           // holds its place, and a file that is gone says so.
@@ -204,36 +265,58 @@ export default function ItemCard({
             {imageMissing ? "Image unavailable" : null}
           </div>
         ) : item.kind === "image" && imageUrl ? (
-          // Clicking the image copies it back to the clipboard, as Copper does.
-          <img src={imageUrl} alt="" className="item-image" onClick={(e) => {
-            e.stopPropagation();
-            onCopyImage();
-          }} />
+          <img
+            src={imageUrl}
+            alt=""
+            className="item-image"
+            onLoad={(event) => {
+              const image = event.currentTarget;
+              if (image.naturalWidth > 0) {
+                setDimensions(`${image.naturalWidth} × ${image.naturalHeight}`);
+              }
+            }}
+          />
         ) : editing && item.kind === "text" ? (
           <textarea
             className="inline-edit"
             autoFocus
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
+              // The editor owns Escape and Enter while it is open. Without
+              // this, Escape would fall through to the shelf's own order and
+              // could clear the selection or retract the window under the
+              // edit being cancelled.
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
+                e.stopPropagation();
                 commitEdit();
               }
-              if (e.key === "Escape") onEditDone();
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                onEditDone();
+              }
             }}
             onBlur={commitEdit}
           />
+        ) : color ? (
+          <div className="card-color">
+            <span className="color-chip" style={{ background: color }} aria-hidden="true" />
+            <span className="color-text">
+              <span className="color-name">{colorLabel}</span>
+              <span className="color-value">{hex ?? color}</span>
+            </span>
+          </div>
         ) : (
           <div
             ref={bodyRef}
-            className={`item-body${clamped ? " clamped" : ""}${color ? " is-color" : ""}`}
+            className={`item-body${clamped ? " clamped" : ""}`}
             // Only where text is actually hidden: a tooltip that repeats what
-            // the card already shows is noise on every row in the list.
+            // the card already shows is noise on every card in a row.
             title={clamped ? item.content : undefined}
-            onDoubleClick={item.kind === "text" ? onEdit : undefined}
           >
-            {color ? <span className="item-swatch" style={{ background: color }} aria-hidden="true" /> : null}
             {link && !search ? (
               <>
                 <span className="item-link-host">{link.host}</span>
@@ -289,22 +372,67 @@ export default function ItemCard({
         ) : null}
       </div>
 
-      {/* In the card's own column, so text never runs underneath it. */}
-      <button
-        type="button"
-        className="item-copy"
-        aria-label={`Copy ${preview(item)}`}
-        title="Copy"
-        onClick={(e) => {
-          e.stopPropagation();
-          onCopyImage();
-        }}
-      >
-        {/* Lucide, like every other icon in the product. This was hand-drawn at a
-            1.4 stroke beside 1.8 Lucide in the same 380px panel, and at 15px the
-            two rounded rectangles read muddy next to the header's crisp glyphs. */}
-        <Copy size={17} aria-hidden="true" />
-      </button>
+      <div className="card-foot">
+        {kind === "color" ? (
+          <span className="card-tools">
+            <button
+              type="button"
+              className={`card-tool${item.favorite !== 0 ? " on" : ""}`}
+              aria-pressed={item.favorite !== 0}
+              aria-label={item.favorite !== 0 ? "Remove favorite" : "Add favorite"}
+              title="Favorite"
+              onClick={(e) => {
+                e.stopPropagation();
+                onFavorite();
+              }}
+            >
+              <Star size={13} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="card-tool"
+              aria-label={`Preview ${colorLabel}`}
+              title="Preview"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPreview();
+              }}
+            >
+              <Eye size={13} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="card-tool"
+              aria-label="More actions"
+              aria-haspopup="menu"
+              title="More"
+              onClick={(e) => {
+                e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                onMore({ x: rect.left, y: rect.bottom + 4 });
+              }}
+            >
+              <Ellipsis size={13} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          </span>
+        ) : meta ? (
+          <span className="card-meta" title={meta}>{meta}</span>
+        ) : null}
+        <span className="card-spring" />
+        <button
+          type="button"
+          className="item-copy"
+          aria-label={`Copy ${preview(item)}`}
+          title="Copy"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCopy();
+          }}
+        >
+          {/* Lucide, like every other icon in the product. */}
+          <Copy size={15} aria-hidden="true" />
+        </button>
+      </div>
     </div>
   );
 }

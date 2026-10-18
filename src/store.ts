@@ -17,6 +17,7 @@ import type {
   PostprocessingTestResponse,
   SavePostprocessingInput,
   LicenseStatus,
+  ShelfEdge,
   SortOrder,
   UpdateInfo,
 } from "./types";
@@ -52,12 +53,10 @@ export const api = {
   attachmentImageData: (id: number) =>
     invoke<string | null>("attachment_image_data", { id }),
   setActiveItem: (id: number | null) => invoke<void>("set_active_item", { id }),
-  createSection: (name: string) => invoke<number>("create_section", { name }),
-  setActiveSection: (id: number | null) =>
-    invoke<void>("set_active_section", { id }),
-  renameSection: (id: number, name: string) =>
-    invoke<void>("rename_section", { id, name }),
-  deleteSection: (id: number) => invoke<void>("delete_section", { id }),
+  /** Dock the shelf to another edge. Rust re-anchors and echoes `shelf-edge`. */
+  setShelfEdge: (edge: ShelfEdge) => invoke<void>("set_shelf_edge", { edge }),
+  /** The slide-out is over; Rust may hide and park the window now. */
+  shelfHidden: () => invoke<void>("shelf_hidden"),
   attachImage: (itemId: number, dataBase64: string, ext: string) =>
     invoke<number>("attach_image", { itemId, dataBase64, ext }),
   detachAttachment: (id: number) => invoke<void>("detach_attachment", { id }),
@@ -82,9 +81,6 @@ export const api = {
     invoke<void>("set_sound_on_capture", { enabled }),
   getSoundOnCapture: () => invoke<boolean>("get_sound_on_capture"),
   captureNow: () => invoke<void>("capture_now"),
-  saveWindowGeometry: (x: number, y: number, width: number, height: number) =>
-    invoke<void>("save_window_geometry", { x, y, width, height }),
-  minimizePanel: () => invoke<void>("minimize_panel"),
   showPanel: () => invoke<void>("show_panel"),
   hidePanel: () => invoke<void>("hide_panel"),
   togglePanel: () => invoke<void>("toggle_panel"),
