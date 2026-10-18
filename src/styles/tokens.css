@@ -238,10 +238,14 @@
   --danger-soft: rgba(255, 99, 105, 0.16);
   --success: #43c07c;
 
-  /* In dark the pair above is already light enough to write with, so the text
-     pair is the same colour: #ff6369 measures 5.20 / 4.66 / 4.52 and #43c07c
-     6.51 / 5.83 / 5.66 against --surface / --surface-2 / --surface-3. */
-  --danger-text: var(--danger);
+  /* The pair above is light enough to write with on plain surfaces (#ff6369
+     measures 5.20 / 4.66 / 4.52 and #43c07c 6.51 / 5.83 / 5.66 against
+     --surface / --surface-2 / --surface-3), but danger labels also sit on the
+     danger-soft hover grounds, where #ff6369 drops to 4.14 / 3.74 / 3.64.
+     --danger-text is stepped up so every danger label clears 4.5:1 there too:
+     #ff8f95 measures 5.50 / 4.96 / 4.83 / 6.20 across surface / surface-2 /
+     surface-3 / canvas over the soft ground. */
+  --danger-text: #ff8f95;
   --success-text: var(--success);
 
   /* --text-3 is 4.09:1 on the fields — under AA for copy a person reads
