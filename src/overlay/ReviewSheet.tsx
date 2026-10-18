@@ -63,7 +63,13 @@ export default function ReviewSheet({
             ? api.dictationConfirm(text)
             : api.dictationDismiss(text);
       call
-        .then(() => onEvent({ type: "settled" }))
+        .then(() => {
+          onEvent({ type: "settled" });
+          // A copy leaves the sheet up: put the caret back so the next
+          // keystroke belongs to the words, not to the button that just took
+          // focus.
+          if (command === "copy") body.current?.focus();
+        })
         .catch((reason: unknown) =>
           onEvent({ type: "failed", message: failureText(reason, FALLBACK[command]) }),
         )

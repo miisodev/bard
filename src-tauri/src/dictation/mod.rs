@@ -1,6 +1,6 @@
 mod audio;
 mod model;
-mod overlay;
+pub(crate) mod overlay;
 mod vad;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

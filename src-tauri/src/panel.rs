@@ -94,6 +94,17 @@ fn show_now_inner(app: &tauri::AppHandle) {
     let _ = win.set_focus();
     let _ = app.emit("panel-shown", ());
     companions_changed(app);
+    // A review sheet may share the screen: when both would sit on the same
+    // side, the sheet steps to the other one rather than being covered.
+    crate::dictation::overlay::dodge_for_shelf(app, crate::geometry::shelf_edge(app));
+}
+
+/// Whether the shelf is on screen. Used by the review sheet's placement rule
+/// when a take finishes with the panel already open.
+pub fn is_visible(app: &AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|win| win.is_visible().ok())
+        .unwrap_or(false)
 }
 
 /// Bumped by every summon. A slide-out carries the value it started with and

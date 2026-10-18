@@ -366,7 +366,14 @@ fn review_present(app: &AppHandle, win: &tauri::WebviewWindow) {
     let _synthetic = crate::capture::SyntheticInputGuard::enter();
 
     let _ = win.set_size(tauri::LogicalSize::new(REVIEW_WIDTH, REVIEW_HEIGHT));
-    position_review(app, win);
+    // If the shelf is already up while the take finishes, the sheet opens on
+    // the other side of it rather than on top of it.
+    let anchor = if crate::panel::is_visible(app) {
+        dodge_anchor(current_anchor(app), crate::geometry::shelf_edge(app))
+    } else {
+        current_anchor(app)
+    };
+    place_sheet(app, win, anchor);
     remember_rect(win);
     // Focus, exactly once per review, in this order:
     //
@@ -702,10 +709,9 @@ fn position(app: &AppHandle, win: &tauri::WebviewWindow) {
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-/// Place the review sheet on the same monitor as the pill, at the same stored
-/// anchor, but measured against the monitor's work area — the sheet is 420 ×
-/// 300 and the taskbar is not a place to put half of it.
-fn position_review(app: &AppHandle, win: &tauri::WebviewWindow) {
+/// Place the sheet at an explicit anchor. Split out so a live reposition (the
+/// shelf dodge below) uses the exact same maths as the first placement.
+fn place_sheet(app: &AppHandle, win: &tauri::WebviewWindow, anchor: (Vertical, Horizontal)) {
     let Some(monitor) = monitor_for(app, win) else {
         return;
     };
@@ -724,9 +730,51 @@ fn position_review(app: &AppHandle, win: &tauri::WebviewWindow) {
             height: outer.height,
         },
         scale,
-        current_anchor(app),
+        anchor,
     );
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+}
+
+/// Which anchor the sheet takes when the shelf would sit under it: the
+/// opposite side of the axis the shelf occupies, or nothing when they are
+/// already apart. Pure so the rule has tests; the move it serves is live only
+/// — the stored pill anchor is never changed.
+fn dodge_anchor(
+    (vertical, horizontal): (Vertical, Horizontal),
+    shelf: crate::geometry::Edge,
+) -> (Vertical, Horizontal) {
+    use crate::geometry::Edge;
+    match shelf {
+        Edge::Bottom if vertical == Vertical::Bottom => (Vertical::Top, horizontal),
+        Edge::Top if vertical == Vertical::Top => (Vertical::Bottom, horizontal),
+        Edge::Left if horizontal == Horizontal::Left => (vertical, Horizontal::Right),
+        Edge::Right if horizontal == Horizontal::Right => (vertical, Horizontal::Left),
+        _ => (vertical, horizontal),
+    }
+}
+
+/// Move the review sheet aside when the shelf shows over it. Called from the
+/// shelf's show path; a no-op unless a review is open, and only ever a live
+/// reposition — the next take still opens the pill and the sheet at the
+/// stored anchor.
+pub fn dodge_for_shelf(app: &AppHandle, shelf: crate::geometry::Edge) {
+    if MODE.load(Ordering::SeqCst) != REVIEW {
+        return;
+    }
+    let anchor = dodge_anchor(current_anchor(app), shelf);
+    if anchor == current_anchor(app) {
+        return;
+    }
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if MODE.load(Ordering::SeqCst) != REVIEW {
+            return;
+        }
+        if let Some(win) = task_app.get_webview_window("overlay") {
+            place_sheet(&task_app, &win, anchor);
+            remember_rect(&win);
+        }
+    });
 }
 
 fn position_for(
@@ -770,6 +818,41 @@ fn sheet_position_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_review_sheet_dodges_the_shelf() {
+        use crate::geometry::Edge;
+        // Same side: the sheet crosses to the opposite one.
+        assert_eq!(
+            dodge_anchor((Vertical::Bottom, Horizontal::Middle), Edge::Bottom),
+            (Vertical::Top, Horizontal::Middle)
+        );
+        assert_eq!(
+            dodge_anchor((Vertical::Top, Horizontal::Middle), Edge::Top),
+            (Vertical::Bottom, Horizontal::Middle)
+        );
+        assert_eq!(
+            dodge_anchor((Vertical::Bottom, Horizontal::Left), Edge::Left),
+            (Vertical::Bottom, Horizontal::Right)
+        );
+        assert_eq!(
+            dodge_anchor((Vertical::Bottom, Horizontal::Right), Edge::Right),
+            (Vertical::Bottom, Horizontal::Left)
+        );
+        // Already apart: nothing moves.
+        assert_eq!(
+            dodge_anchor((Vertical::Top, Horizontal::Middle), Edge::Bottom),
+            (Vertical::Top, Horizontal::Middle)
+        );
+        assert_eq!(
+            dodge_anchor((Vertical::Bottom, Horizontal::Middle), Edge::Top),
+            (Vertical::Bottom, Horizontal::Middle)
+        );
+        assert_eq!(
+            dodge_anchor((Vertical::Bottom, Horizontal::Middle), Edge::Left),
+            (Vertical::Bottom, Horizontal::Middle)
+        );
+    }
 
     #[test]
     fn a_live_take_holds_every_click_and_only_the_close_button_ends_it() {
