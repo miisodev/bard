@@ -10,10 +10,12 @@ import {
   nextIndex,
   PACK_NO_TEXT,
   packText,
+  packsZoneView,
   pageCount,
   pageItems,
   pageNumbers,
   pageSize,
+  rovingPack,
   shelfCommand,
   toHex,
   toHsl,
@@ -206,6 +208,38 @@ describe("packText", () => {
   it("returns nothing for an empty pack", () => {
     expect(packText([])).toBe("");
     expect(PACK_NO_TEXT).toBe("This pack has no text to paste.");
+  });
+});
+
+describe("packsZoneView", () => {
+  it("paints cards whenever there are any, whatever the read said", () => {
+    expect(packsZoneView(3, true, null)).toBe("cards");
+    expect(packsZoneView(1, false, "Bard couldn't read your packs.")).toBe("cards");
+  });
+
+  it("names a failed read over an empty one", () => {
+    expect(packsZoneView(0, false, "Bard couldn't read your packs.")).toBe("error");
+    expect(packsZoneView(0, true, "Bard couldn't read your packs.")).toBe("error");
+  });
+
+  it("stays blank until the first read lands, then says there are none", () => {
+    expect(packsZoneView(0, false, null)).toBe("none");
+    expect(packsZoneView(0, true, null)).toBe("empty");
+  });
+});
+
+describe("rovingPack", () => {
+  it("keeps the cursor's pack while it is on the page", () => {
+    expect(rovingPack(7, [5, 7, 9])).toBe(7);
+  });
+
+  it("falls to the first card when the cursor is elsewhere", () => {
+    expect(rovingPack(6, [5, 7, 9])).toBe(5);
+    expect(rovingPack(null, [5, 7, 9])).toBe(5);
+  });
+
+  it("has no stop on an empty page", () => {
+    expect(rovingPack(7, [])).toBeNull();
   });
 });
 

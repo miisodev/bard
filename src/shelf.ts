@@ -114,6 +114,35 @@ export function packText(items: Item[]): string {
     .join("\n");
 }
 
+/** What the Packs zone paints, when its list is not (yet) a list. */
+export type PacksZoneView = "cards" | "error" | "none" | "empty";
+
+/**
+ * The zone's state, read off the last read: cards whenever there are any, a
+ * failure over an empty list (a shelf with no packs and a shelf whose packs
+ * could not be read are different screens), and nothing at all until the
+ * first read lands rather than claiming there are none.
+ */
+export function packsZoneView(
+  cardCount: number,
+  loaded: boolean,
+  error: string | null,
+): PacksZoneView {
+  if (cardCount > 0) return "cards";
+  if (error !== null) return "error";
+  return loaded ? "empty" : "none";
+}
+
+/**
+ * The one pack that holds the zone's tab stop: the cursor's pack while it is
+ * on this page, the first card otherwise. A list whose tab stop is missing
+ * cannot be tabbed into at all.
+ */
+export function rovingPack(cursor: number | null, pageIds: number[]): number | null {
+  if (cursor !== null && pageIds.includes(cursor)) return cursor;
+  return pageIds[0] ?? null;
+}
+
 /** How many cards fit a zone, given one card's size and the gap after it. */
 export function pageSize(fit: number, card: number, gap: number): number {
   if (!(card > 0) || !Number.isFinite(fit)) return 1;

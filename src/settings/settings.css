@@ -6,28 +6,13 @@
   ui.tsx — if a pane ever needs a one-off rule, the primitive is missing.
 */
 
-/* A name that has to reach a screen reader and nothing else. The licence
-   field's label used this class with no rule anywhere, so it rendered as
-   14px body text above the key field. */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* A failure the user has to act on, in the danger tone. Also undefined
    everywhere, which is why an activation failure read as an ordinary line of
    body copy, indistinguishable from the label above it. The card's own gap
    supplies the spacing. */
 .form-error {
   margin: 0;
-  color: var(--danger);
+  color: var(--danger-text);
   font-size: var(--fs-sm);
   line-height: var(--lh-base);
 }
@@ -210,8 +195,8 @@
   color: var(--on-canvas-3);
 }
 
-.note.danger { color: var(--danger); }
-.note.success { color: var(--success); }
+.note.danger { color: var(--danger-text); }
+.note.success { color: var(--success-text); }
 
 .ellipsis {
   display: block;
@@ -258,7 +243,6 @@ because the panel and the Draw window both render
 .tag svg,
 .loading-row svg,
 .error-empty > svg,
-.empty-row > svg,
 .postprocessing-status svg,
 .model-trailing svg {
   width: 1em;
@@ -407,7 +391,7 @@ because the panel and the Draw window both render
 
 .inline-progress.failed {
   width: auto;
-  color: var(--danger);
+  color: var(--danger-text);
   font-size: var(--fs-sm);
 }
 
@@ -415,7 +399,7 @@ because the panel and the Draw window both render
   margin-top: var(--sp-4);
   font-size: var(--fs-sm);
   line-height: var(--lh-base);
-  color: var(--danger);
+  color: var(--danger-text);
   overflow-wrap: anywhere;
 }
 
@@ -491,7 +475,6 @@ because the panel and the Draw window both render
 .pane-footnote a:hover { color: var(--on-canvas-2); }
 
 .loading-row,
-.empty-row,
 .error-empty {
   display: flex;
   align-items: center;
@@ -501,16 +484,10 @@ because the panel and the Draw window both render
   color: var(--text-2);
 }
 
-.empty-row > svg { color: var(--text-3); }
-.empty-row > div,
 .error-empty > div { flex: 1; min-width: 0; }
-.empty-row strong,
-.empty-row span,
 .error-empty strong,
 .error-empty span { display: block; }
-.empty-row strong,
 .error-empty strong { color: var(--text); }
-.empty-row span,
 .error-empty span { margin-top: var(--sp-1); }
 .error-empty { align-items: flex-start; }
 .error-empty > svg { color: var(--danger); }
@@ -586,8 +563,8 @@ because the panel and the Draw window both render
 .group-note a:hover,
 .row-hint a:hover { text-decoration: underline; }
 
-.postprocessing-status.success { color: var(--success); }
-.postprocessing-status.danger { color: var(--danger); }
+.postprocessing-status.success { color: var(--success-text); }
+.postprocessing-status.danger { color: var(--danger-text); }
 .postprocessing-status.muted { color: var(--text-2); }
 
 /* The release notes the updater fetched and the pane never showed. No panel of

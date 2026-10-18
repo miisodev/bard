@@ -32,17 +32,21 @@ const TILE_CHARS = 32;
 export default function PackCard({
   pack,
   previewItems,
+  active = false,
   editing,
   onPaste,
   onOpen,
   onMore,
   onContextMenu,
+  onFocus,
   onRename,
   onEditDone,
 }: {
   pack: PackSummary;
   /** The leading members, in pack order, resolved against the shelf's items. */
   previewItems: Item[];
+  /** The roving tab stop and the keyboard cursor. Exactly one pack at a time. */
+  active?: boolean;
   /** The pack's name is being edited in place. */
   editing: boolean;
   /** The primary action: write the pack's text and paste it. */
@@ -52,6 +56,8 @@ export default function PackCard({
   /** Open the card's menu at a point, from the More control or the key. */
   onMore: (at: { x: number; y: number }) => void;
   onContextMenu: (e: ReactMouseEvent) => void;
+  /** The card — or anything inside it — took DOM focus. */
+  onFocus: () => void;
   onRename: (name: string) => void;
   /** The inline rename finished — committed or cancelled. */
   onEditDone: () => void;
@@ -134,9 +140,11 @@ export default function PackCard({
   return (
     <div
       ref={cardRef}
-      className={`pack-card${editing ? " editing" : ""}`}
+      className={`pack-card${active ? " active" : ""}${editing ? " editing" : ""}`}
       role="option"
-      tabIndex={0}
+      // Roving, as in the All zone: one pack is in the tab order, the rest
+      // are reached by arrow keys.
+      tabIndex={active ? 0 : -1}
       aria-label={
         noText ? `${pack.name} — ${count} — ${PACK_NO_TEXT}` : `Paste ${pack.name} — ${count}`
       }
@@ -144,6 +152,7 @@ export default function PackCard({
       data-pack-id={pack.id}
       onClick={() => onPaste()}
       onContextMenu={onContextMenu}
+      onFocus={onFocus}
       onKeyDown={(event) => {
         // Only the context-menu key belongs to the card; Enter and Delete are
         // the panel's, and are read against the focused card's own id.

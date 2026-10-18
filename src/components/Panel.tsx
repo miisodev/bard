@@ -1,4 +1,4 @@
-import { Ellipsis, Eraser, Package, PenTool, Search, Settings, Star, X } from "lucide-react";
+import { AlertCircle, Ellipsis, Eraser, Package, PenTool, Search, Settings, Star, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -17,9 +17,11 @@ import {
   nextIndex,
   PACK_NO_TEXT,
   packText,
+  packsZoneView,
   pageCount,
   pageItems,
   pageSize,
+  rovingPack,
   shelfCommand,
   TYPE_FILTERS,
   type TypeFilter,
@@ -106,8 +108,11 @@ export default function Panel({
   // Packs: the summaries the zone paints, the page it is on, and which pack
   // the view, the card menu and the delete confirmation are about.
   const [packs, setPacks] = useState<PackSummary[]>([]);
-  // Until the first read lands the zone shows nothing rather than "none".
+  // Until the first read lands the zone shows nothing rather than "none", and
+  // a read that failed says so and offers a retry instead of going blank.
   const [packsLoaded, setPacksLoaded] = useState(false);
+  const [packsError, setPacksError] = useState<string | null>(null);
+  const [activePackId, setActivePackId] = useState<number | null>(null);
   const [packPage, setPackPage] = useState(0);
   const [perPackPage, setPerPackPage] = useState(1);
   const [packViewId, setPackViewId] = useState<number | null>(null);
@@ -123,7 +128,6 @@ export default function Panel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
-  const packsRef = useRef<HTMLElement>(null);
   const packsPageRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   // The last id the backend was told about, so focus, clicks and arrow keys all
@@ -136,6 +140,8 @@ export default function Panel({
    * "nothing to do".
    */
   const focusAfterRender = useRef<number | undefined | null>(null);
+  /** The pack to focus once its page has rendered, after a cursor move. */
+  const focusPackAfterRender = useRef<number | null>(null);
 
   const attachmentsByItem = useMemo(() => {
     const index = new Map<number, Attachment[]>();
@@ -214,6 +220,15 @@ export default function Panel({
 
   const packView = packViewId === null ? null : packs.find((pack) => pack.id === packViewId) ?? null;
 
+  /** The packs zone's own roving tab stop, on the All zone's terms. */
+  const rovingPackId = useMemo(
+    () => rovingPack(activePackId, packCards.map((pack) => pack.id)),
+    [activePackId, packCards],
+  );
+
+  /** What the zone paints: cards, an error, "none", or nothing yet. */
+  const packsView = packsZoneView(packCards.length, packsLoaded, packsError);
+
   /**
    * Roving tabindex: the card the arrows are pointing at is the zone's only
    * tab stop. When the active card is not on this page, the first card takes
@@ -246,9 +261,15 @@ export default function Panel({
       .listPacks()
       .then((next) => {
         setPacks(next);
+        setPacksError(null);
         setPacksLoaded(true);
       })
-      .catch(() => setPacksLoaded(false));
+      .catch((reason: unknown) => {
+        // The zone answers a failed read itself: packs already on screen stay
+        // there, and the error paints only when there is nothing to show.
+        setPacksError(reasonText(reason, "Bard couldn't read your packs."));
+        setPacksLoaded(false);
+      });
   }, []);
 
   const refresh = useCallback(() => {
@@ -464,15 +485,47 @@ export default function Panel({
     [packs.length, perPackPage],
   );
 
-  /** Put focus back on a pack card, or on the zone when the card is gone. */
+  /** Put focus back on a pack card, or on the page when the card is gone. */
   const focusPack = useCallback((id: number) => {
-    const zone = packsRef.current;
-    if (!zone) return;
-    (zone.querySelector<HTMLElement>(`[data-pack-id="${id}"]`) ?? zone).focus();
+    const page = packsPageRef.current;
+    if (!page) return;
+    (page.querySelector<HTMLElement>(`[data-pack-id="${id}"]`) ?? page).focus();
   }, []);
 
-  /** The zone itself: where focus goes when the card it was on is gone. */
-  const focusPacksZone = useCallback(() => packsRef.current?.focus(), []);
+  /** The zone's page: where focus goes when the card it was on is gone. */
+  const focusPacksZone = useCallback(() => packsPageRef.current?.focus(), []);
+
+  /**
+   * Move the packs cursor. Arrow keys are the zone's own movement, and the
+   * page follows the pack so the end of a pack page is never a dead end; the
+   * card is focused a frame later when its page was not rendered yet.
+   */
+  const movePackCursor = useCallback(
+    (delta: -1 | 1) => {
+      if (packs.length === 0) return;
+      const from = rovingPackId === null ? -1 : packs.findIndex((pack) => pack.id === rovingPackId);
+      const next = nextIndex(from, delta, packs.length);
+      if (next < 0) return;
+      const pack = packs[next];
+      setActivePackId(pack.id);
+      const nextPage = Math.floor(next / perPackPage);
+      if (nextPage === currentPackPage) {
+        focusPack(pack.id);
+      } else {
+        setPackPage(nextPage);
+        focusPackAfterRender.current = pack.id;
+      }
+    },
+    [packs, rovingPackId, perPackPage, currentPackPage, focusPack],
+  );
+
+  // The packs cursor's landing: the card exists only once its page has.
+  useEffect(() => {
+    const id = focusPackAfterRender.current;
+    if (id === null) return;
+    focusPackAfterRender.current = null;
+    focusPack(id);
+  }, [packCards, focusPack]);
 
   /*
     One pack paste path, the pack view's and the card's alike. The members are
@@ -696,6 +749,13 @@ export default function Panel({
         commands — move, pin, done — stop at the divider.
       */
       if (target.closest(".shelf-zone.packs")) {
+        // The arrows move between the packs themselves: the zone is one tab
+        // stop, exactly as the All zone is, and Shift extends nothing here.
+        if (command.type === "move") {
+          e.preventDefault();
+          movePackCursor(command.delta);
+          return;
+        }
         const packId = target.closest<HTMLElement>("[data-pack-id]")?.dataset.packId;
         const pack = packId ? packs.find((entry) => entry.id === Number(packId)) : undefined;
         if (pack && !onControl && command.type === "paste") {
@@ -832,6 +892,7 @@ export default function Panel({
     deleteItems,
     moveCursor,
     goToPage,
+    movePackCursor,
     copyPack,
     askDeletePack,
     focusPack,
@@ -1251,14 +1312,10 @@ export default function Panel({
         <div className="shelf-divider" aria-hidden="true" />
 
         {/* The Packs zone: the packs already made, a page at a time, and the
-            one instruction a shelf with none owes. */}
-        <section
-          ref={packsRef}
-          id="shelf-packs"
-          className="shelf-zone packs"
-          aria-label="Packs"
-          tabIndex={0}
-        >
+            one instruction a shelf with none owes. Its page is the zone's one
+            tab stop, the arrow keys move the cursor inside it, and Ctrl+K
+            reaches it from anywhere. */}
+        <section id="shelf-packs" className="shelf-zone packs" aria-label="Packs">
           <h2 className="packs-title">Packs</h2>
           <div
             ref={packsPageRef}
@@ -1267,23 +1324,17 @@ export default function Panel({
             // one, so the role arrives with the first pack.
             role={packCards.length === 0 ? undefined : "listbox"}
             aria-label={packCards.length === 0 ? undefined : "Packs"}
-            tabIndex={-1}
+            tabIndex={rovingPackId === null ? 0 : -1}
           >
-            {packCards.length === 0 ? (
-              packsLoaded ? (
-                <div className="packs-empty">
-                  <Package size={18} strokeWidth={1.6} aria-hidden="true" />
-                  <div className="title">No packs yet</div>
-                  <div className="hint">Select items and make one.</div>
-                </div>
-              ) : null
-            ) : (
+            {packsView === "cards" ? (
               packCards.map((pack) => (
                 <PackCard
                   key={pack.id}
                   pack={pack}
                   previewItems={packPreviews.get(pack.id) ?? EMPTY_ITEMS}
+                  active={rovingPackId === pack.id}
                   editing={editingPackId === pack.id}
+                  onFocus={() => setActivePackId(pack.id)}
                   onPaste={() => copyPack(pack)}
                   onOpen={() => setPackViewId(pack.id)}
                   onMore={(at) => setPackMenu({ ...at, pack })}
@@ -1295,7 +1346,24 @@ export default function Panel({
                   onEditDone={() => setEditingPackId(null)}
                 />
               ))
-            )}
+            ) : packsView === "error" ? (
+              // A blank zone said nothing about a read that failed; this says
+              // what happened and offers the one action that can answer it.
+              <div className="packs-empty error" role="alert">
+                <AlertCircle size={18} strokeWidth={1.6} aria-hidden="true" />
+                <div className="title">Packs could not be loaded</div>
+                <div className="hint">{packsError}</div>
+                <button type="button" className="btn" onClick={refreshPacks}>
+                  Retry
+                </button>
+              </div>
+            ) : packsView === "empty" ? (
+              <div className="packs-empty">
+                <Package size={18} strokeWidth={1.6} aria-hidden="true" />
+                <div className="title">No packs yet</div>
+                <div className="hint">Select items and make one.</div>
+              </div>
+            ) : null}
           </div>
           <Pager page={currentPackPage} pages={packPages} onPage={goToPackPage} label="Pack pages" />
         </section>
