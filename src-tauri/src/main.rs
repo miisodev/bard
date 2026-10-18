@@ -257,8 +257,10 @@ fn main() {
             dictation::init(handle.clone());
 
             tray::create(app)?;
-            let main = app.get_webview_window("main").unwrap();
-            geometry::restore(app.handle(), &main, panel::PANEL_WIDTH, panel::PANEL_HEIGHT);
+            // The panel is a docked shelf now: it anchors itself to its edge —
+            // on the monitor its setting names, or under the pointer — on every
+            // show, so there is no saved rectangle to restore and nothing to
+            // place at startup. Its window stays hidden until the first show.
 
             // Opening the app should open the app. It lives in the tray, but
             // launching it and being shown nothing reads as a failure to
@@ -309,9 +311,11 @@ fn main() {
                 // told reliably when the *native* window loses activation —
                 // which is exactly the case that matters, a click into another
                 // application.
-                WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
-                    geometry::remember_soon(window.app_handle(), "main");
-                }
+                //
+                // Moved and Resized are deliberately not handled for the
+                // panel: they are the docking code's own anchoring, not a place
+                // a person put the window, and remembering them would fill
+                // `geometry:main` with a rectangle nothing reads.
                 WindowEvent::Focused(focused) => {
                     panel::on_focus_change(window.app_handle(), *focused);
                 }
@@ -356,6 +360,8 @@ fn main() {
             commands::show_panel,
             commands::hide_panel,
             commands::toggle_panel,
+            commands::set_shelf_edge,
+            commands::shelf_hidden,
             commands::get_models,
             commands::get_model,
             commands::set_model,

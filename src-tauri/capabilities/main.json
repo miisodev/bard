@@ -46,6 +46,8 @@
     "allow-show-panel",
     "allow-hide-panel",
     "allow-toggle-panel",
+    "allow-set-shelf-edge",
+    "allow-shelf-hidden",
     "allow-get-models",
     "allow-get-model",
     "allow-set-model",

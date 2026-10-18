@@ -1,9 +1,10 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex};
+use std::time::Duration;
+
 use tauri::{AppHandle, Emitter, Manager};
 
-/// The panel's size on its first open, in logical pixels (tauri.conf.json).
-pub const PANEL_WIDTH: f64 = 380.0;
-pub const PANEL_HEIGHT: f64 = 620.0;
-/// Settings' and Draw's size on their first open.
+/// Settings' and Draw's size on their first open, in logical pixels.
 pub const COMPANION_WIDTH: f64 = 720.0;
 pub const COMPANION_HEIGHT: f64 = 620.0;
 
@@ -78,27 +79,172 @@ fn show_now_inner(app: &tauri::AppHandle) {
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
+    // A summon in flight is recorded before anything else: a slide-out still
+    // waiting on the main thread sees this and leaves the window alone.
+    SUMMONS.fetch_add(1, Ordering::SeqCst);
+    // Unminimise first, then place. A minimised window's rectangle is not the
+    // window's to change — Windows answers SetWindowPos about the restored
+    // rectangle — so the shelf is brought back to normal before it is anchored.
     let _ = win.unminimize();
-    crate::geometry::restore(app, &win, PANEL_WIDTH, PANEL_HEIGHT);
+    // The shelf is docked, never restored: every show puts it back on its edge
+    // and on its monitor at the size that edge dictates. Where it was left by
+    // hand is not a place it can be left, so there is no rectangle to return to.
+    crate::geometry::anchor(app, &win, crate::geometry::shelf_edge(app));
     let _ = win.show();
     let _ = win.set_focus();
     let _ = app.emit("panel-shown", ());
     companions_changed(app);
 }
 
-pub fn hide_now(app: &tauri::AppHandle) {
-    let app = app.clone();
-    let task_app = app.clone();
-    let _ = app.run_on_main_thread(move || hide_now_inner(&task_app));
+/// Bumped by every summon. A slide-out carries the value it started with and
+/// stands down if the shelf was summoned again while it waited, because the
+/// window on screen belongs to the new summon.
+static SUMMONS: AtomicU64 = AtomicU64::new(0);
+
+/// A one-shot signal: a flag and a condition variable, opened once and closed
+/// when the next round begins.
+struct Gate {
+    open: Mutex<bool>,
+    cv: Condvar,
 }
 
-fn hide_now_inner(app: &tauri::AppHandle) {
+impl Gate {
+    const fn new() -> Gate {
+        Gate {
+            open: Mutex::new(false),
+            cv: Condvar::new(),
+        }
+    }
+
+    fn close(&self) {
+        *self
+            .open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
+    }
+
+    fn open(&self) {
+        *self
+            .open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
+        self.cv.notify_all();
+    }
+
+    /// Wait up to `timeout` for the gate to open. `true` when it did.
+    fn wait(&self, timeout: Duration) -> bool {
+        let open = self
+            .open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *open {
+            return true;
+        }
+        let (open, _) = self
+            .cv
+            .wait_timeout_while(open, timeout, |open| !*open)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *open
+    }
+}
+
+/// The frontend's `shelf_hidden` ack: the slide-out animation is over, and the
+/// window may leave.
+static SHELF_ACK: Gate = Gate::new();
+
+/// The hide itself: the window is away, parked, and the foreground is back.
+static SHELF_HIDDEN: Gate = Gate::new();
+
+/// How long a hide waits for the frontend's ack. The slide is a couple of
+/// hundred milliseconds; longer than this means the renderer is not listening,
+/// and the hide goes ahead without it.
+const SHELF_ACK_TIMEOUT: Duration = Duration::from_millis(450);
+
+/// The frontend has finished sliding the shelf out; from here it can hide.
+pub fn shelf_hidden_ack() {
+    SHELF_ACK.open();
+}
+
+/// Wait until the shelf is actually away — hidden, parked, and the foreground
+/// back with the app it was summoned over. `false` means the wait ran out; the
+/// caller carries on, because a paste that never happens is worse than one
+/// that lands a moment early.
+pub fn wait_hidden(timeout: Duration) -> bool {
+    SHELF_HIDDEN.wait(timeout)
+}
+
+pub fn hide_now(app: &tauri::AppHandle) {
+    // Re-arm both handshakes before the work is queued: a `paste_back` calling
+    // this and then waiting must wait for *this* hide, not the one before it.
+    SHELF_ACK.close();
+    SHELF_HIDDEN.close();
+    let app = app.clone();
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || hide_now_inner(&task_app, None));
+}
+
+/// Take the shelf away.
+///
+/// It used to vanish in one call. It now slides out, which means the window has
+/// to stay on screen for the length of the animation, so the hide is a
+/// handshake: `shelf-hiding` goes out, the frontend answers with the
+/// `shelf_hidden` invoke, and only then is the window hidden, parked clear of
+/// the work area and the foreground handed back. An ack that never arrives
+/// costs the wait and nothing else.
+///
+/// The wait runs on its own thread because the ack is a Tauri command and
+/// commands are handled on the main thread: waiting for one there would be
+/// waiting for the thread that has to deliver it.
+///
+/// `blur_generation` is the focus generation an auto-hide was scheduled with,
+/// or `None` for a hide someone asked for. Coming back to the shelf during the
+/// slide cancels an auto-hide and completes a deliberate one.
+fn hide_now_inner(app: &tauri::AppHandle, blur_generation: Option<u64>) {
     let Some(win) = app.get_webview_window("main") else {
+        SHELF_HIDDEN.open();
         return;
     };
-    crate::geometry::remember(app, &win);
+    if !win.is_visible().unwrap_or(false) {
+        // Already away: nothing to slide out, so nothing to wait for.
+        SHELF_HIDDEN.open();
+        return;
+    }
+    SHELF_ACK.close();
+    SHELF_HIDDEN.close();
+    let summons = SUMMONS.load(Ordering::SeqCst);
+    let _ = app.emit_to("main", "shelf-hiding", ());
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _ = SHELF_ACK.wait(SHELF_ACK_TIMEOUT);
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || finish_hide(&handle, summons, blur_generation));
+    });
+}
+
+/// The second half of the slide-out handshake, back on the main thread.
+fn finish_hide(app: &tauri::AppHandle, summons: u64, blur_generation: Option<u64>) {
+    if let Some(generation) = blur_generation {
+        if FOCUS_GENERATION.load(Ordering::SeqCst) != generation {
+            // Someone came back to the shelf while it was sliding away, which
+            // is exactly what the blur's grace period exists to protect.
+            SHELF_HIDDEN.open();
+            return;
+        }
+    }
+    if SUMMONS.load(Ordering::SeqCst) != summons {
+        // Summoned again while the slide was running. The animation is going
+        // the wrong way, but the window stays where the new summon put it.
+        SHELF_HIDDEN.open();
+        return;
+    }
+    let Some(win) = app.get_webview_window("main") else {
+        SHELF_HIDDEN.open();
+        return;
+    };
     let _ = win.hide();
+    crate::geometry::park(app, &win, crate::geometry::shelf_edge(app));
     restore_foreground();
+    SHELF_HIDDEN.open();
 }
 
 /// Bumped on every focus change. A pending auto-hide carries the value it was
@@ -186,7 +332,7 @@ pub fn on_focus_change(app: &AppHandle, focused: bool) {
         // Called straight from this timer thread, hide() returns Ok and does
         // nothing at all.
         let handle = app.clone();
-        let _ = app.run_on_main_thread(move || hide_now_inner(&handle));
+        let _ = app.run_on_main_thread(move || hide_now_inner(&handle, Some(generation)));
     });
 }
 
@@ -202,13 +348,14 @@ fn toggle_now_inner(app: &AppHandle) {
     };
     if win.is_visible().unwrap_or(false) {
         if win.is_focused().unwrap_or(false) {
-            hide_now_inner(app);
+            hide_now_inner(app, None);
         } else {
             // Refocusing an already-visible panel. Deliberately does *not* emit
             // `panel-shown`: the panel's composer asserts focus when it hears that,
             // so announcing a refocus would throw away whatever the person was
             // doing inside it — a half-typed inline edit, a card selection, the
             // search field — and send their next keystrokes to the composer.
+            SUMMONS.fetch_add(1, Ordering::SeqCst);
             remember_foreground();
             let _ = win.set_focus();
         }
@@ -258,4 +405,34 @@ fn remember_foreground() {
 
 fn restore_foreground() {
     fg::restore();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_closed_gate_does_not_open_on_its_own() {
+        let gate = Gate::new();
+        assert!(!gate.wait(Duration::from_millis(20)));
+        gate.open();
+        assert!(gate.wait(Duration::from_millis(20)));
+        // A new round closes it again: a stale open must not release a later
+        // waiter before its own handshake is done.
+        gate.close();
+        assert!(!gate.wait(Duration::from_millis(20)));
+    }
+
+    #[test]
+    fn a_waiting_hide_is_woken_by_the_ack() {
+        let gate = std::sync::Arc::new(Gate::new());
+        let opener = std::sync::Arc::clone(&gate);
+        let ack = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            opener.open();
+        });
+        // The wait is bounded, but the ack gets there long before the bound.
+        assert!(gate.wait(Duration::from_millis(2_000)));
+        ack.join().unwrap();
+    }
 }
