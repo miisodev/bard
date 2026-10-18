@@ -28,17 +28,17 @@ fn require_licensed_or_onboarding(app: &AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn hf_cached_models(app: AppHandle) -> Vec<crate::hf::CachedHfModel> {
+pub async fn hf_cached_models(app: AppHandle) -> Vec<crate::hf::CachedHfModel> {
     crate::hf::cached_models(&app)
 }
 
 #[tauri::command]
-pub fn get_detected_models(app: AppHandle) -> Vec<crate::hf::CachedHfModel> {
+pub async fn get_detected_models(app: AppHandle) -> Vec<crate::hf::CachedHfModel> {
     crate::hf::cached_models(&app)
 }
 
 #[tauri::command]
-pub fn check_model(
+pub async fn check_model(
     app: AppHandle,
     local_path: String,
 ) -> Result<crate::hf::CompatibilityResult, String> {
@@ -46,7 +46,7 @@ pub fn check_model(
 }
 
 #[tauri::command]
-pub fn activate_detected_model(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn activate_detected_model(app: AppHandle, id: String) -> Result<(), String> {
     require_licensed_or_onboarding(&app)?;
     crate::hf::activate_detected_model(&app, &id)
 }
@@ -82,7 +82,7 @@ pub async fn hf_install(
 }
 
 #[tauri::command]
-pub fn hf_use_cached(
+pub async fn hf_use_cached(
     app: AppHandle,
     repo: String,
     file: String,
@@ -291,7 +291,7 @@ pub fn start_trial(app: AppHandle) -> Result<crate::license::LicenseStatus, Stri
 }
 
 #[tauri::command]
-pub fn get_license(app: AppHandle) -> crate::license::LicenseStatus {
+pub async fn get_license(app: AppHandle) -> crate::license::LicenseStatus {
     crate::license::status(&app)
 }
 
@@ -318,12 +318,12 @@ pub async fn deactivate_license(app: AppHandle) -> Result<crate::license::Licens
 }
 
 #[tauri::command]
-pub fn clear_license(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+pub async fn clear_license(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
     crate::license::clear(&app).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn get_setting_str(app: AppHandle, key: String) -> String {
+pub async fn get_setting_str(app: AppHandle, key: String) -> String {
     const PUBLIC_SETTING_KEYS: &[&str] = &[
         "selected_microphone",
         "dictation_overlay_position",
@@ -611,7 +611,7 @@ fn decode_image_payload(data_base64: &str, ext: &str) -> Result<(Vec<u8>, String
 }
 
 #[tauri::command]
-pub fn attach_image(
+pub async fn attach_image(
     app: AppHandle,
     item_id: i64,
     data_base64: String,
@@ -658,7 +658,7 @@ pub fn add_note_to_image(app: AppHandle, id: i64) {
 }
 
 #[tauri::command]
-pub fn export_markdown(app: AppHandle) -> Result<String, String> {
+pub async fn export_markdown(app: AppHandle) -> Result<String, String> {
     let state = db::get_state(&app);
     let mut out = String::from("# Bard export\n\n");
     let mut unfiled: Vec<&db::Item> = vec![];
@@ -731,7 +731,7 @@ pub fn set_export_dir(app: AppHandle, path: String) {
 }
 
 #[tauri::command]
-pub fn get_export_dir(app: AppHandle) -> String {
+pub async fn get_export_dir(app: AppHandle) -> String {
     db::get_setting(&app, "export_dir")
         .filter(|d| !d.is_empty())
         .unwrap_or_else(dirs_documents)
@@ -743,7 +743,7 @@ pub fn set_sound_on_capture(app: AppHandle, enabled: bool) {
 }
 
 #[tauri::command]
-pub fn get_sound_on_capture(app: AppHandle) -> bool {
+pub async fn get_sound_on_capture(app: AppHandle) -> bool {
     db::get_setting(&app, "sound_on_capture") != Some("0".into())
 }
 
@@ -774,8 +774,20 @@ pub fn minimize_panel(app: AppHandle) {
     }
 }
 
+/// The panel's whole world, re-read on every refresh and after every capture.
+///
+/// `async` for the threading, not for concurrency: Tauri runs a synchronous
+/// command inline on the Windows main thread, and this one reads the whole
+/// timeline, every attachment, the settings, the licence (Credential Manager
+/// four to six times) and enumerates microphones — all on the thread every
+/// window shares, where a slow disk or vault stalls painting and input. An
+/// `async fn` with no `.await` is spawned by Tauri instead, and the compiler
+/// still refuses to let the `Db` mutex guard cross an await. The same reasoning
+/// applies to every other `async` command in this file that only reads files,
+/// the database or the vault; window-touching commands stay synchronous on
+/// purpose.
 #[tauri::command]
-pub fn get_state(app: AppHandle) -> db::AppState {
+pub async fn get_state(app: AppHandle) -> db::AppState {
     db::get_state(&app)
 }
 
@@ -795,7 +807,7 @@ pub fn add_item(app: AppHandle, content: String) {
 }
 
 #[tauri::command]
-pub fn add_image(app: AppHandle, data_base64: String, ext: String) -> Result<i64, String> {
+pub async fn add_image(app: AppHandle, data_base64: String, ext: String) -> Result<i64, String> {
     crate::license::require(&app)?;
     let (bytes, ext) = decode_image_payload(&data_base64, &ext)?;
     let images = app.state::<ImagesDir>().0.clone();
@@ -973,7 +985,7 @@ pub fn set_done(app: AppHandle, id: i64, done: bool) {
 }
 
 #[tauri::command]
-pub fn clear_completed(app: AppHandle) -> Result<(), String> {
+pub async fn clear_completed(app: AppHandle) -> Result<(), String> {
     let ids: Vec<i64> = db::completed_items(&app)
         .into_iter()
         .map(|item| item.id)
@@ -984,14 +996,14 @@ pub fn clear_completed(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn clear_history(app: AppHandle) -> Result<(), String> {
+pub async fn clear_history(app: AppHandle) -> Result<(), String> {
     db::clear_history(&app)?;
     refresh(&app);
     Ok(())
 }
 
 #[tauri::command]
-pub fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+pub async fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
     crate::paste::set_text(&app, &text)
 }
 
@@ -1021,7 +1033,7 @@ pub fn paste_back(app: AppHandle) {
 const PASTE_BACK_WAIT: Duration = Duration::from_millis(700);
 
 #[tauri::command]
-pub fn copy_item(app: AppHandle, id: i64) -> Result<(), String> {
+pub async fn copy_item(app: AppHandle, id: i64) -> Result<(), String> {
     let items = db::list_items(&app);
     let Some(item) = items.into_iter().find(|i| i.id == id) else {
         return Err("item not found".into());
@@ -1099,7 +1111,7 @@ pub fn set_retention_days(app: AppHandle, origin: String, days: Option<i64>) -> 
 /// something a person asked for and watches happen, not something that silently
 /// deletes their data mid-session.
 #[tauri::command]
-pub fn prune_history_now(app: AppHandle) -> Result<usize, String> {
+pub async fn prune_history_now(app: AppHandle) -> Result<usize, String> {
     let mut removed = 0usize;
     for origin in ["clipboard", "dictation"] {
         removed += db::prune_expired(&app, origin)?;
@@ -1110,12 +1122,12 @@ pub fn prune_history_now(app: AppHandle) -> Result<usize, String> {
 }
 
 #[tauri::command]
-pub fn get_retention_days(app: AppHandle, origin: String) -> Option<i64> {
+pub async fn get_retention_days(app: AppHandle, origin: String) -> Option<i64> {
     db::retention_days(&app, &origin)
 }
 
 #[tauri::command]
-pub fn delete_all_data(app: AppHandle) -> Result<(), String> {
+pub async fn delete_all_data(app: AppHandle) -> Result<(), String> {
     db::delete_all_data(&app)?;
     crate::license::erase_local(&app).map_err(|error| error.to_string())?;
     crate::cloud::delete_api_key().map_err(|error| error.to_string())?;
@@ -1125,14 +1137,14 @@ pub fn delete_all_data(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn clear_captures(app: AppHandle) -> Result<(), String> {
+pub async fn clear_captures(app: AppHandle) -> Result<(), String> {
     db::clear_captures(&app)?;
     refresh(&app);
     Ok(())
 }
 
 #[tauri::command]
-pub fn item_image_data(app: AppHandle, id: i64) -> Option<String> {
+pub async fn item_image_data(app: AppHandle, id: i64) -> Option<String> {
     let item = db::item_by_id(&app, id)?;
     if item.kind != "image" {
         return None;
@@ -1141,7 +1153,7 @@ pub fn item_image_data(app: AppHandle, id: i64) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn attachment_image_data(app: AppHandle, id: i64) -> Option<String> {
+pub async fn attachment_image_data(app: AppHandle, id: i64) -> Option<String> {
     let path = db::attachment_path(&app, id)?;
     crate::paste::image_data(&app, &path)
 }
@@ -1160,7 +1172,7 @@ pub struct Appearance {
 }
 
 #[tauri::command]
-pub fn get_appearance(app: AppHandle) -> Appearance {
+pub async fn get_appearance(app: AppHandle) -> Appearance {
     if !db::is_ready(&app) {
         return Appearance {
             theme: "system".into(),
@@ -1396,7 +1408,7 @@ pub fn get_model(app: AppHandle) -> crate::dictation::ModelStatus {
 }
 
 #[tauri::command]
-pub fn set_model(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn set_model(app: AppHandle, id: String) -> Result<(), String> {
     require_licensed_or_onboarding(&app)?;
     crate::hf::activate_model(&app, &id)
 }

@@ -144,7 +144,12 @@ pub fn start(app: AppHandle) {
         let mut last_seq = clip_seq();
         let mut ticks: u64 = 0;
         loop {
-            thread::sleep(Duration::from_millis(300));
+            // 150 ms, not 300. The check the sleep gates is `clip_seq`, a
+            // single cheap API call with no allocation that runs before any
+            // clipboard read, so the poll is a heartbeat rather than work; and
+            // halving it halves the one delay the user can feel, between the
+            // copy and the item appearing.
+            thread::sleep(Duration::from_millis(150));
             ticks += 1;
             if ticks.is_multiple_of(HEARTBEAT_TICKS) {
                 crate::crash::record_event("monitor:alive");
@@ -196,8 +201,8 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// Roughly every five minutes at the 300 ms poll interval. An idle install
-/// writes one line; this is a liveness marker, not a log of activity.
+/// Roughly every two and a half minutes at the 150 ms poll interval. An idle
+/// install writes one line; this is a liveness marker, not a log of activity.
 const HEARTBEAT_TICKS: u64 = 1_000;
 
 pub fn capture_image(app: &AppHandle, img: &arboard::ImageData<'_>) -> bool {

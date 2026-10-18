@@ -142,6 +142,18 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::R
 pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    // NORMAL is the documented durability companion to WAL, and the right
+    // trade here. SQLite documents NORMAL in WAL mode as application-crash
+    // durable — a trust case for a single-user desktop history: a process
+    // that dies mid-write loses no committed transaction — while a power loss
+    // can lose the last transaction but never corrupt the database. FULL
+    // fsyncs every commit instead, which for a clipboard history that writes
+    // continuously is a disk sync per capture for durability against the one
+    // event this product cannot distinguish from a crash anyway. Neither
+    // `secure_delete` below nor the delete path's `wal_checkpoint(TRUNCATE)`
+    // is affected: NORMAL changes when the WAL is synced, not what a
+    // checkpoint does with it.
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     // Zero freed pages instead of leaving them readable in the main database file.
     // The delete path truncates the write-ahead log, which covers the log; this

@@ -20,6 +20,7 @@ mod packaging;
 mod panel;
 mod paste;
 mod tray;
+mod ttl;
 mod updater;
 
 use std::sync::Mutex;

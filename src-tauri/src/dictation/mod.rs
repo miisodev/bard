@@ -129,6 +129,9 @@ fn clear_owner() {
 
 pub fn init(app: AppHandle) {
     overlay::start_guard(&app);
+    // The take path's first verify is a full hash of the model; start it now,
+    // on its own thread, so the first take does not wait for it.
+    model::spawn_verification_warmup(app.clone());
     model::start_unload_watcher(app);
 }
 

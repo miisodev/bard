@@ -11,6 +11,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{FftFixedOut, Resampler};
 use tauri::{AppHandle, Emitter};
 
+use crate::ttl::Ttl;
+
 pub const TARGET_RATE: u32 = 16000;
 /// One resampled frame. earshot's VAD is specified for exactly 256 samples at
 /// 16 kHz, and the VAD's whole timing policy is denominated in these 16 ms
@@ -140,8 +142,25 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// How long a microphone-presence answer is reused.
+///
+/// `mic_ready` is a CPAL device enumeration, and `get_state` reads it on every
+/// refresh — a panel tick, a capture, a settings save — which made the
+/// enumeration show up on the Windows main thread for an answer that only
+/// changes when a device is plugged in, unplugged or disabled. Five seconds is
+/// below the time in which anyone could notice and care, and above the refresh
+/// cadence that made it a cost.
+const MIC_READY_TTL: Duration = Duration::from_secs(5);
+
+static MIC_READY: Ttl<bool> = Ttl::new(MIC_READY_TTL);
+
 pub fn mic_ready() -> bool {
-    cpal::default_host().default_input_device().is_some()
+    if let Some(ready) = MIC_READY.get() {
+        return ready;
+    }
+    let ready = cpal::default_host().default_input_device().is_some();
+    MIC_READY.set(ready);
+    ready
 }
 
 pub fn list_input_devices() -> Vec<String> {

@@ -1467,6 +1467,12 @@ where
     };
     let transfer_started = Instant::now();
     let transfer_initial_received = received;
+    // Hash the bytes as they are written, when every byte of the file comes
+    // from this transfer. `received == 0` after the resume decision means
+    // exactly that: either there was no part, or a Restart above discards the
+    // prefix it had. A resumed file starts with bytes this hasher never saw,
+    // so that one case re-reads the completed file below.
+    let mut hasher = (received == 0).then(Sha256::new);
 
     if let Ok(metadata) = fs::symlink_metadata(&part) {
         if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -1505,6 +1511,9 @@ where
         }
         let chunk = chunk.map_err(|e| e.to_string())?;
         file.write_all(&chunk).map_err(|e| e.to_string())?;
+        if let Some(hasher) = hasher.as_mut() {
+            hasher.update(&chunk);
+        }
         received += chunk.len() as u64;
         if total > 0 && received > total {
             drop(file);
@@ -1540,10 +1549,20 @@ where
         ));
     }
 
-    // Always hash the complete .part, including any bytes carried over from an
-    // earlier run. Hashing only newly received chunks cannot prove the resumed
-    // file matches the pinned checksum.
-    let digest = sha256_file(&part).map_err(|e| e.to_string())?;
+    // Verify the exact bytes now that they are assembled. A fresh transfer has
+    // already hashed every byte as it arrived, so it promotes what it wrote;
+    // only a resumed file, whose prefix came from an earlier run and never
+    // passed through this hasher, is re-read in full here. The mismatch path is
+    // identical either way: discard the part, because a later resume would
+    // treat those bytes as a trusted prefix.
+    let digest = match hasher {
+        Some(hasher) => hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        None => sha256_file(&part).map_err(|e| e.to_string())?,
+    };
     if !request.sha256.is_empty() && !digest.eq_ignore_ascii_case(&request.sha256) {
         let _ = fs::remove_file(&part);
         return Err("Model verification failed (checksum mismatch).".into());
