@@ -327,6 +327,9 @@ pub fn get_setting_str(app: AppHandle, key: String) -> String {
     const PUBLIC_SETTING_KEYS: &[&str] = &[
         "selected_microphone",
         "dictation_overlay_position",
+        // The review sheet's switch, single-sourced with the take path so the
+        // public read and the delivery decision cannot name different keys.
+        crate::dictation::REVIEW_SETTING_KEY,
         "openrouter_postprocess_enabled",
         "openrouter_postprocess_model_ids",
         "openrouter_postprocess_model_id",
@@ -1311,6 +1314,17 @@ pub fn set_capture_double_shift(app: AppHandle, enabled: bool) {
     );
 }
 
+/// Turn the dictation review sheet on or off. Off by default, and stored as a
+/// setting so the take path reads it without knowing who changed it.
+#[tauri::command]
+pub fn set_dictation_review(app: AppHandle, enabled: bool) {
+    db::set_setting(
+        &app,
+        crate::dictation::REVIEW_SETTING_KEY,
+        if enabled { "1" } else { "0" },
+    );
+}
+
 #[tauri::command]
 pub fn capture_now(app: AppHandle) {
     crate::capture::capture_selection(&app);
@@ -1423,6 +1437,26 @@ pub fn dictate_cancel(app: AppHandle) {
 #[tauri::command]
 pub fn set_dictation_overlay_position(app: AppHandle, position: String) -> Result<(), String> {
     crate::dictation::set_overlay_position(&app, &position)
+}
+
+/// Confirm a reviewed take with the sheet's current body: paste it into the
+/// window the take started in, or file it in the timeline if Bard had focus.
+#[tauri::command]
+pub fn dictation_confirm(app: AppHandle, text: String) -> Result<(), String> {
+    crate::dictation::confirm(&app, text)
+}
+
+/// Put the sheet's current body on the clipboard, leaving the sheet up.
+#[tauri::command]
+pub fn dictation_copy(app: AppHandle, text: String) -> Result<(), String> {
+    crate::dictation::copy(&app, text)
+}
+
+/// Dismiss the sheet: the body stays on the clipboard best-effort, and the
+/// take ends in Idle.
+#[tauri::command]
+pub fn dictation_dismiss(app: AppHandle, text: String) {
+    crate::dictation::dismiss(&app, text);
 }
 
 pub struct ImagesDir(pub PathBuf);

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
@@ -257,37 +257,6 @@ static FOCUS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 /// short enough that the panel is gone by the time you have looked away.
 const HIDE_GRACE_MS: u64 = 140;
 
-/// Does the foreground window belong to us?
-///
-/// The obvious version of this asks each of our own windows `is_focused()`,
-/// and it does not work: queried during a focus transition it answers about a
-/// window that is merely the most recently active, so a foreign window taking
-/// focus reads as "one of ours is focused" and the panel never hides. Asking
-/// the OS which process owns the foreground window has no such ambiguity, and
-/// it covers every window we might grow later without a list to maintain.
-#[cfg(windows)]
-fn foreground_is_ours() -> bool {
-    #[link(name = "user32")]
-    extern "system" {
-        fn GetForegroundWindow() -> isize;
-        fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
-    }
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd == 0 {
-            return false;
-        }
-        let mut pid: u32 = 0;
-        GetWindowThreadProcessId(hwnd, &mut pid);
-        pid == std::process::id()
-    }
-}
-
-#[cfg(not(windows))]
-fn foreground_is_ours() -> bool {
-    false
-}
-
 /// The panel is summoned, so it dismisses itself once it is no longer what you
 /// are using — including when it never lost focus in the webview's opinion,
 /// which is why this is driven by the native window event rather than a blur
@@ -325,7 +294,7 @@ pub fn on_focus_change(app: &AppHandle, focused: bool) {
         }
         // Settings and the drawing canvas are ours; opening one should not
         // yank the panel away behind it.
-        if foreground_is_ours() {
+        if crate::fg::foreground_is_ours() {
             return;
         }
         // Window operations have to happen on the main thread on Windows.
@@ -366,45 +335,17 @@ fn toggle_now_inner(app: &AppHandle) {
     }
 }
 
-#[cfg(windows)]
-mod fg {
-    use std::sync::atomic::{AtomicIsize, Ordering};
-
-    static LAST_HWND: AtomicIsize = AtomicIsize::new(0);
-
-    #[link(name = "user32")]
-    extern "system" {
-        fn GetForegroundWindow() -> isize;
-        fn SetForegroundWindow(hwnd: isize) -> i32;
-    }
-
-    pub fn remember() {
-        let hwnd = unsafe { GetForegroundWindow() };
-        LAST_HWND.store(hwnd, Ordering::SeqCst);
-    }
-
-    pub fn restore() {
-        let hwnd = LAST_HWND.load(Ordering::SeqCst);
-        if hwnd != 0 {
-            unsafe {
-                SetForegroundWindow(hwnd);
-            }
-        }
-    }
-}
-
-#[cfg(not(windows))]
-mod fg {
-    pub fn remember() {}
-    pub fn restore() {}
-}
+/// The window the panel was summoned over, so hiding can give it back. This is
+/// the panel's own memory; `crate::fg` owns the native calls and the question
+/// of whether the foreground is ours.
+static LAST_HWND: AtomicIsize = AtomicIsize::new(0);
 
 fn remember_foreground() {
-    fg::remember();
+    LAST_HWND.store(crate::fg::current(), Ordering::SeqCst);
 }
 
 fn restore_foreground() {
-    fg::restore();
+    crate::fg::focus(LAST_HWND.load(Ordering::SeqCst));
 }
 
 #[cfg(test)]

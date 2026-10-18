@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dictation-confirm"
+description = "Enables the dictation_confirm command without any pre-configured scope."
+commands.allow = ["dictation_confirm"]
+
+[[permission]]
+identifier = "deny-dictation-confirm"
+description = "Denies the dictation_confirm command without any pre-configured scope."
+commands.deny = ["dictation_confirm"]

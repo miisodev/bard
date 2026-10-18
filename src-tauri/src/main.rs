@@ -8,6 +8,7 @@ mod crash;
 mod credential;
 mod db;
 mod dictation;
+mod fg;
 mod geometry;
 mod gesture;
 mod guardian;
@@ -372,6 +373,10 @@ fn main() {
             commands::dictate_stop,
             commands::dictate_cancel,
             commands::set_dictation_overlay_position,
+            commands::set_dictation_review,
+            commands::dictation_confirm,
+            commands::dictation_copy,
+            commands::dictation_dismiss,
             commands::create_section,
             commands::set_active_section,
             commands::rename_section,

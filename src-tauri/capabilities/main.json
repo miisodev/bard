@@ -40,6 +40,7 @@
     "allow-open-startup-settings",
     "allow-open-link",
     "allow-set-capture-double-shift",
+    "allow-set-dictation-review",
     "allow-capture-now",
     "allow-save-window-geometry",
     "allow-minimize-panel",

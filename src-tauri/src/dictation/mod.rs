@@ -41,6 +41,17 @@ const TAKE_REALTIME_FACTOR: u64 = 3;
 /// How often the watchdog looks. Cheap, and it only exists to notice a wedge.
 const TAKE_WATCHDOG_TICK: Duration = Duration::from_millis(250);
 
+/// The setting that turns on the review sheet. "1" opens the sheet after a
+/// successful take; anything else — including the default of no row at all —
+/// delivers the take directly, exactly as every version before this one did.
+pub const REVIEW_SETTING_KEY: &str = "dictation_review";
+
+/// How long a confirmed take gives the window it came from to come back before
+/// the paste chord. `paste_chord` has its own short settle before the chord;
+/// this one is for the foreground handover, which is the part that can still be
+/// in flight when the sheet has only just gone.
+const REVIEW_PASTE_SETTLE: Duration = Duration::from_millis(120);
+
 pub use model::{
     cancel_download, delete_model, download_model, model_ready, model_status, models, ModelInfo,
     ModelStatus,
@@ -62,6 +73,10 @@ pub enum DictState {
     Idle,
     Recording,
     Transcribing,
+    /// A finished take is held in the review sheet, waiting for the person's
+    /// Confirm, Copy or Dismiss. No audio is open and no worker is running; the
+    /// sheet owns the take and Escape leaves through the dismiss path.
+    Review,
 }
 
 static STATE: Mutex<DictState> = Mutex::new(DictState::Idle);
@@ -157,7 +172,11 @@ fn gesture_press_outcome(state: DictState) -> GestureOutcome {
     match state {
         DictState::Idle => GestureOutcome::Start,
         DictState::Recording => GestureOutcome::Stop,
-        DictState::Transcribing => GestureOutcome::Ignore,
+        // Transcribing has no gesture exit, and the review sheet has no
+        // gesture exit either: its own Confirm, Copy and Dismiss are the ways
+        // out, plus Escape. A second Ctrl+Ctrl while reviewing is ignored, so
+        // it cannot stop or restart anything behind the sheet.
+        DictState::Transcribing | DictState::Review => GestureOutcome::Ignore,
     }
 }
 
@@ -176,8 +195,10 @@ fn gesture_release_outcome(
     match state {
         // Nothing is running. `stop` has already cleared the owner by the time
         // it reaches Transcribing, so these two are unreachable in practice; they
-        // are handled rather than assumed.
-        DictState::Idle | DictState::Transcribing => GestureOutcome::Ignore,
+        // are handled rather than assumed. Review joins them for the same
+        // reason — the owner is cleared when the take stops, and the release of
+        // a push-to-talk gesture that ended it must not touch the sheet.
+        DictState::Idle | DictState::Transcribing | DictState::Review => GestureOutcome::Ignore,
         DictState::Recording => {
             if held_for >= crate::gesture::DICTATION_HOLD_LIMIT {
                 GestureOutcome::Stop
@@ -237,6 +258,10 @@ pub fn start(app: &AppHandle) -> bool {
     }
     {
         let mut state = state_lock();
+        // Idle is the only state a new take can start from. A tray Dictate
+        // during a recording, a transcription, or the review sheet is an
+        // explicit no-op: it neither starts anything nor disturbs what is
+        // already running.
         if *state != DictState::Idle {
             return false;
         }
@@ -429,6 +454,11 @@ pub fn stop(app: &AppHandle) {
     // filed in Bard's timeline instead. That is the privacy direction of the
     // error, and the person dictating cannot see it happen.
     let panel_focused = panel_has_focus(app);
+    // The window that had the foreground at the same instant, remembered for
+    // the same reason and with the same discipline. The review sheet takes the
+    // foreground for itself, so by the time a take is confirmed the foreground
+    // is Bard: the app the words belong to exists only in here.
+    let prior_hwnd = crate::fg::current();
     let operation = begin_operation();
     let app = app.clone();
     std::thread::spawn(move || {
@@ -462,9 +492,29 @@ pub fn stop(app: &AppHandle) {
         }
         match outcome {
             Ok(text) if !text.is_empty() => {
-                let text = postprocess_transcript(&app, text, operation);
+                // The take as spoken, kept before refinement can touch it. The
+                // refinement is a remote step, and the review sheet's whole
+                // promise is that what the person said survives it.
+                let local = text;
+                let text = postprocess_transcript(&app, local.clone(), operation);
                 if operation_cancelled(operation) {
                     finish_cancelled(&app, operation);
+                    return;
+                }
+                // The third arm, and the only fork here: review holds the take
+                // instead of delivering it. An empty or failed take never
+                // reaches this line — both returned above — so a sheet never
+                // opens over nothing. Push-to-talk and tap-to-lock both end in
+                // `stop`, so both review identically.
+                if take_end(review_enabled(&app), panel_focused) == TakeEnd::Review {
+                    open_review(
+                        &app,
+                        text,
+                        local,
+                        delivery(panel_focused),
+                        prior_hwnd,
+                        operation,
+                    );
                     return;
                 }
                 if let Err(error) = crate::paste::set_text(&app, &text) {
@@ -545,6 +595,14 @@ pub fn cancel(app: &AppHandle) {
         cancel_operation();
         overlay::show(app, "cancelling");
         let _ = app.emit("dictation-cancel-requested", ());
+    } else if state == DictState::Review {
+        // Escape, the tray, or the overlay's × while the sheet is up: the
+        // dismiss path. There is no body here — the sheet holds it — so the
+        // take as it was recorded goes to the clipboard best-effort and the
+        // sheet closes. The words are never silently discarded; that is the
+        // whole override on this path.
+        dismiss_review(app, None);
+        let _ = app.emit("dictation-cancelled", ());
     } else {
         // Nothing is running: the × on a report puts the pill away.
         overlay::dismiss(app);
@@ -612,6 +670,263 @@ fn delivery(panel_focused: bool) -> Delivery {
     } else {
         Delivery::Foreground
     }
+}
+
+/// What a finished take does next.
+///
+/// The third arm is the review sheet: it takes the take instead of delivering
+/// it, for both destinations alike — the panel-destination take reviews too, so
+/// the flow is uniform and the setting means one thing. Pure, so the question
+/// "does review change where the words go" has exactly one answer and it is not
+/// hidden inside a worker thread.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TakeEnd {
+    /// Review is off and Bard's own panel had focus: file it in the timeline.
+    Timeline,
+    /// Review is off and something else had focus: paste the words there.
+    Foreground,
+    /// Review is on: hold the take; the sheet decides how it ends.
+    Review,
+}
+
+fn take_end(review_enabled: bool, panel_focused: bool) -> TakeEnd {
+    if review_enabled {
+        TakeEnd::Review
+    } else if panel_focused {
+        TakeEnd::Timeline
+    } else {
+        TakeEnd::Foreground
+    }
+}
+
+/// Whether a finished take goes through the review sheet. Off by default: a
+/// missing row delivers the take directly, exactly as before the sheet existed.
+fn review_enabled(app: &AppHandle) -> bool {
+    crate::db::get_setting(app, REVIEW_SETTING_KEY).as_deref() == Some("1")
+}
+
+/// True while the review sheet owns a finished take.
+pub fn is_reviewing() -> bool {
+    *state_lock() == DictState::Review
+}
+
+/// A finished take held for the review sheet.
+struct PendingTake {
+    /// The transcript the sheet opened with: refined and cleaned. This is the
+    /// text the sheet was handed and the text the dismiss fallback keeps.
+    text: String,
+    /// The take before cloud refinement, held for the sheet's next step — the
+    /// retry/compare affordance a later lane adds. No command reads it yet,
+    /// which is exactly why it carries the allow; the contract's three
+    /// commands deliberately act on the current body instead.
+    #[allow(dead_code)]
+    local_text: String,
+    /// Where the confirmed words go, decided when the take ended — the same
+    /// decision a direct take would have acted on immediately.
+    destination: Delivery,
+    /// The window the take started in, for the paste chord's way back.
+    hwnd: isize,
+}
+
+/// The one pending take. Written when the sheet opens, read once when it
+/// closes, and empty in every other state; a second take cannot exist because
+/// `start` only runs from Idle.
+static PENDING: Mutex<Option<PendingTake>> = Mutex::new(None);
+
+/// Lock order in this module is STATE then OWNER, and PENDING is never held
+/// across either: every path below takes one lock, works, and drops it before
+/// asking for another. That is what keeps a dismiss racing a confirm from
+/// becoming a deadlock instead of a race.
+fn pending_lock() -> MutexGuard<'static, Option<PendingTake>> {
+    PENDING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn store_pending(take: PendingTake) {
+    *pending_lock() = Some(take);
+}
+
+fn take_pending() -> Option<PendingTake> {
+    pending_lock().take()
+}
+
+fn clear_pending() {
+    *pending_lock() = None;
+}
+
+/// Hold a finished take for the sheet and put the sheet up.
+///
+/// Order matters: the pending take is stored first, then the state is moved
+/// under the state lock only when the take is still transcribing and has not
+/// been cancelled. A cancel that lands at any point in between wins — a sheet
+/// opened over a cancelled take would be a window with nothing behind it, and
+/// the cancel's own `finish_cancelled` already knows how to put a take away.
+fn open_review(
+    app: &AppHandle,
+    text: String,
+    local_text: String,
+    destination: Delivery,
+    hwnd: isize,
+    operation: u64,
+) {
+    store_pending(PendingTake {
+        text: text.clone(),
+        local_text,
+        destination,
+        hwnd,
+    });
+    {
+        let mut state = state_lock();
+        if *state != DictState::Transcribing || operation_cancelled(operation) {
+            drop(state);
+            clear_pending();
+            finish_cancelled(app, operation);
+            return;
+        }
+        *state = DictState::Review;
+    }
+    crate::crash::record_event("dictation:review-open");
+    overlay::show_review(app, &text);
+}
+
+/// End the review: the take is decided, nothing is pending, and the overlay
+/// goes back to being a pill that is not on screen.
+fn close_review(app: &AppHandle) {
+    clear_pending();
+    *state_lock() = DictState::Idle;
+    overlay::close_review(app);
+}
+
+/// Confirm a reviewed take: the words go where the take was always headed.
+///
+/// Both arms move the take out of PENDING before doing any work, so a second
+/// confirm — a double click, a stale render — is answered with an error rather
+/// than acting twice.
+pub fn confirm(app: &AppHandle, text: String) -> Result<(), String> {
+    if !is_reviewing() {
+        return Err("There is no dictation waiting in the review sheet.".into());
+    }
+    let Some(take) = take_pending() else {
+        return Err("There is no dictation waiting in the review sheet.".into());
+    };
+    match take.destination {
+        Delivery::Foreground => confirm_foreground(app, text, take.hwnd),
+        Delivery::Timeline => confirm_timeline(app, text),
+    }
+}
+
+/// Give the confirmed words back to the window the take started in.
+///
+/// The clipboard write is verified before anything else moves, and a failed
+/// write leaves the sheet exactly as it was — nothing pasted, nothing lost, and
+/// the person can press Confirm again. The chord is sent once the remembered
+/// window has had a moment to come back, and never into Bard itself: if the
+/// foreground is still ours when the chord is due, it is not sent, the
+/// transcript stays on the clipboard for a manual Ctrl+V, and the person is
+/// told why.
+fn confirm_foreground(app: &AppHandle, text: String, hwnd: isize) -> Result<(), String> {
+    crate::paste::set_text(app, &text).map_err(|error| {
+        let message = format!(
+            "Bard could not put this dictation on the clipboard, so it did not paste: {error}"
+        );
+        let _ = app.emit("dictation-review-error", message.clone());
+        message
+    })?;
+    // Bard just put this on the clipboard. The watcher must not capture it back
+    // as a second copy — the same bookkeeping the direct path does.
+    crate::monitor::note_own_text(&text);
+    crate::fg::focus(hwnd);
+    close_review(app);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(REVIEW_PASTE_SETTLE);
+        if crate::fg::foreground_is_ours() {
+            // Sending the chord now would paste into Bard's own window. The
+            // words are already on the clipboard, so the failure costs nothing
+            // but the keystroke the person still has to make.
+            crate::crash::record_event("dictation:review-focus-stolen");
+            let _ = app.emit(
+                "dictation-review-error",
+                "Bard did not paste because the window you were writing in did not come back. Your words are on the clipboard — press Ctrl+V there.",
+            );
+            return;
+        }
+        paste_chord(&app);
+        let _ = app.emit("dictation-pasted", ());
+    });
+    Ok(())
+}
+
+/// File the confirmed words in Bard's timeline, exactly as a direct take with
+/// Bard focused would have been filed the moment it finished.
+///
+/// There is no clipboard write in this arm: the words are going into Bard
+/// itself, and the timeline is where they live. A failed insert keeps the sheet
+/// open — the words exist only in the sheet at that point, and closing it would
+/// lose them.
+fn confirm_timeline(app: &AppHandle, text: String) -> Result<(), String> {
+    let item_id = crate::db::insert_item_with_origin(app, &text, "text", None, "dictation");
+    if item_id == crate::db::INSERT_FAILED {
+        let message =
+            "Bard could not save this dictation. Check that the drive has free space.".to_string();
+        let _ = app.emit("dictation-review-error", message.clone());
+        return Err(message);
+    }
+    crate::db::set_active_item(app, Some(item_id));
+    let _ = crate::db::cleanup_origin(app, "dictation");
+    let _ = app.emit("dictation-panel", text);
+    close_review(app);
+    Ok(())
+}
+
+/// Put the sheet's current body on the clipboard and leave the sheet up. The
+/// words are one Ctrl+V away whether or not the take is confirmed.
+pub fn copy(app: &AppHandle, text: String) -> Result<(), String> {
+    if !is_reviewing() {
+        return Err("There is no dictation waiting in the review sheet.".into());
+    }
+    crate::paste::set_text(app, &text)
+        .map_err(|error| format!("Bard could not copy this dictation: {error}"))?;
+    crate::monitor::note_own_text(&text);
+    Ok(())
+}
+
+/// Dismiss a reviewed take: the sheet closes, and the words stay on the
+/// clipboard, best-effort. This is the deliberate override on the dismiss path
+/// — a dismiss ends the review, it never silently discards what was just said.
+pub fn dismiss(app: &AppHandle, text: String) {
+    if !is_reviewing() {
+        return;
+    }
+    dismiss_review(app, Some(&text));
+}
+
+/// Which words a dismiss keeps. The sheet's body wins whenever it has any:
+/// those are the person's own edits and what the button was pressed on. Escape
+/// arrives without a body and falls back to the take as it was recorded, so
+/// dismissing mid-edit still keeps the words. Nothing is written at all when
+/// there is nothing to write — an emptied body must not blank the clipboard.
+fn dismiss_words(body: Option<&str>, pending: Option<&PendingTake>) -> String {
+    if let Some(body) = body.filter(|body| !body.is_empty()) {
+        return body.to_string();
+    }
+    pending.map(|take| take.text.clone()).unwrap_or_default()
+}
+
+/// The dismiss path, shared by the sheet's Dismiss button and by Escape while
+/// the sheet is up. Best-effort by construction: a clipboard write that fails
+/// still closes the sheet — a take must never be able to strand it open — and
+/// the words were on screen until the moment it did.
+fn dismiss_review(app: &AppHandle, body: Option<&str>) {
+    let words = {
+        let pending = pending_lock();
+        dismiss_words(body, pending.as_ref())
+    };
+    if !words.is_empty() && crate::paste::set_text(app, &words).is_ok() {
+        crate::monitor::note_own_text(&words);
+    }
+    close_review(app);
 }
 
 /// The transcript, exactly as the engine recognised it.
@@ -779,6 +1094,7 @@ mod tests {
             DictState::Idle,
             DictState::Recording,
             DictState::Transcribing,
+            DictState::Review,
         ] {
             for owner in [None, Some(1_u64), Some(7)] {
                 for held in [
@@ -865,6 +1181,32 @@ mod tests {
             gesture_press_outcome(DictState::Transcribing),
             GestureOutcome::Ignore
         );
+        // The review sheet is the same: its own buttons and Escape are the
+        // ways out, and a Ctrl+Ctrl press would only restart or double-stop
+        // something behind it.
+        assert_eq!(
+            gesture_press_outcome(DictState::Review),
+            GestureOutcome::Ignore
+        );
+    }
+
+    #[test]
+    fn the_review_sheet_ignores_the_dictation_gesture() {
+        // Both halves: a press touches nothing (above, and for the tray the
+        // same guard lives in `start`'s Idle-only check), and a release — of a
+        // push-to-talk gesture that ended the take, or of one that never owned
+        // it — touches nothing either. The take's owner is cleared when it
+        // stops, so the release that stopped it cannot reach the sheet.
+        let limit = crate::gesture::DICTATION_HOLD_LIMIT;
+        for owner in [None, Some(1_u64), Some(9)] {
+            for held in [Duration::ZERO, limit, Duration::from_secs(30)] {
+                assert_eq!(
+                    gesture_release_outcome(DictState::Review, owner, 1, held),
+                    GestureOutcome::Ignore,
+                    "owner {owner:?} held {held:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -901,6 +1243,10 @@ mod tests {
         // "Finishing" is the pill's word for the refinement, and the refinement
         // runs while the state is still Transcribing.
         assert!(busy(DictState::Transcribing));
+        // The review sheet is busy too: the take is not over until it is
+        // confirmed, copied or dismissed, and Escape has to reach `cancel` for
+        // the dismiss path while it is up.
+        assert!(busy(DictState::Review));
         // Recording and Transcribing are the two states Escape has to reach.
         assert!(busy(DictState::Recording) || busy(DictState::Transcribing));
     }
@@ -912,6 +1258,49 @@ mod tests {
         // The two arms are the whole claim. `Delivery::Foreground` is the arm
         // that used to file a copy anyway.
         assert_ne!(delivery(true), delivery(false));
+    }
+
+    #[test]
+    fn a_finished_take_goes_to_review_or_straight_to_its_destination() {
+        // The third arm. Review is on: the take is held for the sheet, and it
+        // reviews identically whether Bard had focus or not — the uniform flow
+        // is the point, so neither destination can leak out from under it.
+        assert_eq!(take_end(true, true), TakeEnd::Review);
+        assert_eq!(take_end(true, false), TakeEnd::Review);
+        // Review is off: the pre-sheet behaviour, one arm per destination.
+        assert_eq!(take_end(false, true), TakeEnd::Timeline);
+        assert_eq!(take_end(false, false), TakeEnd::Foreground);
+        // And the three arms are three distinct answers.
+        assert_ne!(TakeEnd::Review, TakeEnd::Timeline);
+        assert_ne!(TakeEnd::Review, TakeEnd::Foreground);
+        assert_ne!(TakeEnd::Timeline, TakeEnd::Foreground);
+    }
+
+    #[test]
+    fn a_dismiss_keeps_the_words_the_sheet_held() {
+        let take = PendingTake {
+            text: "what the person said ".into(),
+            local_text: "what the person said".into(),
+            destination: Delivery::Foreground,
+            hwnd: 0,
+        };
+        // The sheet's body wins: those are the person's own edits, and they
+        // are what the button was pressed on.
+        assert_eq!(
+            dismiss_words(Some("edited words"), Some(&take)),
+            "edited words"
+        );
+        // Escape arrives without a body; the take as recorded is the fallback,
+        // so dismissing mid-edit never throws the words away.
+        assert_eq!(dismiss_words(None, Some(&take)), "what the person said ");
+        // With no take and no body there is nothing to write — an emptied
+        // sheet must not blank the clipboard.
+        assert_eq!(dismiss_words(None, None), "");
+        assert_eq!(
+            dismiss_words(Some(""), Some(&take)),
+            "what the person said "
+        );
+        assert_eq!(dismiss_words(Some(""), None), "");
     }
 
     #[test]

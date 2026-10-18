@@ -7,6 +7,9 @@
     "allow-get-appearance",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "allow-dictate-cancel"
+    "allow-dictate-cancel",
+    "allow-dictation-confirm",
+    "allow-dictation-copy",
+    "allow-dictation-dismiss"
   ]
 }

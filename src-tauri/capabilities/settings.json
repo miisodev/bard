@@ -21,6 +21,7 @@
     "allow-open-startup-settings",
     "allow-open-link",
     "allow-set-capture-double-shift",
+    "allow-set-dictation-review",
     "allow-get-models",
     "allow-get-model",
     "allow-set-model",

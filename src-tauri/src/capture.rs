@@ -185,6 +185,32 @@ fn handle_gesture(action: GestureAction, app: &AppHandle) {
     }
 }
 
+/// Suppress only the keys Bard itself synthesises, rather than every event.
+///
+/// The blanket discard meant that for the whole duration of a Ctrl+C or Ctrl+V
+/// burst — up to 180ms — a person's real typing was thrown away, so a keypress
+/// could simply vanish. Bard sends Control for its copy and paste chords, and
+/// scoping the filter to those keys removed the loss without letting Bard's own
+/// chords be read as gestures. Alt joined the list with the review sheet: tao
+/// forces the foreground with a synthetic Alt tap (`SendInput`, in
+/// `force_window_active`), and Alt is a gesture key — one stray tap dirties the
+/// gesture machine and two open the drawing canvas or Settings. Control and Alt
+/// are both only ever dropped while a synthetic burst is live.
+fn is_synthetic_key(event_type: &EventType) -> bool {
+    matches!(
+        event_type,
+        EventType::KeyPress(Key::ControlLeft | Key::ControlRight | Key::Alt | Key::AltGr)
+            | EventType::KeyRelease(Key::ControlLeft | Key::ControlRight | Key::Alt | Key::AltGr)
+    )
+}
+
+/// Whether this event is one of Bard's own synthetic keystrokes and must not
+/// reach the gesture machine. `burst` is the synthetic-input flag itself,
+/// passed in rather than read here so the decision is a pure function.
+fn drops_synthetic(burst: bool, event_type: &EventType) -> bool {
+    burst && is_synthetic_key(event_type)
+}
+
 /// Start the raw-input hook. `sender` is moved in rather than cloned so the hook
 /// thread holds the only sender: when the thread ends, the channel closes and the
 /// worker sees it. A clone kept anywhere else would hide the failure forever.
@@ -198,21 +224,8 @@ fn spawn_listener(sender: mpsc::Sender<Event>) {
         LISTENER_ALIVE.store(true, Ordering::Release);
         let end = crate::hook::listen(move |event| {
             EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
-            // Suppress only the keys Bard itself synthesises, rather than every
-            // event. The blanket discard meant that for the whole duration of a
-            // Ctrl+C or Ctrl+V burst — up to 180ms — a person's real typing was
-            // thrown away, so a keypress could simply vanish. Control is the only
-            // key Bard ever sends, so scoping the filter to it removes the loss
-            // without letting Bard's own chords be read as gestures.
-            let synthetic = SYNTHETIC_INPUT.load(Ordering::SeqCst)
-                && matches!(
-                    event.event_type,
-                    EventType::KeyPress(Key::ControlLeft)
-                        | EventType::KeyPress(Key::ControlRight)
-                        | EventType::KeyRelease(Key::ControlLeft)
-                        | EventType::KeyRelease(Key::ControlRight)
-                );
-            if !synthetic {
+            let burst = SYNTHETIC_INPUT.load(Ordering::SeqCst);
+            if !drops_synthetic(burst, &event.event_type) {
                 let _ = hook_sender.send(event);
             }
         });
@@ -593,4 +606,58 @@ fn send_copy() {
     // Let the low-level hook drain Bard's synthetic events before the guard
     // re-enables gesture recognition.
     thread::sleep(Duration::from_millis(40));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_key_bard_synthesises_is_dropped_during_a_burst() {
+        // Control, for every copy and paste chord.
+        for key in [Key::ControlLeft, Key::ControlRight] {
+            assert!(is_synthetic_key(&EventType::KeyPress(key)), "{key:?} press");
+            assert!(
+                is_synthetic_key(&EventType::KeyRelease(key)),
+                "{key:?} release"
+            );
+        }
+        // Alt, for the review sheet's focus steal.
+        for key in [Key::Alt, Key::AltGr] {
+            assert!(is_synthetic_key(&EventType::KeyPress(key)), "{key:?} press");
+            assert!(
+                is_synthetic_key(&EventType::KeyRelease(key)),
+                "{key:?} release"
+            );
+        }
+    }
+
+    #[test]
+    fn a_persons_own_keys_keep_reaching_the_gesture_machine() {
+        // The loss this filter must never reintroduce: real typing during a
+        // synthetic burst. Shift and ordinary keys are still forwarded.
+        for key in [Key::ShiftLeft, Key::Unknown(0x41), Key::Escape, Key::Num1] {
+            assert!(!is_synthetic_key(&EventType::KeyPress(key)), "{key:?}");
+        }
+        assert!(!is_synthetic_key(&EventType::Wheel {
+            delta_x: 0,
+            delta_y: 1,
+        }));
+        assert!(!is_synthetic_key(&EventType::ButtonPress(Button::Left)));
+    }
+
+    #[test]
+    fn a_synthetic_key_is_only_dropped_while_a_burst_is_live() {
+        // Outside a burst nothing is filtered at all; inside one, exactly the
+        // synthesised keys are, and real typing still gets through.
+        let control = EventType::KeyPress(Key::ControlLeft);
+        let alt = EventType::KeyRelease(Key::Alt);
+        let typed = EventType::KeyPress(Key::Unknown(0x41));
+        assert!(!drops_synthetic(false, &control));
+        assert!(!drops_synthetic(false, &alt));
+        assert!(!drops_synthetic(false, &typed));
+        assert!(drops_synthetic(true, &control));
+        assert!(drops_synthetic(true, &alt));
+        assert!(!drops_synthetic(true, &typed));
+    }
 }
