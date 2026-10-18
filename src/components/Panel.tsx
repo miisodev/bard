@@ -10,6 +10,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import type { DictationState } from "../App";
 import { playCue } from "../audio";
+import { DRAW_FRICTION_NOTE, DRAW_SHORTCUT_GROUPS } from "../draw/shortcuts";
 import {
   clampPage,
   escapeOutcome,
@@ -37,6 +38,7 @@ import Menu from "./Menu";
 import PackCard from "./PackCard";
 import PackView from "./PackView";
 import Pager from "./Pager";
+import ShortcutSheet, { type ShortcutGroup } from "./ShortcutSheet";
 import TypeChips from "./TypeChips";
 
 /** A confirmation is a receipt. An error is the app reporting a failure. */
@@ -1096,6 +1098,11 @@ export default function Panel({
       case "caption":
         if (menu.item?.kind === "image") void api.addNoteToImage(menu.item.id).then(refresh);
         break;
+      case "annotate":
+        // Draw opens over the picture with it already on the page; never the
+        // other way around — the image is the reason the window exists.
+        if (menu.item?.kind === "image") void api.openDrawWithImage(menu.item.id);
+        break;
       case "delete":
         deleteItems(ids);
         break;
@@ -1547,7 +1554,9 @@ export default function Panel({
         />
       ) : null}
 
-      {showShortcuts ? <ShortcutSheet onClose={closeShortcuts} /> : null}
+      {showShortcuts ? (
+        <ShortcutSheet title="Shortcuts" groups={SHORTCUT_GROUPS} onClose={closeShortcuts} />
+      ) : null}
 
       {preview ? (
         <ColorPreview item={preview} onClose={() => setPreview(null)} notify={notify} />
@@ -1624,7 +1633,7 @@ const SORT_ORDERS: [SortOrder, string][] = [
   Settings. The sheet is the only place in the app that states all of them, so
   a row that names the wrong side teaches the wrong gesture.
 */
-const SHORTCUT_GROUPS: { name: string; rows: { keys: string[]; what: string }[] }[] = [
+const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     name: "Gestures",
     rows: [
@@ -1654,102 +1663,14 @@ const SHORTCUT_GROUPS: { name: string; rows: { keys: string[]; what: string }[] 
       { keys: ["Esc"], what: "Clear search, then selection, then close" },
     ],
   },
+  {
+    // Draw's own keys, listed here exactly as Draw's `?` sheet lists them, so
+    // the app teaches one map rather than two.
+    name: "Draw",
+    rows: DRAW_SHORTCUT_GROUPS.flatMap((group) => group.rows),
+    note: DRAW_FRICTION_NOTE,
+  },
 ];
-
-/**
- * The shortcut sheet is a modal, so it behaves like one: a scrim that the
- * cards cannot be clicked through, focus that starts inside and cannot Tab
- * out, Escape to leave, and the focus returned to wherever it came from.
- */
-function ShortcutSheet({ onClose }: { onClose: () => void }) {
-  const cardRef = useRef<HTMLDivElement>(null);
-  const restoreFocusTo = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    restoreFocusTo.current = document.activeElement as HTMLElement | null;
-    // Initial focus on the close control: the sheet is a list to read, not a
-    // form, so there is nothing inside it worth landing on first.
-    cardRef.current?.querySelector<HTMLElement>("button")?.focus();
-
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      const card = cardRef.current;
-      if (event.key !== "Tab" || !card) return;
-      const focusable = [
-        ...card.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), [href], input:not(:disabled), select, textarea, [tabindex]:not([tabindex="-1"])',
-        ),
-      ];
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const current = document.activeElement;
-      const inside = current !== null && card.contains(current);
-      if (event.shiftKey && (!inside || current === first)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (!inside || current === last)) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    // Capture: the shelf's own handler would otherwise act on the key before
-    // the sheet ever saw it.
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      if (restoreFocusTo.current?.isConnected) restoreFocusTo.current.focus();
-    };
-  }, [onClose]);
-
-  return (
-    <div className="sheet" onClick={onClose}>
-      <div
-        ref={cardRef}
-        className="sheet-card shortcuts"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="shortcut-sheet-title"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="shortcut-sheet-head">
-          <h2 id="shortcut-sheet-title">Shortcuts</h2>
-          <button
-            type="button"
-            className="icon-btn sheet-head-close"
-            aria-label="Close shortcuts"
-            onClick={onClose}
-          >
-            <X aria-hidden="true" />
-          </button>
-        </div>
-        <div className="shortcut-groups">
-          {SHORTCUT_GROUPS.map((group) => (
-            <div key={group.name} className="shortcut-group" role="group" aria-label={group.name}>
-              <h3 className="shortcut-group-name">{group.name}</h3>
-              {group.rows.map((row) => (
-                <div key={`${group.name}-${row.keys.join("-")}`} className="shortcut-row">
-                  <span className="shortcut-keys">
-                    {row.keys.map((key, index) => (
-                      <kbd key={`${key}-${index}`}>{key}</kbd>
-                    ))}
-                  </span>
-                  <span className="shortcut-what">{row.what}</span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /**
  * The zone with nothing to show. It names the reason — nothing captured, no

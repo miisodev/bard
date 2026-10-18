@@ -75,6 +75,29 @@ export const api = {
   getAppearance: () => invoke<Appearance>("get_appearance"),
   setDrawBackground: (mode: BackgroundMode, color?: string) =>
     invoke<void>("set_draw_background", { mode, color: color ?? null }),
+
+  // Draw (v2.1). The Rust lane owns these commands; the names and argument
+  // keys here are the merge contract. `get_appearance` returns the saved
+  // drawTool / drawColor / drawWidth alongside the page settings.
+  /** Save to Bard and paste it into the app behind — Send. */
+  sendDrawing: () => invoke<void>("send_drawing"),
+  /** The SVG goes to the native Save-As dialog; null means it was dismissed. */
+  saveSvg: (svg: string, suggestedName: string) =>
+    invoke<string | null>("save_svg", { svg, suggestedName }),
+  /** Open Draw with an image item already on the page; Rust emits `draw-seed`. */
+  openDrawWithImage: (itemId: number) => invoke<void>("open_draw_with_image", { itemId }),
+  /** Remember the tool, colour and width Draw opens with. */
+  setDrawPrefs: (tool: string, color: string, width: number) =>
+    invoke<void>("set_draw_prefs", { tool, color, width }),
+  /**
+   * The Draw clipboard-image read. The v2.1 contract names no Rust route for
+   * clipboard pixels — none of send_drawing, save_svg, open_draw_with_image or
+   * set_draw_prefs carries one — so this is the single seam that waits for the
+   * lane that owns Rust. It is expected to answer an image data URL, or null
+   * when the clipboard holds no picture.
+   */
+  clipboardImage: () => invoke<string | null>("clipboard_image_data"),
+
   setBackground: (mode: BackgroundMode, color?: string) =>
     invoke<void>("set_background", { mode, color: color ?? null }),
   setCaptureDoubleShift: (enabled: boolean) =>

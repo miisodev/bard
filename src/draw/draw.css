@@ -103,14 +103,29 @@
 
 .draw-canvas.tool-select { cursor: default; }
 .draw-canvas.tool-text   { cursor: text; }
+.draw-canvas.tool-eraser { cursor: cell; }
 
 /* ---------- toolbar ---------- */
 
+/*
+  Two rows, always. The single row this replaces measured ~690px: it fitted
+  the 720px default by a hair and broke at the window's 480px floor, where it
+  overflowed and quietly cut buttons. The tools and the edit actions sit on the
+  first row; the inks, the widths and the three save actions on the second.
+  Each row wraps further if it has to, but every control is always present.
+*/
 .draw-toolbar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--sp-3);
   padding: var(--sp-5) var(--sp-6);
+}
+
+.draw-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
 }
 
 .draw-group {
@@ -154,24 +169,39 @@
   color: var(--text-on-accent);
 }
 
+/*
+  A 24px target with a 20px dot: WCAG 2.5.8 asks for a 24×24 target, and the
+  colour a person picks is a 20px circle. A pseudo-element carries the visible
+  ink so the target can be the size the pointer needs without the swatch
+  growing into the row.
+*/
 .draw-swatch {
-  width: 20px;
-  height: 20px;
+  position: relative;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: none;
   border-radius: var(--r-pill);
-  background: var(--swatch);
+  background: none;
   cursor: pointer;
+}
+
+.draw-swatch::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: var(--r-pill);
+  background: var(--swatch);
   /* A strong hairline keeps the ink swatch visible on the dark chrome. */
   box-shadow: inset 0 0 0 1px var(--border-strong);
   transition: transform var(--t-fast) var(--ease-out),
               box-shadow var(--t-fast) var(--ease-out);
 }
 
-.draw-swatch:hover { transform: scale(1.1); }
+.draw-swatch:hover::before { transform: scale(1.1); }
 
 /* The ring sits outside the swatch so the colour itself stays uncovered. */
-.draw-swatch.on {
+.draw-swatch.on::before {
   box-shadow: inset 0 0 0 1px var(--border-strong),
               0 0 0 2px var(--canvas), 0 0 0 4px var(--accent);
 }
@@ -200,13 +230,18 @@
 .draw-width.on { background: var(--canvas-hover); }
 .draw-width.on span { background: var(--accent); }
 
+/*
+  The second row's actions sit at the secondary text size with tighter padding:
+  Copy, Keep and Send must fit beside the inks and the widths at the window's
+  480px floor, where a 14px button put the row over.
+*/
 .draw-text-btn,
 .draw-primary {
   border: none;
   border-radius: var(--r-control);
-  padding: var(--sp-4) var(--sp-6);
+  padding: var(--sp-3) var(--sp-5);
   font: inherit;
-  font-size: var(--fs-base);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
   cursor: pointer;
   transition: background var(--t-fast) var(--ease-out),
@@ -335,13 +370,14 @@
 .canvas-opt:focus-within { outline: none; box-shadow: var(--focus-ring); }
 
 /* The custom well wears the same inks the toolbar offers, read from the theme
-   rather than from a fixed set: the red, green and blue here are `--danger`,
-   `--success` and `--accent` at the values the current theme gives them. */
+   rather than from a fixed set: the red, green, blue and amber here are
+   `--danger`, `--success`, `--accent` and `--warning` at the values the
+   current theme gives them. */
 .canvas-opt.custom:not(.on),
-.draw-swatch.custom:not(.on) {
+.draw-swatch.custom:not(.on)::before {
   background: conic-gradient(
     var(--danger),
-    #e8a33d,
+    var(--warning),
     var(--success),
     var(--accent),
     var(--danger)

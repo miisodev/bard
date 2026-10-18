@@ -148,6 +148,10 @@
   --danger: #e5484d;
   --danger-soft: rgba(229, 72, 77, 0.12);
   --success: #2c9e5b;
+  /* The amber ink the Draw toolbar offers. One value in both themes, unlike
+     the accent/danger/success pairs: a mid amber is chosen so it reads on a
+     light page and a dark one alike, which is what a drawing ink has to do. */
+  --warning: #e8a33d;
 
   /* Danger and success as *text*. The pair above is tuned for icons and
      borders, where 3:1 is the bar; as body copy #e5484d measured 3.72:1 on
@@ -237,6 +241,7 @@
   --danger: #ff6369;
   --danger-soft: rgba(255, 99, 105, 0.16);
   --success: #43c07c;
+  --warning: #e8a33d;
 
   /* The pair above is light enough to write with on plain surfaces (#ff6369
      measures 5.20 / 4.66 / 4.52 and #43c07c 6.51 / 5.83 / 5.66 against

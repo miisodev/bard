@@ -7,6 +7,7 @@ import {
   Package,
   PackagePlus,
   Pencil,
+  PenLine,
   Pin,
   PinOff,
   Star,
@@ -15,7 +16,15 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { Item, PackSummary } from "../types";
 
-export type MenuAction = "copy" | "copyList" | "favorite" | "pin" | "edit" | "caption" | "delete";
+export type MenuAction =
+  | "copy"
+  | "copyList"
+  | "favorite"
+  | "pin"
+  | "edit"
+  | "caption"
+  | "annotate"
+  | "delete";
 
 interface ContextMenuProps {
   x: number;
@@ -230,6 +239,13 @@ export default function ContextMenu({
           disabled: item.kind !== "image" || multi,
           hint: multi ? "Select one image" : item.kind === "image" ? "Turn this image into a note" : "Images only",
           separated: true,
+        },
+        {
+          label: "Annotate",
+          onClick: () => onAction("annotate"),
+          icon: <PenLine size={14} strokeWidth={1.8} />,
+          disabled: item.kind !== "image" || multi,
+          hint: multi ? "Select one image" : item.kind === "image" ? "Draw on this image" : "Images only",
         },
         {
           label: multi ? "Delete selection" : "Delete",

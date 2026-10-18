@@ -1726,6 +1726,14 @@ body {
   text-align: right;
 }
 
+/* A caveat under a group's rows — what the key list cannot say. */
+.shortcut-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--text-3);
+}
+
 /* One keycap definition for every place the app states a gesture — the
    shortcut sheet, onboarding and the review foot. Bare `<kbd>` had no rule at
    all, so onboarding drew them in the browser's monospace default. The review

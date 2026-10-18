@@ -18,6 +18,10 @@ export interface Appearance {
   /** Draw's canvas, chosen separately: it is a page, not window chrome. */
   drawBackground: BackgroundMode;
   drawBackgroundColor: string;
+  /** Draw's remembered tool, colour and width. Absent on a backend before v2.1. */
+  drawTool?: string;
+  drawColor?: string;
+  drawWidth?: number;
   /** Sampled with each read so a system theme change re-renders its users. */
   systemDark?: boolean;
 }
