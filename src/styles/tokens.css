@@ -109,6 +109,8 @@
   --shelf-pager-h: 24px;
   --shelf-packs-w: 264px;     /* bottom/top: the packs pane's width */
   --shelf-packs-h: 148px;     /* left/right: the packs pane's height */
+  --shelf-pack-card-w: 196px; /* left/right: one pack card's width in the row */
+  --shelf-pack-card-h: 84px;  /* bottom/top: one pack card's height in the column */
 }
 
 /* ══ Light ═══════════════════════════════════════════════════════════════ */

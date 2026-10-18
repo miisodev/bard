@@ -13,6 +13,8 @@ import type {
   ModelStatus,
   OverlayPosition,
   CrashReport,
+  PackDetail,
+  PackSummary,
   PostprocessingSettings,
   PostprocessingTestResponse,
   SavePostprocessingInput,
@@ -84,6 +86,22 @@ export const api = {
   showPanel: () => invoke<void>("show_panel"),
   hidePanel: () => invoke<void>("hide_panel"),
   togglePanel: () => invoke<void>("toggle_panel"),
+
+  // Packs: named groups of kept items, pasted together as one block of text.
+  // Rust refuses with a sentence written for a person, so callers surface the
+  // rejection message rather than a code.
+  listPacks: () => invoke<PackSummary[]>("list_packs"),
+  getPack: (id: number) => invoke<PackDetail>("get_pack", { id }),
+  createPack: (name: string, itemIds: number[]) =>
+    invoke<PackSummary>("create_pack", { name, itemIds }),
+  renamePack: (id: number, name: string) => invoke<void>("rename_pack", { id, name }),
+  deletePack: (id: number) => invoke<void>("delete_pack", { id }),
+  packAddItems: (id: number, itemIds: number[]) =>
+    invoke<void>("pack_add_items", { id, itemIds }),
+  packRemoveItems: (id: number, itemIds: number[]) =>
+    invoke<void>("pack_remove_items", { id, itemIds }),
+  packReorder: (id: number, itemIds: number[]) =>
+    invoke<void>("pack_reorder", { id, itemIds }),
 
   setRetentionDays: (origin: "clipboard" | "dictation", days: number | null) =>
     invoke<void>("set_retention_days", { origin, days }),

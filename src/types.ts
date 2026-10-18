@@ -23,6 +23,24 @@ export interface Attachment {
   position: number;
 }
 
+/** A pack: kept items grouped into one unit for the shelf's Packs zone. */
+export interface PackSummary {
+  id: number;
+  name: string;
+  itemCount: number;
+  /**
+   * The leading members in pack order — up to four — enough to paint a card
+   * without loading the whole pack. The full membership comes from `get_pack`.
+   */
+  previewItemIds: number[];
+}
+
+export interface PackDetail {
+  pack: PackSummary;
+  /** The members in pack order. */
+  items: Item[];
+}
+
 export type Architecture =
   | "whisper"
   | "parakeet"

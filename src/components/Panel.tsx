@@ -15,6 +15,8 @@ import {
   escapeOutcome,
   filterItems,
   nextIndex,
+  PACK_NO_TEXT,
+  packText,
   pageCount,
   pageItems,
   pageSize,
@@ -23,13 +25,15 @@ import {
   type TypeFilter,
 } from "../shelf";
 import { api } from "../store";
-import type { AppState, Attachment, Item, ShelfEdge, SortOrder } from "../types";
+import type { AppState, Attachment, Item, PackSummary, ShelfEdge, SortOrder } from "../types";
 import { InlineConfirm } from "../settings/ui";
 import ColorPreview from "./ColorPreview";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
 import FilterSwitcher from "./FilterSwitcher";
 import ItemCard from "./ItemCard";
 import Menu from "./Menu";
+import PackCard from "./PackCard";
+import PackView from "./PackView";
 import Pager from "./Pager";
 import TypeChips from "./TypeChips";
 
@@ -49,6 +53,12 @@ export interface ToastDetail {
 function px(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** Rust's refusals are written for a person; an invoke failure is not. */
+function reasonText(reason: unknown, fallback: string): string {
+  const detail = reason instanceof Error ? reason.message : String(reason ?? "");
+  return detail.trim() || fallback;
 }
 
 export default function Panel({
@@ -93,6 +103,17 @@ export default function Panel({
   } | null>(null);
   const [soundOnCapture, setSoundOnCapture] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
+  // Packs: the summaries the zone paints, the page it is on, and which pack
+  // the view, the card menu and the delete confirmation are about.
+  const [packs, setPacks] = useState<PackSummary[]>([]);
+  // Until the first read lands the zone shows nothing rather than "none".
+  const [packsLoaded, setPacksLoaded] = useState(false);
+  const [packPage, setPackPage] = useState(0);
+  const [perPackPage, setPerPackPage] = useState(1);
+  const [packViewId, setPackViewId] = useState<number | null>(null);
+  const [packMenu, setPackMenu] = useState<{ x: number; y: number; pack: PackSummary } | null>(null);
+  const [editingPackId, setEditingPackId] = useState<number | null>(null);
+  const [confirmingPack, setConfirmingPack] = useState<PackSummary | null>(null);
   // Which companions are out, so their rail buttons read as pressed.
   const [companions, setCompanions] = useState({ draw: false, settings: false });
   // The one capture that has not been on screen yet, so only it animates in.
@@ -103,6 +124,7 @@ export default function Panel({
   const searchRef = useRef<HTMLInputElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const packsRef = useRef<HTMLElement>(null);
+  const packsPageRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   // The last id the backend was told about, so focus, clicks and arrow keys all
   // cost one write between them rather than one each.
@@ -157,6 +179,41 @@ export default function Panel({
     [state.items],
   );
 
+  /*
+    The Packs zone pages independently of the All zone, with its own card size
+    tokens: the zone is a narrow column on the bottom and top edges and a short
+    strip on the sides, so what fits is never the same number.
+  */
+  const packPages = pageCount(packs.length, perPackPage);
+  const currentPackPage = Math.min(packPage, packPages - 1);
+  const packCards = useMemo(
+    () => pageItems(packs, currentPackPage, perPackPage),
+    [packs, currentPackPage, perPackPage],
+  );
+
+  // A pack card's collage: the summary carries the leading ids and the shelf
+  // already holds every item they name, so the tiles need no read of their own.
+  const itemsById = useMemo(() => {
+    const index = new Map<number, Item>();
+    for (const item of state.items) index.set(item.id, item);
+    return index;
+  }, [state.items]);
+
+  const packPreviews = useMemo(() => {
+    const index = new Map<number, Item[]>();
+    for (const pack of packCards) {
+      index.set(
+        pack.id,
+        pack.previewItemIds
+          .map((id) => itemsById.get(id))
+          .filter((item): item is Item => item !== undefined),
+      );
+    }
+    return index;
+  }, [packCards, itemsById]);
+
+  const packView = packViewId === null ? null : packs.find((pack) => pack.id === packViewId) ?? null;
+
   /**
    * Roving tabindex: the card the arrows are pointing at is the zone's only
    * tab stop. When the active card is not on this page, the first card takes
@@ -184,7 +241,20 @@ export default function Panel({
     activeReported.current = activeItemId;
   }, [activeItemId]);
 
-  const refresh = useCallback(() => void api.getState().then(onState), [onState]);
+  const refreshPacks = useCallback(() => {
+    void api
+      .listPacks()
+      .then((next) => {
+        setPacks(next);
+        setPacksLoaded(true);
+      })
+      .catch(() => setPacksLoaded(false));
+  }, []);
+
+  const refresh = useCallback(() => {
+    void api.getState().then(onState);
+    refreshPacks();
+  }, [onState, refreshPacks]);
 
   const markActive = useCallback(
     (id: number | null) => {
@@ -225,6 +295,8 @@ export default function Panel({
   const closeComposerMenu = useCallback(() => setComposerMenu(null), []);
   const closeFilters = useCallback(() => setShowFilters(false), []);
   const closeShortcuts = useCallback(() => setShowShortcuts(false), []);
+  const closePackView = useCallback(() => setPackViewId(null), []);
+  const closePackMenu = useCallback(() => setPackMenu(null), []);
 
   /*
     How many cards fit the zone is measured, not assumed: the zones of the four
@@ -244,6 +316,26 @@ export default function Panel({
         : px(style.getPropertyValue("--shelf-card-w"), 236);
       const fit = vertical ? zone.clientHeight : zone.clientWidth;
       setPerPage(pageSize(fit, card, gap));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(zone);
+    return () => observer.disconnect();
+  }, [vertical]);
+
+  // The Packs zone measures the same way, along the axis it stacks cards:
+  // bottom and top edges hold a column of packs, the side edges a row.
+  useEffect(() => {
+    const zone = packsPageRef.current;
+    if (!zone) return;
+    const measure = () => {
+      const style = getComputedStyle(zone);
+      const gap = px(style.getPropertyValue("--shelf-card-gap"), 12);
+      const card = vertical
+        ? px(style.getPropertyValue("--shelf-pack-card-w"), 196)
+        : px(style.getPropertyValue("--shelf-pack-card-h"), 84);
+      const fit = vertical ? zone.clientWidth : zone.clientHeight;
+      setPerPackPage(pageSize(fit, card, gap));
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -291,7 +383,8 @@ export default function Panel({
   useEffect(() => {
     void api.getState().then(onState);
     void api.getSoundOnCapture().then(setSoundOnCapture);
-  }, []);
+    refreshPacks();
+  }, [onState, refreshPacks]);
 
   useEffect(() => {
     const pending = listen<{ draw: boolean; settings: boolean }>("companions", (event) =>
@@ -365,6 +458,127 @@ export default function Panel({
     [visible, perPage, currentPage, markActive, focusCard],
   );
 
+  /** Change the packs page. The pager is the only way off the first one. */
+  const goToPackPage = useCallback(
+    (next: number) => setPackPage(clampPage(next, packs.length, perPackPage)),
+    [packs.length, perPackPage],
+  );
+
+  /** Put focus back on a pack card, or on the zone when the card is gone. */
+  const focusPack = useCallback((id: number) => {
+    const zone = packsRef.current;
+    if (!zone) return;
+    (zone.querySelector<HTMLElement>(`[data-pack-id="${id}"]`) ?? zone).focus();
+  }, []);
+
+  /** The zone itself: where focus goes when the card it was on is gone. */
+  const focusPacksZone = useCallback(() => packsRef.current?.focus(), []);
+
+  /*
+    One pack paste path, the pack view's and the card's alike. The members are
+    read fresh — a pack edited since the card painted must paste what it holds
+    now — and the read is local. An empty assembly is refused with the reason
+    rather than pasting nothing over the clipboard.
+  */
+  const copyPack = useCallback(
+    (pack: PackSummary, paste = true) => {
+      void api
+        .getPack(pack.id)
+        .then(({ pack: current, items }) => {
+          const text = packText(items);
+          if (!text) {
+            notify(PACK_NO_TEXT);
+            return;
+          }
+          return api.copyText(text).then(() => {
+            playCue("copy");
+            if (paste) return api.pasteBack();
+            notify(`Copied ${current.name}`);
+          });
+        })
+        .catch((reason: unknown) => {
+          playCue("error");
+          notify(
+            reasonText(reason, paste ? "Couldn't paste the pack." : "Couldn't copy the pack."),
+            "error",
+          );
+        });
+    },
+    [notify],
+  );
+
+  const askDeletePack = useCallback((pack: PackSummary) => setConfirmingPack(pack), []);
+
+  const deletePack = useCallback(
+    (pack: PackSummary) => {
+      void api
+        .deletePack(pack.id)
+        .then(() => {
+          setConfirmingPack(null);
+          notify(`Deleted ${pack.name}`);
+          refresh();
+          // The card is on its way out; the zone is the one stable stop left.
+          focusPacksZone();
+        })
+        .catch((reason: unknown) => {
+          setConfirmingPack(null);
+          playCue("error");
+          notify(reasonText(reason, "Couldn't delete the pack."), "error");
+          focusPack(pack.id);
+        });
+    },
+    [notify, refresh, focusPack, focusPacksZone],
+  );
+
+  const renamePack = useCallback(
+    (pack: PackSummary, name: string) => {
+      void api
+        .renamePack(pack.id, name)
+        .then(() => refresh())
+        .catch((reason: unknown) => {
+          playCue("error");
+          notify(reasonText(reason, "Couldn't rename the pack."), "error");
+        });
+    },
+    [notify, refresh],
+  );
+
+  /** Make a pack from a selection; Rust answers an empty name itself. */
+  const createPack = useCallback(
+    (ids: number[], name: string) => {
+      void api
+        .createPack(name, ids)
+        .then((pack) => {
+          notify(`Created ${pack.name}`);
+          refresh();
+          // New packs sort last, so the zone points at the page that holds one.
+          setPackPage(pageCount(packs.length + 1, perPackPage) - 1);
+        })
+        .catch((reason: unknown) => {
+          playCue("error");
+          notify(reasonText(reason, "Bard couldn't make the pack."), "error");
+        });
+    },
+    [notify, refresh, packs.length, perPackPage],
+  );
+
+  const addToPack = useCallback(
+    (packId: number, ids: number[]) => {
+      const name = packs.find((pack) => pack.id === packId)?.name ?? "the pack";
+      void api
+        .packAddItems(packId, ids)
+        .then(() => {
+          notify(ids.length === 1 ? `Added 1 item to ${name}` : `Added ${ids.length} items to ${name}`);
+          refresh();
+        })
+        .catch((reason: unknown) => {
+          playCue("error");
+          notify(reasonText(reason, "Bard couldn't add to the pack."), "error");
+        });
+    },
+    [notify, refresh, packs],
+  );
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -374,14 +588,18 @@ export default function Panel({
       // A confirmation is the first thing Escape answers, then any overlay.
       // Each overlay also owns its keys in the capture phase; this is the
       // belt for when focus has wandered outside it.
-      if (confirmingClear) {
+      if (confirmingClear || confirmingPack) {
         if (e.key === "Escape") {
           e.preventDefault();
           setConfirmingClear(false);
+          if (confirmingPack) {
+            setConfirmingPack(null);
+            focusPack(confirmingPack.id);
+          }
         }
         return;
       }
-      if (menu || showShortcuts || showOverflow || showFilters || preview) return;
+      if (menu || showShortcuts || showOverflow || showFilters || preview || packView) return;
 
       if (typing) {
         if (e.key !== "Escape") return;
@@ -471,6 +689,33 @@ export default function Panel({
         target.closest('button, a[href], [role="button"], input, textarea, select') !== null;
       if (command.type === "move" && onControl && !onCard) return;
       if ((command.type === "paste" || command.type === "toggleDone") && onControl) return;
+
+      /*
+        The Packs zone answers to the pack under the cursor, never to the item
+        cursor: Enter pastes the pack, Delete asks about it, and the item
+        commands — move, pin, done — stop at the divider.
+      */
+      if (target.closest(".shelf-zone.packs")) {
+        const packId = target.closest<HTMLElement>("[data-pack-id]")?.dataset.packId;
+        const pack = packId ? packs.find((entry) => entry.id === Number(packId)) : undefined;
+        if (pack && !onControl && command.type === "paste") {
+          e.preventDefault();
+          copyPack(pack);
+          return;
+        }
+        if (pack && !onControl && command.type === "delete") {
+          e.preventDefault();
+          askDeletePack(pack);
+          return;
+        }
+        if (pack && !onControl && command.type === "copy") {
+          e.preventDefault();
+          copyPack(pack, false);
+          return;
+        }
+        // Ctrl+K and Ctrl+/ stay the shelf's everywhere, this zone included.
+        if (command.type !== "filters" && command.type !== "shortcuts") return;
+      }
 
       /*
         The acted-on item is the focused one, never the selection this render
@@ -578,12 +823,19 @@ export default function Panel({
     menu,
     preview,
     confirmingClear,
+    confirmingPack,
+    packs,
+    packView,
     notify,
     markActive,
     refresh,
     deleteItems,
     moveCursor,
     goToPage,
+    copyPack,
+    askDeletePack,
+    focusPack,
+    focusPacksZone,
     showFilters,
     showOverflow,
     showShortcuts,
@@ -625,7 +877,12 @@ export default function Panel({
     focusSearch();
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    void listen("panel-shown", focusSearch).then((off) => {
+    void listen("panel-shown", () => {
+      focusSearch();
+      // The shelf re-reads its packs when it comes back over whatever the
+      // person was doing; a pack made in another window would not surface.
+      refreshPacks();
+    }).then((off) => {
       if (cancelled) off();
       else unlisten = off;
     });
@@ -633,7 +890,7 @@ export default function Panel({
       cancelled = true;
       unlisten?.();
     };
-  }, []);
+  }, [refreshPacks]);
 
   useEffect(() => {
     const onDragOver = (e: DragEvent) => {
@@ -993,9 +1250,8 @@ export default function Panel({
 
         <div className="shelf-divider" aria-hidden="true" />
 
-        {/* The packs shell: the zone, its label, and the empty state a new
-            shelf shows until packs arrive. The dividers and the layout are
-            final; the feature lands in a later lane. */}
+        {/* The Packs zone: the packs already made, a page at a time, and the
+            one instruction a shelf with none owes. */}
         <section
           ref={packsRef}
           id="shelf-packs"
@@ -1004,11 +1260,44 @@ export default function Panel({
           tabIndex={0}
         >
           <h2 className="packs-title">Packs</h2>
-          <div className="packs-empty">
-            <Package size={18} strokeWidth={1.6} aria-hidden="true" />
-            <div className="title">No packs yet</div>
-            <div className="hint">Packs will hold the items you paste together.</div>
+          <div
+            ref={packsPageRef}
+            className="packs-page"
+            // A listbox only while it holds options; the empty message is not
+            // one, so the role arrives with the first pack.
+            role={packCards.length === 0 ? undefined : "listbox"}
+            aria-label={packCards.length === 0 ? undefined : "Packs"}
+            tabIndex={-1}
+          >
+            {packCards.length === 0 ? (
+              packsLoaded ? (
+                <div className="packs-empty">
+                  <Package size={18} strokeWidth={1.6} aria-hidden="true" />
+                  <div className="title">No packs yet</div>
+                  <div className="hint">Select items and make one.</div>
+                </div>
+              ) : null
+            ) : (
+              packCards.map((pack) => (
+                <PackCard
+                  key={pack.id}
+                  pack={pack}
+                  previewItems={packPreviews.get(pack.id) ?? EMPTY_ITEMS}
+                  editing={editingPackId === pack.id}
+                  onPaste={() => copyPack(pack)}
+                  onOpen={() => setPackViewId(pack.id)}
+                  onMore={(at) => setPackMenu({ ...at, pack })}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setPackMenu({ x: e.clientX, y: e.clientY, pack });
+                  }}
+                  onRename={(name) => renamePack(pack, name)}
+                  onEditDone={() => setEditingPackId(null)}
+                />
+              ))
+            )}
           </div>
+          <Pager page={currentPackPage} pages={packPages} onPage={goToPackPage} label="Pack pages" />
         </section>
       </div>
 
@@ -1029,6 +1318,20 @@ export default function Panel({
             onConfirm={clearCaptures}
           >
             Remove automatic clipboard and dictation history? Your notes and favourites stay.
+          </InlineConfirm>
+        ) : null}
+
+        {confirmingPack ? (
+          <InlineConfirm
+            confirmLabel="Delete pack"
+            onCancel={() => {
+              const pack = confirmingPack;
+              setConfirmingPack(null);
+              focusPack(pack.id);
+            }}
+            onConfirm={() => deletePack(confirmingPack)}
+          >
+            Delete the pack “{confirmingPack.name}”? Its items stay in Bard.
           </InlineConfirm>
         ) : null}
 
@@ -1168,7 +1471,10 @@ export default function Panel({
           }}
           onPacks={() => {
             setShowFilters(false);
-            window.requestAnimationFrame(() => packsRef.current?.focus());
+            // Land on the first pack when there is one; the zone itself is the
+            // stop a shelf with no packs owes the keyboard.
+            const first = packCards[0];
+            window.requestAnimationFrame(() => (first ? focusPack(first.id) : focusPacksZone()));
           }}
         />
       ) : null}
@@ -1179,13 +1485,50 @@ export default function Panel({
         <ColorPreview item={preview} onClose={() => setPreview(null)} notify={notify} />
       ) : null}
 
+      {packView ? (
+        <PackView
+          pack={packView}
+          onClose={closePackView}
+          onChanged={refresh}
+          onDelete={() => {
+            deletePack(packView);
+            closePackView();
+          }}
+          notify={notify}
+        />
+      ) : null}
+
+      {packMenu ? (
+        <Menu
+          anchor="point"
+          at={{ x: packMenu.x, y: packMenu.y }}
+          label={`${packMenu.pack.name} actions`}
+          onClose={closePackMenu}
+          entries={[
+            { label: "Rename", onClick: () => setEditingPackId(packMenu.pack.id) },
+            {
+              label: "Delete",
+              danger: true,
+              onClick: () => setConfirmingPack(packMenu.pack),
+            },
+          ]}
+        />
+      ) : null}
+
       {menu ? (
         <ContextMenu
           x={menu.x}
           y={menu.y}
           multi={menu.ids.length > 1}
           item={menu.item}
+          packs={packs}
           onAction={onMenuAction}
+          onCreatePack={(name) => {
+            if (menu) createPack(menu.ids, name);
+          }}
+          onAddToPack={(packId) => {
+            if (menu) addToPack(packId, menu.ids);
+          }}
           onClose={closeMenu}
         />
       ) : null}
@@ -1195,6 +1538,9 @@ export default function Panel({
 
 /** Shared by every card with no attachments, so the prop keeps one identity. */
 const EMPTY_ATTACHMENTS: Attachment[] = [];
+
+/** Shared by every pack with no resolvable preview, so the prop keeps one identity. */
+const EMPTY_ITEMS: Item[] = [];
 
 /** The All zone's orders, in the menu's order. Newest first is the default. */
 const SORT_ORDERS: [SortOrder, string][] = [

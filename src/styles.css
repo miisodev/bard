@@ -550,6 +550,312 @@ body {
   font-size: var(--fs-caption);
 }
 
+/* ---------- packs ---------- */
+
+/*
+  The packs zone's page, on the same measurement contract as the All zone's:
+  the cards that fit whole are the page, and the axis is the one the zone
+  stacks along — a column on the bottom and top edges, a row on the sides.
+  A clipped card would be a scroller, which this shelf does not have.
+*/
+.packs-page {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--shelf-card-gap);
+  overflow: hidden;
+}
+
+.app[data-edge="left"] .packs-page,
+.app[data-edge="right"] .packs-page {
+  flex-direction: row;
+}
+
+/*
+  One pack: the collage of its leading members, its name and how much it
+  holds. The whole card is the paste — the same primary action an item card
+  has — with Open and More beside the name for the rest, visible at rest
+  because nothing on this shelf hides behind hover.
+*/
+.pack-card {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: 100%;
+  height: var(--shelf-pack-card-h);
+  /* A band a few pixels short must not clip the meta line: the collage gives
+     way instead, and the card never overflows the page it was measured for. */
+  max-height: 100%;
+  padding: var(--sp-4);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--el-card);
+  cursor: pointer;
+  overflow: hidden;
+  transition: background var(--t-fast) var(--ease-out);
+}
+
+.app[data-edge="left"] .pack-card,
+.app[data-edge="right"] .pack-card {
+  width: var(--shelf-pack-card-w);
+  height: 100%;
+}
+
+.pack-card:hover {
+  background: var(--surface-hover);
+}
+
+.pack-card:focus-visible {
+  outline: none;
+  box-shadow: var(--el-card), var(--focus-ring);
+}
+
+/* A pack with no text to paste is not a paste; the meta line says why, and
+   the cursor stops promising an action that will be refused. */
+.pack-card[aria-disabled="true"] {
+  cursor: default;
+}
+
+/* The collage: up to four leading members, in pack order, sharing the strip
+   evenly at any count. Media tiles crop to fill; word tiles are tinted by
+   kind, which is the third signal after the text and the shape of the tile. */
+.pack-collage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.pack-tile {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.pack-tile.media {
+  padding: 0;
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.pack-tile.media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pack-tile.text { background: var(--kind-text); color: var(--kind-text-ink); }
+.pack-tile.link { background: var(--kind-link); color: var(--kind-link-ink); }
+.pack-tile.dictation { background: var(--kind-dictation); color: var(--kind-dictation-ink); }
+
+/* The swatch is the item's own colour, set inline; the inset ring keeps a
+   white swatch from vanishing into the card it sits on. */
+.pack-tile.color {
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.pack-tile-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-tight);
+  overflow-wrap: anywhere;
+}
+
+.pack-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.pack-name {
+  flex: 1 1 40px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The count rides the name's line: at 82px of card height on the bottom and
+   top edges, a line of its own would be the collage's. */
+.pack-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The refusal, where the count would be: the reason is what the person needs
+   most from this line, and it cannot be pasted at all. */
+.pack-meta.no-text {
+  color: var(--text-2);
+}
+
+.pack-name-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.pack-name-input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.pack-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.pack-tool {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+
+.pack-tool:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.pack-tool:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------- pack view ---------- */
+
+/*
+  The pack's own dialog: the members in order with their commands, and the
+  pack's commands in the foot. It rides the sheet's scrim and card, and it is
+  the one surface that changes a pack's membership while it is up.
+*/
+.sheet-card.pack-view {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+}
+
+.pack-view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-6);
+}
+
+.pack-view-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 48px;
+}
+
+.pack-view-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.pack-view-glyph {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+}
+
+.pack-view-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pack-view-row-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.pack-view-empty {
+  margin: 0;
+  padding: var(--sp-7);
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+/* The commands stay reachable in a 250px shelf band: the member list scrolls
+   under the foot rather than taking it out of view. */
+.pack-view-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.pack-view-spring {
+  flex: 1;
+  min-width: var(--sp-4);
+}
+
+.pack-view-note {
+  min-width: 0;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.pack-view-name {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ---------- card ---------- */
 
 .item-card {
@@ -1939,12 +2245,59 @@ body {
   position: fixed;
   z-index: 70;
   min-width: 190px;
+  /* The pack steps and the item rows together can outgrow a shelf band, which
+     is 250px tall on the bottom and top edges; the menu scrolls instead of
+     clipping an action. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 5px;
   animation: sheet-in var(--t-fast) var(--ease);
+}
+
+.ctx-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The pack-name step of the pack flow: a field and its rows in the menu. */
+.ctx-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 210px;
+  padding: var(--sp-2);
+}
+
+.ctx-form-title {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-caption);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.ctx-input {
+  height: 28px;
+  padding: 0 var(--sp-4);
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-base);
+}
+
+.ctx-input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .ctx-row {
@@ -2114,6 +2467,17 @@ mark {
 .popover-menu button:hover:not(:disabled) {
   background: var(--accent);
   color: var(--text-on-accent);
+}
+
+/* A destructive entry keeps the danger tone instead of the accent fill: the
+   label says what it does, and the ground says it cannot be undone. */
+.popover-menu button.danger {
+  color: var(--danger);
+}
+
+.popover-menu button.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .popover-menu button:disabled {

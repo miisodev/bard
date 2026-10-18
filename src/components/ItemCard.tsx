@@ -1,14 +1,8 @@
 import {
   Copy,
-  Droplet,
   Ellipsis,
   Eye,
-  Image as ImageIcon,
-  Link as LinkIcon,
-  Mic,
-  PenTool,
   Star,
-  Type,
 } from "lucide-react";
 import {
   useEffect,
@@ -16,14 +10,14 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
-  type ReactNode,
 } from "react";
 import { colorName } from "../color/names";
 import { linkParts } from "../content";
 import { renderInline } from "../markdown";
-import { KIND_LABEL, colorChannels, itemKind, toHex, type ShelfKind } from "../shelf";
+import { itemKind, itemPreview, KIND_LABEL, colorChannels, toHex } from "../shelf";
 import { api } from "../store";
 import type { Attachment, Item } from "../types";
+import KindGlyph from "./KindGlyph";
 
 /*
   One shelf card: a checkbox, its content and one Copy.
@@ -39,33 +33,6 @@ import type { Attachment, Item } from "../types";
   card's own commands are one Tab away. The row therefore handles no key
   itself — every command on it is the panel's.
 */
-
-/** Long enough to identify a card, short enough to be read out loud. */
-const PREVIEW_CHARS = 48;
-
-/** The kind's glyph, always beside the written label — colour is never alone. */
-const GLYPHS: Record<ShelfKind, ReactNode> = {
-  text: <Type size={13} strokeWidth={2} />,
-  image: <ImageIcon size={13} strokeWidth={2} />,
-  link: <LinkIcon size={13} strokeWidth={2} />,
-  color: <Droplet size={13} strokeWidth={2} />,
-  dictation: <Mic size={13} strokeWidth={2} />,
-  draw: <PenTool size={13} strokeWidth={2} />,
-};
-
-/**
- * What a screen reader should call this card, and what the Copy button should
- * say it is copying. Nine cards all reading "Copy text" is nine identical
- * controls; the preview is what the button actually acts on, so it belongs in
- * the name. A captured image carries no text at all — it is stored with an
- * empty body and a path — so it is named for what it is until a caption gives
- * it something to be called.
- */
-function preview(item: Item): string {
-  const text = item.content.replace(/\s+/g, " ").trim();
-  if (!text) return item.kind === "image" ? "image" : "empty note";
-  return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…` : text;
-}
 
 function countCharacters(text: string): string {
   const length = [...text].length;
@@ -203,7 +170,7 @@ export default function ItemCard({
       // Roving: one card is in the tab order, the rest are reached by arrow keys.
       tabIndex={active ? 0 : -1}
       aria-selected={selected}
-      aria-label={color ? `${colorLabel} ${hex ?? color}` : `${label}: ${preview(item)}`}
+      aria-label={color ? `${colorLabel} ${hex ?? color}` : `${label}: ${itemPreview(item)}`}
       data-item-id={item.id}
       data-item-kind={item.kind}
       data-shelf-kind={kind}
@@ -248,7 +215,7 @@ export default function ItemCard({
         </button>
         <span className="card-label">{label}</span>
         <span className="card-signs">
-          <span className="card-glyph" aria-hidden="true">{GLYPHS[kind]}</span>
+          <span className="card-glyph"><KindGlyph kind={kind} /></span>
           {index < 5 ? (
             <kbd className="card-key" title={`Ctrl+${index + 1} pastes this card`} aria-hidden="true">
               {index + 1}
@@ -422,7 +389,7 @@ export default function ItemCard({
         <button
           type="button"
           className="item-copy"
-          aria-label={`Copy ${preview(item)}`}
+          aria-label={`Copy ${itemPreview(item)}`}
           title="Copy"
           onClick={(e) => {
             e.stopPropagation();
