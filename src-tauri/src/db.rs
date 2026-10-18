@@ -1939,15 +1939,18 @@ mod tests {
         let now = SystemTime::now();
         let old = now - Duration::from_secs(2 * 60 * 60);
         let fresh = now - Duration::from_secs(60);
+        // Forward slashes: a separator on both platforms, so `file_name`
+        // resolves to the same name on each. The contract under test is
+        // name-matching, not the host's separator.
         let files = vec![
-            (PathBuf::from(r"C:\Data\images\Kept.png"), old),
-            (PathBuf::from(r"C:\Data\images\orphan.png"), old),
-            (PathBuf::from(r"C:\Data\images\just-written.png"), fresh),
+            (PathBuf::from("C:/Data/images/Kept.png"), old),
+            (PathBuf::from("C:/Data/images/orphan.png"), old),
+            (PathBuf::from("C:/Data/images/just-written.png"), fresh),
         ];
         let referenced: HashSet<String> = ["kept.png".to_string()].into();
         assert_eq!(
             orphaned_images(&files, &referenced, now),
-            vec![PathBuf::from(r"C:\Data\images\orphan.png")]
+            vec![PathBuf::from("C:/Data/images/orphan.png")]
         );
     }
     use super::*;
@@ -2091,12 +2094,21 @@ mod tests {
         std::fs::create_dir_all(local.join("images")).unwrap();
         std::fs::write(local.join("images").join("moved.png"), b"png").unwrap();
         let conn = init(&root.join("test.db")).unwrap();
-        let moved = legacy.join("images").join("moved.png");
-        let stuck = legacy.join("images").join("stuck.png");
+        // Only the stored prefix is uppercased: that is what proves the
+        // ignore-case match, and the tail stays in its real case so the
+        // existence check can resolve it on a case-sensitive filesystem too.
+        let moved = format!(
+            "{}/images/moved.png",
+            legacy.to_string_lossy().to_uppercase()
+        );
+        let stuck = format!(
+            "{}/images/stuck.png",
+            legacy.to_string_lossy().to_uppercase()
+        );
         for path in [&moved, &stuck] {
             conn.execute(
                 "INSERT INTO items (content, kind, image_path, created_at, updated_at) VALUES ('', 'image', ?1, 0, 0)",
-                params![path.to_string_lossy().to_uppercase()],
+                params![path],
             )
             .unwrap();
         }
@@ -2109,8 +2121,8 @@ mod tests {
             .flatten()
             .collect();
         assert!(paths[0].starts_with(&local.to_string_lossy().to_string()));
-        assert!(paths[0].ends_with("MOVED.PNG"));
-        assert_eq!(paths[1], stuck.to_string_lossy().to_uppercase());
+        assert!(paths[0].ends_with("images/moved.png"));
+        assert_eq!(paths[1], stuck);
         assert!(strip_path_prefix(r"C:\a\bard-other\x", r"C:\a\bard").is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
