@@ -280,6 +280,9 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
         backgroundColor: "#e6e7ea",
         drawBackground: "theme",
         drawBackgroundColor: "#ffffff",
+        drawTool: "pen",
+        drawColor: "#1d1d1f",
+        drawWidth: 4,
       };
     case "get_license":
     case "refresh_license":
@@ -314,6 +317,16 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
       return "C:\\Users\\you\\Documents\\Bard";
     case "get_sound_on_capture":
       return true;
+    // The v2.1 Draw commands the preview cannot honestly run: no native
+    // Save-As dialog, no paste into another app, no clipboard pixels. The
+    // chrome around them is what the preview is for, and every one is a
+    // no-op here rather than a fake.
+    case "set_draw_prefs":
+    case "send_drawing":
+    case "save_svg":
+    case "open_draw_with_image":
+    case "clipboard_image_data":
+      return null;
     case "item_image_data":
       return IMAGES.get(Number(args.id)) ?? null;
     // The packs commands, with the behaviour Rust has: summaries carry the
