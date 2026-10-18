@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
+use crate::ttl::Ttl;
+
 const LICENSE_USERNAME: &str = "license-key";
 const INSTALLATION_ID_USERNAME: &str = "installation-id";
 const TRIAL_SECRET_USERNAME: &str = "trial-secret";
@@ -35,6 +37,21 @@ const DEFAULT_LICENSE_SERVER: &str = "https://miiso.dev/api/bard/license";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const KEYRING_TIMEOUT: Duration = Duration::from_millis(400);
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+/// How long a computed licence status is reused.
+///
+/// `status` reads Windows Credential Manager several times per answer — the
+/// key, the receipt, the trial pair, the machine id — and it is asked on every
+/// refresh, every capture and every gated command. The vault's round trips,
+/// not the state machine, are what made a plain UI tick cost milliseconds.
+/// Two seconds trades that for a bounded staleness: every revocation Bard
+/// performs itself (activate, refresh, deactivate, clear, start-trial, and the
+/// erase inside delete-all-data) drops this cache immediately, and a change
+/// made out of band can be seen up to two seconds late. That is the accepted
+/// window; do not widen it without the same debt being written down here.
+const STATUS_TTL: Duration = Duration::from_secs(2);
+
+static STATUS_CACHE: Ttl<LicenseStatus> = Ttl::new(STATUS_TTL);
 
 /// How long a signed offline lease stays usable past the point it asked to be
 /// re-checked. Three days covers a laptop that is genuinely offline for a
@@ -495,6 +512,7 @@ pub fn start_trial(app: &tauri::AppHandle) -> Result<LicenseStatus, LicenseError
         ));
     }
     trial_window(app).ok_or(LicenseError::CredentialStore)?;
+    invalidate_status();
     Ok(status(app))
 }
 
@@ -585,10 +603,28 @@ pub fn require(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Drop the cached status, so the next read recomputes it.
+///
+/// Every path that can change what `status` would answer calls this — the
+/// activate/refresh/deactivate/clear/start-trial actions and the local erase
+/// behind "Delete all data". Nothing else may write the cache directly.
+fn invalidate_status() {
+    STATUS_CACHE.invalidate();
+}
+
 pub fn status(app: &tauri::AppHandle) -> LicenseStatus {
     if !crate::db::is_ready(app) {
         return LicenseStatus::unavailable();
     }
+    if let Some(cached) = STATUS_CACHE.get() {
+        return cached;
+    }
+    let computed = compute_status(app);
+    STATUS_CACHE.set(computed.clone());
+    computed
+}
+
+fn compute_status(app: &tauri::AppHandle) -> LicenseStatus {
     let key_configured = read_key_bounded().is_some();
     if let Some(receipt) = cached_receipt(app) {
         return status_from_receipt(app, &receipt, key_configured, None);
@@ -871,6 +907,7 @@ pub async fn activate(app: &tauri::AppHandle, key: String) -> Result<LicenseStat
         previous.zeroize();
     }
     key.zeroize();
+    invalidate_status();
     result
 }
 
@@ -919,6 +956,7 @@ pub async fn refresh(app: &tauri::AppHandle) -> LicenseStatus {
         Err(_) => status(app),
     };
     key.zeroize();
+    invalidate_status();
     refreshed
 }
 
@@ -1027,6 +1065,7 @@ pub async fn deactivate(app: &tauri::AppHandle) -> Result<LicenseStatus, License
     .map_err(|_| LicenseError::Service("Bard could not clear its licence state.".into()))?;
     delete_credential_bounded(RECEIPT_USERNAME)?;
     delete_key_bounded()?;
+    invalidate_status();
     Ok(status(app))
 }
 
@@ -1048,6 +1087,9 @@ pub fn erase_local(app: &tauri::AppHandle) -> Result<(), LicenseError> {
         }
     }
     let _ = crate::db::set_setting_checked(app, ACTIVATION_COUNT_SETTING, "");
+    // The credentials this cache was built from are gone; a cached `active`
+    // would be a stale success on the one path that must never show one.
+    invalidate_status();
     match first_error {
         Some(error) => Err(error),
         None => Ok(()),

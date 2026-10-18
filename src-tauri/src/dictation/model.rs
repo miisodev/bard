@@ -457,6 +457,56 @@ pub fn invalidate_verification() {
     *guard = None;
 }
 
+/// Set once the verification warm-up has claimed its thread for this process.
+static WARMUP_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// `true` on the first call for a given flag, `false` after.
+///
+/// A `swap` rather than a load-then-store: two callers arriving together must
+/// produce exactly one warm-up, not two threads hashing the same gigabytes.
+fn claim_warmup(started: &AtomicBool) -> bool {
+    !started.swap(true, Ordering::SeqCst)
+}
+
+/// Verify the active model's bytes once, on a background thread, shortly after
+/// launch.
+///
+/// The first take after launch otherwise pays a full SHA-256 of the model file
+/// — up to 1.69 GB — inside `ensure_session_verified` before the engine can
+/// even be asked to load it, and the take's watchdog has to cover it. The hash
+/// is the same work whenever it happens, so it may as well happen while the
+/// person is still opening the panel.
+///
+/// The stamp `ensure_session_verified` sets is only set on success, exactly as
+/// on the take path: a failed warm-up (no model, a missing file, a hash error)
+/// changes nothing, so the take still verifies and reports in its own words.
+pub fn spawn_verification_warmup(app: AppHandle) {
+    if !claim_warmup(&WARMUP_STARTED) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let id = crate::db::get_setting(&app, "model_id").unwrap_or_default();
+        if id.is_empty() {
+            return;
+        }
+        let Some(path) = resolve_path(&app, &id) else {
+            return;
+        };
+        if !path.is_file() {
+            return;
+        }
+        match ensure_session_verified(&app, &id, &path) {
+            Ok(()) => crate::crash::record_event("model:verification-warmup"),
+            Err(error) => {
+                // Not surfaced to anyone: the take that needs this model will
+                // verify again and report the same failure where it belongs.
+                log::warn!("model verification warm-up failed for {id}: {error}");
+                crate::crash::record_event("model:verification-warmup-failed");
+            }
+        }
+    });
+}
+
 fn transcribe_inner(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
     let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
     let Some(path) = resolve_path(app, &id) else {
@@ -572,6 +622,14 @@ mod tests {
     #[test]
     fn the_reaper_window_is_five_minutes() {
         assert_eq!(UNLOAD_IDLE_MS, 5 * 60 * 1000);
+    }
+
+    #[test]
+    fn the_verification_warmup_claims_only_one_thread() {
+        let started = AtomicBool::new(false);
+        assert!(claim_warmup(&started), "the first caller starts it");
+        assert!(!claim_warmup(&started), "a second caller starts nothing");
+        assert!(!claim_warmup(&started));
     }
 
     #[test]
