@@ -355,6 +355,7 @@ fn main() {
             commands::paste_back,
             commands::copy_attachment,
             commands::item_image_data,
+            commands::clipboard_image_data,
             commands::attachment_image_data,
             commands::set_theme,
             commands::set_onboarding_completed,

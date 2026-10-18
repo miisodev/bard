@@ -1082,7 +1082,7 @@ fn svg_file_name(suggested: &str) -> String {
         .collect();
     let cleaned = cleaned.trim().trim_matches('.').trim();
     let stem: String = cleaned.chars().take(80).collect();
-    let stem = stem.trim_end_matches(|c| c == ' ' || c == '.');
+    let stem = stem.trim_end_matches([' ', '.']);
     let stem = if stem.is_empty() { "Sketch" } else { stem };
     if stem.to_ascii_lowercase().ends_with(".svg") {
         stem.to_string()
@@ -1725,6 +1725,21 @@ pub fn dictation_copy(app: AppHandle, text: String) -> Result<(), String> {
 #[tauri::command]
 pub fn dictation_dismiss(app: AppHandle, text: String) {
     crate::dictation::dismiss(&app, text);
+}
+
+/// The clipboard's image as a data URL, or null when it holds none (or the
+/// licence restricts content). Draw's Ctrl+V intake — the pixels come from the
+/// same clipboard Bard's monitor reads, with the same size caps.
+#[tauri::command]
+pub fn clipboard_image_data(app: AppHandle) -> Option<String> {
+    if crate::license::require(&app).is_err() {
+        return None;
+    }
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    let image = clipboard.get_image().ok()?;
+    let encoded = crate::monitor::encode_png(&image)?;
+    let base64 = base64::engine::general_purpose::STANDARD.encode(&encoded);
+    Some(format!("data:image/png;base64,{base64}"))
 }
 
 pub struct ImagesDir(pub PathBuf);

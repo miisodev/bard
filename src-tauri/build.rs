@@ -24,6 +24,7 @@ const COMMANDS: &[&str] = &[
     "paste_back",
     "copy_attachment",
     "item_image_data",
+    "clipboard_image_data",
     "attachment_image_data",
     "set_theme",
     "set_onboarding_completed",

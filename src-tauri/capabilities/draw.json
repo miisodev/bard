@@ -20,6 +20,7 @@
     "allow-save-svg",
     "allow-open-draw-with-image",
     "allow-item-image-data",
+    "allow-clipboard-image-data",
     "allow-set-draw-prefs",
     "dialog:allow-save"
   ]

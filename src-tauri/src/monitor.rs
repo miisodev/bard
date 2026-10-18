@@ -306,7 +306,7 @@ impl std::io::Write for CappedBytes {
     }
 }
 
-fn encode_png(img: &arboard::ImageData) -> Option<Vec<u8>> {
+pub(crate) fn encode_png(img: &arboard::ImageData) -> Option<Vec<u8>> {
     use image::{ExtendedColorType, ImageEncoder};
     let pixels = (img.width as u64).saturating_mul(img.height as u64);
     if pixels > MAX_CAPTURE_IMAGE_PIXELS {
