@@ -1895,6 +1895,42 @@ fn strip_path_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
     (rest.is_empty() || rest.starts_with('\\') || rest.starts_with('/')).then_some(rest)
 }
 
+/// Clears a stored model choice that no longer resolves to anything Bard can
+/// load.
+///
+/// A catalog update can retire models — the two-model catalog removes Whisper
+/// Small and Parakeet v2 — and a `model_id` stored before the upgrade then
+/// names neither a catalog row nor a registered custom model. Every reader
+/// already treats such a value as "no model chosen": the settings surface marks
+/// no row active and dictation refuses to start. This makes the stored value
+/// say so, once, when the database opens, so nothing keeps reporting a choice
+/// the user cannot actually make. A selection that still resolves is untouched,
+/// and nothing is downloaded, verified, or deleted, which keeps this safe to
+/// run on every open.
+pub fn clear_stale_model_selection(conn: &Connection) {
+    let Ok(id) = conn.query_row(
+        "SELECT value FROM settings WHERE key = 'model_id'",
+        [],
+        |row| row.get::<_, String>(0),
+    ) else {
+        return;
+    };
+    if id.is_empty() || crate::catalog::find(&id).is_some() {
+        return;
+    }
+    let registered: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM custom_models WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if registered > 0 {
+        return;
+    }
+    let _ = conn.execute("DELETE FROM settings WHERE key = 'model_id'", []);
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -2111,6 +2147,70 @@ mod tests {
             )
             .unwrap();
         assert_eq!(compatibility, "verified");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// The two-model catalog retires Whisper Small and Parakeet v2, so a
+    /// `model_id` stored before the upgrade can name nothing that resolves.
+    /// Clearing it at open must leave every live choice alone — including a
+    /// registered custom model that the catalog does not know.
+    #[test]
+    fn a_retired_model_choice_is_cleared_at_open_but_live_ones_survive() {
+        let dir = std::env::temp_dir().join(format!("bard-model-selection-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = init(&dir.join("bard.db")).unwrap();
+
+        let stored = |conn: &Connection| {
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'model_id'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        };
+
+        // Nothing stored: nothing to clear, and no row is inserted.
+        clear_stale_model_selection(&conn);
+        assert_eq!(stored(&conn), None);
+
+        // A catalog choice that still resolves is kept.
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES('model_id', 'whisper-turbo')",
+            [],
+        )
+        .unwrap();
+        clear_stale_model_selection(&conn);
+        assert_eq!(stored(&conn).as_deref(), Some("whisper-turbo"));
+
+        // A registered custom model is a real choice even though the catalog
+        // does not carry it.
+        conn.execute(
+            "INSERT INTO custom_models(id, repo, file, local_path, created_at)
+             VALUES('hf|owner/repo|model.gguf', 'owner/repo', 'model.gguf', 'C:/models/model.gguf', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE settings SET value = 'hf|owner/repo|model.gguf' WHERE key = 'model_id'",
+            [],
+        )
+        .unwrap();
+        clear_stale_model_selection(&conn);
+        assert_eq!(stored(&conn).as_deref(), Some("hf|owner/repo|model.gguf"));
+
+        // The retired id resolves to nothing, so the choice is unset.
+        conn.execute(
+            "UPDATE settings SET value = 'whisper-small' WHERE key = 'model_id'",
+            [],
+        )
+        .unwrap();
+        clear_stale_model_selection(&conn);
+        assert_eq!(stored(&conn), None);
+
+        // Idempotent: running it again over the same database is a no-op.
+        clear_stale_model_selection(&conn);
+        assert_eq!(stored(&conn), None);
+
         std::fs::remove_dir_all(dir).ok();
     }
 

@@ -14,7 +14,7 @@ Windows.
 - **Dictate** — tap the same `Ctrl` twice to start dictation, or hold the second
   press for push-to-talk. A short tap locks recording so you can speak hands-free;
   another `Ctrl` `Ctrl` stops it. Bard uses a local `transcribe-cpp` GGUF model:
-  choose Bard Fast, Bard English, or Bard Multilingual in **Settings → Models**.
+  choose Bard Fast or Bard General in **Settings → Models**.
   Audio capture and local transcription stay on this device. Optional text-only
   Refine runs only after local transcription when switched on in
   **Settings → Refine**; it sends only the finished transcript to OpenRouter
@@ -99,15 +99,13 @@ Bard ships in two ways, and only one of them is signed.
   an update. The package takes its identity from Partner Center.
 
 
-The three model roles are pinned to the hash-verified
-`https://github.com/miisodev/bard-models` release `models-v2`:
-`whisper-small-Q6_K.gguf` for Fast multilingual,
-`parakeet-tdt-0.6b-v2-Q6_K.gguf` for Best English, and
-`Qwen3-ASR-1.7B-Q6_K.gguf` for Best multilingual. The first-party release
-rehosts the exact listed bytes with model-specific notices. The embedded
-catalog records the conversion provenance, model-specific licence, exact size,
-and SHA-256; downloads resume, hash the complete file, and load through
-`transcribe-cpp` before activation.
+The two model roles are pinned to hash-verified
+`https://github.com/miisodev/bard-models` releases: `parakeet-tdt-0.6b-v3-Q6_K.gguf`
+for Fast, from `models-v3`, and `Qwen3-ASR-1.7B-Q6_K.gguf` for General, from
+`models-v2`. The first-party release rehosts the exact listed bytes with
+model-specific notices. The embedded catalog records the conversion provenance,
+model-specific licence, exact size, and SHA-256; downloads resume, hash the
+complete file, and load through `transcribe-cpp` before activation.
 
 ## Architecture
 

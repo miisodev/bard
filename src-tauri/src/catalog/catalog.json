@@ -1,5 +1,5 @@
 {
-  "catalogVersion": 3,
+  "catalogVersion": 4,
   "note": [
     "bard's curated transcription models.",
     "",
@@ -18,84 +18,38 @@
   ],
   "models": [
     {
-      "id": "whisper-small",
+      "id": "parakeet-tdt-0.6b-v3",
       "name": "Bard Fast",
-      "description": "Quick and light, in 99 languages. The right place to start.",
+      "description": "Quick and light, in 25 languages, and it tells them apart on its own. The right place to start.",
       "role": "multilingualFast",
-      "architecture": "whisper",
-      "family": "Whisper Small",
-      "parameters": "244M",
-      "languages": 99,
+      "architecture": "parakeet",
+      "family": "Parakeet TDT",
+      "parameters": "600M",
+      "languages": 25,
       "capabilities": {
         "streaming": false,
-        "translate": true,
+        "translate": false,
         "languageDetect": true
       },
-      "accuracy": 68,
-      "speed": 92,
+      "accuracy": 90,
+      "speed": 76,
       "value": 90,
       "recommended": true,
       "recommendedRank": 1,
       "file": {
-        "filename": "whisper-small-Q6_K.gguf",
-        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/whisper-small-Q6_K.gguf",
-        "sha256": "4d14215a972101fff787fc59e30b908ee511c725600317e02c9032cb8799f32d",
-        "sizeBytes": 212107328,
+        "filename": "parakeet-tdt-0.6b-v3-Q6_K.gguf",
+        "url": "https://github.com/miisodev/bard-models/releases/download/models-v3/parakeet-tdt-0.6b-v3-Q6_K.gguf",
+        "sha256": "ab1bbcbe3e1c4c2ec12ca1df1aeafd22e9043ce7262e4b5f5c5d7d76418a9ae8",
+        "sizeBytes": 610342240,
         "quant": "Q6_K"
       },
       "source": {
-        "repo": "handy-computer/whisper-small-gguf",
-        "revision": "a2073177cb69bd74b9ca9460b852d17fbfd5d68c",
-        "url": "https://huggingface.co/handy-computer/whisper-small-gguf",
-        "upstreamRepo": "openai/whisper-small",
-        "upstreamRevision": "973afd2",
-        "upstreamUrl": "https://huggingface.co/openai/whisper-small",
-        "license": {
-          "name": "Apache-2.0",
-          "url": "https://www.apache.org/licenses/LICENSE-2.0"
-        }
-      },
-      "host": {
-        "provider": "githubReleases",
-        "repository": "miisodev/bard-models",
-        "releaseTag": "models-v2",
-        "asset": "whisper-small-Q6_K.gguf",
-        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/whisper-small-Q6_K.gguf",
-        "status": "active"
-      }
-    },
-    {
-      "id": "whisper-medium",
-      "name": "Bard English",
-      "description": "The most accurate for English, technical words and punctuation included.",
-      "role": "englishQuality",
-      "architecture": "parakeet",
-      "family": "Parakeet TDT",
-      "parameters": "600M",
-      "languages": 1,
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "languageDetect": false
-      },
-      "accuracy": 96,
-      "speed": 76,
-      "value": 84,
-      "recommended": false,
-      "file": {
-        "filename": "parakeet-tdt-0.6b-v2-Q6_K.gguf",
-        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/parakeet-tdt-0.6b-v2-Q6_K.gguf",
-        "sha256": "44c7c363438e03b613cf8ced8b7e6fd1beb2b3805008136fe5e922ab3c79eea9",
-        "sizeBytes": 600408576,
-        "quant": "Q6_K"
-      },
-      "source": {
-        "repo": "handy-computer/parakeet-tdt-0.6b-v2-gguf",
-        "revision": "382796e405a9fe37145938dccbabfb25e93e4286",
-        "url": "https://huggingface.co/handy-computer/parakeet-tdt-0.6b-v2-gguf",
-        "upstreamRepo": "nvidia/parakeet-tdt-0.6b-v2",
-        "upstreamRevision": "1b149a3",
-        "upstreamUrl": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2",
+        "repo": "handy-computer/parakeet-tdt-0.6b-v3-gguf",
+        "revision": "1d191e69bad32acb0abad57b7679c1860183eeba",
+        "url": "https://huggingface.co/handy-computer/parakeet-tdt-0.6b-v3-gguf",
+        "upstreamRepo": "nvidia/parakeet-tdt-0.6b-v3",
+        "upstreamRevision": "6d590f7",
+        "upstreamUrl": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
         "license": {
           "name": "CC-BY-4.0",
           "url": "https://creativecommons.org/licenses/by/4.0/"
@@ -104,15 +58,15 @@
       "host": {
         "provider": "githubReleases",
         "repository": "miisodev/bard-models",
-        "releaseTag": "models-v2",
-        "asset": "parakeet-tdt-0.6b-v2-Q6_K.gguf",
-        "url": "https://github.com/miisodev/bard-models/releases/download/models-v2/parakeet-tdt-0.6b-v2-Q6_K.gguf",
+        "releaseTag": "models-v3",
+        "asset": "parakeet-tdt-0.6b-v3-Q6_K.gguf",
+        "url": "https://github.com/miisodev/bard-models/releases/download/models-v3/parakeet-tdt-0.6b-v3-Q6_K.gguf",
         "status": "active"
       }
     },
     {
       "id": "whisper-turbo",
-      "name": "Bard Multilingual",
+      "name": "Bard General",
       "description": "More accurate across 30 languages, and tells them apart on its own.",
       "role": "multilingualQuality",
       "architecture": "qwen3_asr",

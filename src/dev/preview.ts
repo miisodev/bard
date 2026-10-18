@@ -146,7 +146,7 @@ const state: AppState = {
   onboardingCompleted: scene !== "onboarding",
   autostartEnabled: true,
   captureDoubleShift: true,
-  modelId: "whisper-small",
+  modelId: "parakeet-tdt-0.6b-v3",
   modelReady: true,
   micReady: true,
   activeItemId: null,
@@ -183,9 +183,9 @@ const models: ModelInfo[] = (catalog.models as CatalogRow[]).map((row) => ({
   sizeMb: Math.round(row.file.sizeBytes / 1_048_576),
   sizeBytes: row.file.sizeBytes,
   quantization: row.file.quant,
-  downloaded: row.id === "whisper-small",
-  active: row.id === "whisper-small",
-  compatibility: row.id === "whisper-small" ? "compatible" : "unknown",
+  downloaded: row.id === "parakeet-tdt-0.6b-v3",
+  active: row.id === "parakeet-tdt-0.6b-v3",
+  compatibility: row.id === "parakeet-tdt-0.6b-v3" ? "compatible" : "unknown",
   catalog: true,
   hosted: true,
 }));
@@ -288,14 +288,14 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
       return models;
     case "get_model":
       return {
-        id: "whisper-small",
+        id: "parakeet-tdt-0.6b-v3",
         name: "Bard Fast",
-        sizeMb: 202,
-        sizeBytes: 212107328,
+        sizeMb: 582,
+        sizeBytes: 610342240,
         downloaded: true,
-        architecture: "whisper",
+        architecture: "parakeet",
         compatibility: "compatible",
-        localPath: "C:\\Users\\you\\AppData\\Local\\com.miisodev.bard\\models\\whisper-small-Q6_K.gguf",
+        localPath: "C:\\Users\\you\\AppData\\Local\\com.miisodev.bard\\models\\parakeet-tdt-0.6b-v3-Q6_K.gguf",
         owned: true,
       };
     case "get_detected_models":

@@ -125,6 +125,11 @@ fn open_database() -> Option<rusqlite::Connection> {
     if let Some(legacy) = legacy_roaming_dir() {
         db::rebase_legacy_paths(&connection, &legacy, &dir);
     }
+    // A catalog update can retire the model a returning user had chosen. Unset
+    // the stored choice here, before any window can read it, so the settings
+    // surface and dictation both say "no model chosen" rather than silently
+    // disagreeing with a setting neither can resolve.
+    db::clear_stale_model_selection(&connection);
     Some(connection)
 }
 
