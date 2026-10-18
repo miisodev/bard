@@ -163,6 +163,16 @@ export const api = {
   dictateStart: () => invoke<void>("dictate_start"),
   dictateStop: () => invoke<void>("dictate_stop"),
   dictateCancel: () => invoke<void>("dictate_cancel"),
+
+  // The review sheet. Every command carries the body as it stands — the edits
+  // travel with the action — and Rust owns the window, so a resolved command
+  // needs no reply beyond its promise.
+  dictationConfirm: (text: string) => invoke<void>("dictation_confirm", { text }),
+  dictationCopy: (text: string) => invoke<void>("dictation_copy", { text }),
+  dictationDismiss: (text: string) => invoke<void>("dictation_dismiss", { text }),
+  /** Off pastes when a take finishes; on opens the review sheet first. */
+  setDictationReview: (enabled: boolean) =>
+    invoke<void>("set_dictation_review", { enabled }),
 };
 
 export type { ModelProgress };

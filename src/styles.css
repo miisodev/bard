@@ -1726,11 +1726,13 @@ body {
   text-align: right;
 }
 
-/* One keycap definition for both places the panel states a gesture: the sheet
-   and onboarding. Bare `<kbd>` had no rule at all, so onboarding drew them in
-   the browser's monospace default. */
+/* One keycap definition for every place the app states a gesture — the
+   shortcut sheet, onboarding and the review foot. Bare `<kbd>` had no rule at
+   all, so onboarding drew them in the browser's monospace default. The review
+   foot overrides only the ink, since its caps sit on button grounds. */
 .shortcut-keys kbd,
-.shortcut-list kbd {
+.shortcut-list kbd,
+.overlay-sheet kbd {
   display: inline-grid;
   place-items: center;
   min-width: 22px;
@@ -2130,6 +2132,150 @@ body {
       color: var(--text-3);
     }
   }
+}
+
+/*
+  The review sheet: a finished take, opened for reading before it goes. Rust
+  resizes the window to 420×300 and re-anchors it where the pill was; the
+  sheet fills that window in the pill's own vocabulary — the same surfaces,
+  kind pair and keycaps, all sized from the tokens.
+*/
+
+.overlay-sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-panel);
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  animation: sheet-in var(--t-base) var(--ease-out);
+}
+
+.overlay-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-4) var(--sp-3) var(--sp-5);
+}
+
+/* The revision pager. Inert while a take is one page, but drawn from the
+   pages it has, so a second revision lands in a layout that already fits. */
+.overlay-pager {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.overlay-pager button {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-base);
+  line-height: 1;
+}
+
+/* The pager is inert at one revision; the ring is ready for when it is not. */
+.overlay-pager button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.overlay-pager-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.overlay-sheet-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+/* The kind being reviewed, on the card heads' own pair. */
+.overlay-sheet-kind {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-pill);
+  background: var(--kind-dictation);
+  color: var(--kind-dictation-ink);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+}
+
+.overlay-sheet-context {
+  margin: 0;
+  padding: 0 var(--sp-5) var(--sp-4);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.overlay-sheet-body {
+  flex: 1;
+  min-height: 0;
+  margin: 0 var(--sp-5);
+  padding: var(--sp-4) var(--sp-5);
+  border: none;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  resize: none;
+  outline: none;
+}
+
+.overlay-sheet-body:focus {
+  box-shadow: var(--focus-ring);
+}
+
+.overlay-sheet-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: var(--sp-3) var(--sp-5) 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--danger-text);
+}
+
+.overlay-sheet-error svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.overlay-sheet-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+}
+
+/* The caps sit on a neutral button and an accent one, so they take the quick-
+   paste badge's ink pair over the shared keycap metrics. */
+.overlay-sheet kbd {
+  background: var(--keycap-bg);
+  color: var(--keycap-ink);
 }
 
 @keyframes fade-in {
