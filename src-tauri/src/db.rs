@@ -127,6 +127,8 @@ pub struct AppState {
     pub background_color: String,
     /// The timeline's order: one of `SORT_ORDERS`.
     pub sort: String,
+    /// The screen edge the shelf is docked to: one of `geometry::Edge`'s strings.
+    pub shelf_edge: String,
 }
 
 fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -1724,6 +1726,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
             background: "theme".into(),
             background_color: String::new(),
             sort: SORT_ORDERS[0].into(),
+            shelf_edge: "bottom".into(),
         };
     }
     AppState {
@@ -1745,6 +1748,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
         background: get_setting(app, "background").unwrap_or_else(|| "theme".into()),
         background_color: get_setting(app, "background_color").unwrap_or_default(),
         sort: sort_order(app),
+        shelf_edge: crate::geometry::shelf_edge(app).as_str().into(),
     }
 }
 

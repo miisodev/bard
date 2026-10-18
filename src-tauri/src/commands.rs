@@ -1356,6 +1356,10 @@ pub fn set_shelf_edge(app: AppHandle, edge: String) -> Result<(), String> {
     // out can lay itself out for the new edge instead of waiting for the next
     // show. It is the same signal every other setting change raises.
     refresh(&app);
+    // Its own event besides the refresh, so a shelf that is already out can
+    // re-lay itself out the moment the edge changes rather than one round-trip
+    // later.
+    let _ = app.emit("shelf-edge", edge.as_str());
     Ok(())
 }
 
