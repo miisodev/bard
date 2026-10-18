@@ -30,12 +30,12 @@ Model files are not copied into the Bard installer. They are downloaded only
 after the user chooses a model, and their catalogue records the exact source,
 revision, byte size, SHA-256, and upstream licence.
 
-- **Bard Fast** — Whisper Small, `openai/whisper-small`, Apache-2.0. The
-  conversion source is `handy-computer/whisper-small-gguf`; Bard's pinned
-  bytes are hosted at `miisodev/bard-models` release `models-v2`.
-- **Bard English** — Parakeet TDT 0.6B v2, `nvidia/parakeet-tdt-0.6b-v2`,
+- **Bard Fast** — Parakeet TDT 0.6B v3, `nvidia/parakeet-tdt-0.6b-v3`,
   CC-BY-4.0. Attribution: NVIDIA Corporation and the Parakeet contributors.
-- **Bard Multilingual** — Qwen3 ASR, `Qwen/Qwen3-ASR`, Apache-2.0. The
+  The conversion source is `handy-computer/parakeet-tdt-0.6b-v3-gguf`, and
+  Bard's pinned bytes are the Q6_K quantisation hosted at
+  `miisodev/bard-models` release `models-v3`.
+- **Bard General** — Qwen3 ASR, `Qwen/Qwen3-ASR-1.7B`, Apache-2.0. The
   conversion source and exact revision are recorded in the catalogue.
 
 Model notices are displayed in **Settings → Models** before a model is used.

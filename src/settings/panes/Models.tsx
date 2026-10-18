@@ -23,8 +23,8 @@ import {
   formatBytes,
 } from "../ui";
 
-/** The catalogue is three curated first-party models; a fourth is not one. */
-const CURATED_LIMIT = 3;
+/** The catalogue is two curated first-party models; a third is not one. */
+const CURATED_LIMIT = 2;
 
 type CompatibilityState = {
   compatibility: ModelCompatibility;

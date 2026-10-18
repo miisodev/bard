@@ -59,8 +59,6 @@ impl Architecture {
 pub enum ModelRole {
     /// A compact model that still handles genuinely multilingual dictation.
     MultilingualFast,
-    /// The strongest English-focused choice in the catalog.
-    EnglishQuality,
     /// The strongest multilingual choice in the catalog.
     MultilingualQuality,
     /// Valid fallback for older catalog data that predates explicit roles.
@@ -214,11 +212,7 @@ mod tests {
 
     #[test]
     fn catalog_contract_is_complete() {
-        assert_eq!(
-            models().len(),
-            3,
-            "Bard ships exactly three curated defaults"
-        );
+        assert_eq!(models().len(), 2, "Bard ships exactly two curated defaults");
         let mut ids = HashSet::new();
         let mut roles = HashSet::new();
         let mut filenames = HashSet::new();
@@ -271,10 +265,33 @@ mod tests {
                 .as_ref()
                 .unwrap_or_else(|| panic!("{} has no first-party host", model.id));
             assert_eq!(host.repository, "miisodev/bard-models");
-            assert_eq!(host.release_tag.as_deref(), Some("models-v2"));
+            // Rows pin different releases — the v3 default and the unchanged
+            // Qwen asset live in different tags — so the tag is asserted against
+            // the row's own download URL instead of one global tag.
+            let tag = host
+                .release_tag
+                .as_deref()
+                .unwrap_or_else(|| panic!("{} has no pinned release tag", model.id));
+            assert!(
+                model.file.url.contains(&format!("/download/{tag}/")),
+                "{} does not come from its pinned release {tag}",
+                model.id
+            );
             assert_eq!(host.status, HostStatus::Active);
             assert_eq!(host.asset, model.file.filename);
             assert_eq!(host.url, model.file.url);
         }
+
+        // The two-role promise: one fast default, one quality alternative.
+        for role in [ModelRole::MultilingualFast, ModelRole::MultilingualQuality] {
+            assert!(roles.contains(&role), "the catalog lost the {role:?} role");
+        }
+        let recommended: Vec<_> = models().iter().filter(|model| model.recommended).collect();
+        assert_eq!(
+            recommended.len(),
+            1,
+            "exactly one model is the recommended default"
+        );
+        assert_eq!(recommended[0].recommended_rank, Some(1));
     }
 }
