@@ -254,15 +254,7 @@ pub struct CrashReport {
 
 #[tauri::command]
 pub fn get_crash_report() -> Result<Option<CrashReport>, String> {
-    let directory = std::env::var("LOCALAPPDATA")
-        .or_else(|_| std::env::var("APPDATA"))
-        .map(|base| {
-            std::path::Path::new(&base)
-                .join("com.miisodev.bard")
-                .join("logs")
-        })
-        .unwrap_or_else(|_| std::env::temp_dir().join("com.miisodev.bard").join("logs"));
-    crate::crash::read_latest_log(&directory)
+    crate::crash::read_latest_log(&crate::paths::logs_dir())
         .map(|latest| {
             latest.map(|log| CrashReport {
                 path: log.path.to_string_lossy().to_string(),
@@ -350,9 +342,28 @@ pub async fn get_setting_str(app: AppHandle, key: String) -> String {
 }
 
 pub fn dirs_documents() -> String {
-    std::env::var("USERPROFILE")
-        .map(|p| format!("{p}\\Documents"))
-        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string())
+    #[cfg(windows)]
+    {
+        std::env::var("USERPROFILE")
+            .map(|p| format!("{p}\\Documents"))
+            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        // `XDG_DOCUMENTS_DIR` is what the xdg-user-dirs tools export into the
+        // session; a relative value is refused for the same reason the XDG
+        // base directories refuse one.
+        let documents = std::env::var_os("XDG_DOCUMENTS_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_absolute());
+        documents
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|home| std::path::PathBuf::from(home).join("Documents"))
+            })
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_else(|| std::env::temp_dir().to_string_lossy().to_string())
+    }
 }
 
 #[tauri::command]
@@ -1543,10 +1554,10 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 pub fn open_link(url: String) -> Result<(), String> {
     // `&` and `%` are gone from the allowlist. This is not command injection —
     // `Command` does not go through a shell and the scheme is pinned — but
-    // whether Explorer splits on either character inside a single argument is a
-    // behaviour of Explorer this project should not depend on. The two real
-    // call sites pass fixed `https://miiso.dev/...` paths, so a tight allowlist
-    // costs nothing.
+    // whether the Windows opener splits on either character inside a single
+    // argument is a behaviour of Explorer this project should not depend on.
+    // The two real call sites pass fixed `https://miiso.dev/...` paths, so a
+    // tight allowlist costs nothing.
     let allowed = url.starts_with("https://miiso.dev/")
         && url.len() <= 256
         && url
@@ -1555,7 +1566,11 @@ pub fn open_link(url: String) -> Result<(), String> {
     if !allowed {
         return Err("Bard only opens pages on miiso.dev.".into());
     }
-    std::process::Command::new("explorer.exe")
+    #[cfg(windows)]
+    let opener = "explorer.exe";
+    #[cfg(not(windows))]
+    let opener = "xdg-open";
+    std::process::Command::new(opener)
         .arg(&url)
         .spawn()
         .map(|_| ())
@@ -1566,11 +1581,23 @@ pub fn open_link(url: String) -> Result<(), String> {
 /// lists under Settings › Apps › Startup; that page is where it is switched.
 #[tauri::command]
 pub fn open_startup_settings() -> Result<(), String> {
-    std::process::Command::new("explorer.exe")
-        .arg("ms-settings:startupapps")
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("Could not open Windows Settings: {error}"))
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg("ms-settings:startupapps")
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Could not open Windows Settings: {error}"))
+    }
+    #[cfg(not(windows))]
+    {
+        // Autostart on Linux is Bard's own `.desktop` entry in
+        // `~/.config/autostart`, which the Settings toggle writes directly;
+        // the desktop has no per-application startup page to open, so the
+        // Store-only button that reaches this command never appears and there
+        // is deliberately nothing to do here.
+        Ok(())
+    }
 }
 
 #[tauri::command]

@@ -1,19 +1,35 @@
 use std::process::Command;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
 use std::sync::Once;
+#[cfg(windows)]
 use std::thread;
+#[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
 const HEALTH_MS: u32 = 20000;
+#[cfg(windows)]
 const WAIT_OBJECT_0: u32 = 0;
+#[cfg(windows)]
 const CTRL_C_EVENT: u32 = 0;
+#[cfg(windows)]
 const CTRL_BREAK_EVENT: u32 = 1;
+#[cfg(windows)]
 const DETACHED_PROCESS: u32 = 0x0000_0008;
+#[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
+#[cfg(windows)]
 static CONSOLE_INTERRUPTED: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
 static CONSOLE_HANDLER_INSTALLED: Once = Once::new();
 
+// The watchdog waits on a Windows process handle and the console handler is a
+// Windows console event; Linux gets its process-watching equivalent in the
+// platform lane. Only the marker itself is cross-platform.
+#[cfg(windows)]
 #[link(name = "kernel32")]
 extern "system" {
     fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
@@ -30,11 +46,14 @@ extern "system" {
     ) -> i32;
 }
 
+/// Where the clean-exit marker lives. State, not data: `paths::state_dir`
+/// keeps Windows at `%LOCALAPPDATA%\com.miisodev.bard` and gives Linux the
+/// XDG state directory. A machine that resolves neither falls back to the
+/// temp directory, exactly as before.
 pub fn marker_path() -> std::path::PathBuf {
-    let root = std::env::var("LOCALAPPDATA")
-        .map(|p| format!("{p}\\com.miisodev.bard"))
-        .unwrap_or(std::env::temp_dir().to_string_lossy().to_string());
-    std::path::Path::new(&root).join("clean-exit")
+    crate::paths::state_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("clean-exit")
 }
 
 pub fn mark_clean_exit() {
@@ -49,20 +68,26 @@ pub fn clear_stale_marker() {
 /// wedged. The handler itself only flips an atomic; a normal watchdog thread
 /// writes the marker and exits, so the console event cannot take down the
 /// guardian or leave it believing that an ordinary quit was a crash.
+///
+/// Windows-only: Ctrl+C arrives as SIGINT on Linux and ends the process by
+/// itself, so there is no console event to translate and nothing for the
+/// watchdog thread to watch.
 pub fn install_console_handler() {
     #[cfg(windows)]
-    CONSOLE_HANDLER_INSTALLED.call_once(|| unsafe {
-        let _ = SetConsoleCtrlHandler(Some(console_ctrl_handler), 1);
-    });
+    {
+        CONSOLE_HANDLER_INSTALLED.call_once(|| unsafe {
+            let _ = SetConsoleCtrlHandler(Some(console_ctrl_handler), 1);
+        });
 
-    thread::spawn(|| {
-        while !CONSOLE_INTERRUPTED.load(Ordering::Acquire) {
-            thread::sleep(std::time::Duration::from_millis(100));
-        }
-        mark_clean_exit();
-        write_console_event();
-        std::process::exit(0);
-    });
+        thread::spawn(|| {
+            while !CONSOLE_INTERRUPTED.load(Ordering::Acquire) {
+                thread::sleep(std::time::Duration::from_millis(100));
+            }
+            mark_clean_exit();
+            write_console_event();
+            std::process::exit(0);
+        });
+    }
 }
 
 #[cfg(windows)]
@@ -75,13 +100,9 @@ unsafe extern "system" fn console_ctrl_handler(kind: u32) -> i32 {
     }
 }
 
+#[cfg(windows)]
 fn write_console_event() {
-    let Some(base) = std::env::var_os("LOCALAPPDATA") else {
-        return;
-    };
-    let directory = std::path::Path::new(&base)
-        .join("com.miisodev.bard")
-        .join("logs");
+    let directory = crate::paths::logs_dir();
     if std::fs::create_dir_all(&directory).is_err() {
         return;
     }
@@ -113,6 +134,10 @@ pub fn spawn(exe: &str) {
     let _ = command.spawn();
 }
 
+/// Watch the parent process and relaunch it when it died without writing the
+/// clean-exit marker. The watchdog waits on a Windows process handle; Linux's
+/// equivalent is the platform lane's to build.
+#[cfg(windows)]
 pub fn run() {
     let args = std::env::args().collect::<Vec<_>>();
     let Some(exe) = args.first() else {
@@ -139,10 +164,16 @@ pub fn run() {
     }
     let mut command = Command::new(exe);
     command.arg("--restarted");
-    #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     }
     let _ = command.spawn();
 }
+
+/// The guardian flag is opt-in diagnosis on every platform; with no watchdog
+/// to run here yet, the process exits rather than pretending to watch. The
+/// marker itself is cross-platform and is written and cleared by the normal
+/// startup and shutdown paths.
+#[cfg(not(windows))]
+pub fn run() {}

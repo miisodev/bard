@@ -285,11 +285,23 @@ pub fn hf_cache_dir() -> PathBuf {
     if let Some(home) = absolute_env_path("HF_HOME") {
         return home.join("hub");
     }
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
-    PathBuf::from(home)
-        .join(".cache")
-        .join("huggingface")
-        .join("hub")
+    #[cfg(windows)]
+    {
+        let home = std::env::var("USERPROFILE").unwrap_or_default();
+        PathBuf::from(home)
+            .join(".cache")
+            .join("huggingface")
+            .join("hub")
+    }
+    #[cfg(not(windows))]
+    {
+        // The same resolution `huggingface_hub` uses on Linux: the XDG cache
+        // directory when it is set, otherwise `~/.cache`.
+        let base = absolute_env_path("XDG_CACHE_HOME")
+            .or_else(|| absolute_env_path("HOME").map(|home| home.join(".cache")))
+            .unwrap_or_default();
+        base.join("huggingface").join("hub")
+    }
 }
 
 pub fn local_models_dir(app: &AppHandle) -> PathBuf {
