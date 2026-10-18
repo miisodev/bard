@@ -19,6 +19,7 @@ mod monitor;
 mod packaging;
 mod panel;
 mod paste;
+mod paths;
 mod tray;
 mod ttl;
 mod updater;
@@ -32,24 +33,6 @@ use crate::db::Db;
 
 /// Passed by the autostart registration, and by nothing else.
 const AUTOSTART_FLAG: &str = "--autostart";
-
-/// Tauri resolves the local application-data directory from the bundle
-/// identifier as `%LOCALAPPDATA%\<identifier>`. Clipboard history, transcripts,
-/// images, and models deliberately stay off roaming profiles. The database is
-/// opened before setup so every later read is safe.
-fn diagnostics_dir() -> std::path::PathBuf {
-    let base = std::env::var("LOCALAPPDATA")
-        .or_else(|_| std::env::var("APPDATA"))
-        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
-    std::path::Path::new(&base)
-        .join("com.miisodev.bard")
-        .join("logs")
-}
-
-fn local_data_dir() -> Option<std::path::PathBuf> {
-    let base = std::env::var("LOCALAPPDATA").ok()?;
-    Some(std::path::Path::new(&base).join("com.miisodev.bard"))
-}
 
 fn legacy_roaming_dir() -> Option<std::path::PathBuf> {
     let base = std::env::var("APPDATA").ok()?;
@@ -115,7 +98,7 @@ fn migrate_roaming_data(destination: &std::path::Path) -> std::io::Result<()> {
 }
 
 fn open_database() -> Option<rusqlite::Connection> {
-    let dir = local_data_dir()?;
+    let dir = paths::data_dir()?;
     // A file the migration cannot move stays where it is and keeps working
     // from there; it is never a reason to start without a database.
     if let Err(error) = migrate_roaming_data(&dir) {
@@ -155,7 +138,7 @@ fn ingest_startup_paths(app: &tauri::AppHandle, args: &[String]) -> bool {
 }
 
 fn main() {
-    crash::install(&diagnostics_dir());
+    crash::install(&paths::logs_dir());
     crash::record_event("app:start");
     guardian::install_console_handler();
     let args = std::env::args().collect::<Vec<_>>();
@@ -205,7 +188,7 @@ fn main() {
         .manage(Db(Mutex::new(open_database())))
         .setup(|app| {
             let handle = app.handle().clone();
-            let data_dir = local_data_dir()
+            let data_dir = paths::data_dir()
                 .ok_or("Bard could not resolve its local application-data directory.")?;
             std::fs::create_dir_all(&data_dir)?;
             // Already opened before the builder ran; this only covers the case

@@ -20,7 +20,6 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 arboard = "3"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
-enigo = "0.2"
 rdev = "0.5"
 cpal = "0.16"
 rubato = "0.16"
@@ -43,7 +42,6 @@ earshot = "1.2"
 # source, which needs CMake on PATH and a short build path.
 transcribe-cpp = "=0.2.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli", "stream"] }
-keyring = { version = "4.2", default-features = false, features = ["v1", "windows-native-keyring-store"] }
 sha2 = "0.10"
 zeroize = "1"
 futures-util = "0.3"
@@ -58,6 +56,22 @@ ed25519-dalek = "2.1"
 # tauri-plugin-updater 3.x.
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 uuid = { version = "1", features = ["v4"] }
+
+# The credential store is the platform's own, chosen at build time: Windows
+# Credential Manager through `windows-native-keyring-store`, the D-Bus Secret
+# Service (gnome-keyring, KWallet) through `zbus-secret-service-keyring-store`.
+# Both are the keyring v1 compatibility store, which is the API
+# `credential.rs` speaks.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "4.2", default-features = false, features = ["v1", "windows-native-keyring-store"] }
+# Windows synthesises input through its native APIs; the Linux copy uses the
+# X11 XTEST extension through x11rb. The default `xdo` backend links libxdo,
+# which the Linux packages should not carry.
+enigo = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "4.2", default-features = false, features = ["v1", "zbus-secret-service-keyring-store"] }
+enigo = { version = "0.2", default-features = false, features = ["x11rb"] }
 
 [dev-dependencies]
 minisign-verify = "0.2.5"

@@ -762,19 +762,11 @@ pub fn delete_all_data(app: &AppHandle) -> Result<(), String> {
     for file in files {
         remove_owned_image_file(app, &file);
     }
-    if let Some(root) = local_data_root() {
+    if let Some(root) = crate::paths::data_dir() {
         let _ = std::fs::remove_dir_all(root.join("images"));
     }
     let _ = std::fs::remove_dir_all(crate::hf::local_models_dir(app));
-    let _ = std::fs::remove_dir_all(
-        std::env::var("LOCALAPPDATA")
-            .map(|base| {
-                std::path::PathBuf::from(base)
-                    .join("com.miisodev.bard")
-                    .join("logs")
-            })
-            .unwrap_or_default(),
-    );
+    let _ = std::fs::remove_dir_all(crate::paths::logs_dir());
     Ok(())
 }
 
@@ -804,21 +796,14 @@ pub fn add_note_to_image(app: &AppHandle, id: i64) -> Option<String> {
 /// managed state: a window can ask for an image before setup() has run, and a
 /// read that raced it used to come back empty for good.
 pub fn images_root() -> Option<std::path::PathBuf> {
-    local_data_root().map(|root| root.join("images"))
-}
-
-fn local_data_root() -> Option<std::path::PathBuf> {
-    std::env::var("LOCALAPPDATA")
-        .ok()
-        .map(|base| std::path::PathBuf::from(base).join("com.miisodev.bard"))
+    crate::paths::data_dir().map(|root| root.join("images"))
 }
 
 pub fn remove_owned_image_file(app: &AppHandle, path: &str) {
     let _ = app;
-    let Some(root) = local_data_root() else {
+    let Some(images) = images_root() else {
         return;
     };
-    let images = root.join("images");
     if crate::hf::path_is_within(&images, std::path::Path::new(path)) {
         let _ = std::fs::remove_file(path);
     }
