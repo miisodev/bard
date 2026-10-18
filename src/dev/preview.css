@@ -32,6 +32,12 @@ html[data-preview="main"] #root {
   --preview-w: 1280px;
   --preview-h: 300px;
 }
+/* Left and right docks are tall, narrow bands — size the frame to match. */
+html[data-preview="main"] #root:has(.app[data-edge="left"]),
+html[data-preview="main"] #root:has(.app[data-edge="right"]) {
+  --preview-w: 440px;
+  --preview-h: 820px;
+}
 html[data-preview="overlay"] #root {
   --preview-w: 260px;
   --preview-h: 60px;
