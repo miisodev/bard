@@ -1,0 +1,25 @@
+BARD — LICENCE NOTICE
+
+Copyright © 2026 Kevin Miiso Novo. All rights reserved.
+
+Bard is proprietary software, not source code or an unrestricted work.
+
+Every installation begins with a 14-day trial. After the trial, using Bard
+requires a paid licence: a one-time purchase of USD 20, sold only on
+https://miiso.dev, valid for 365 days from its first activation on up to three
+computers. Nothing renews automatically; a licence is bought again when it
+ends.
+
+You may not reverse engineer, decompile, extract source code from, crack,
+bypass or redistribute the application or its licence controls, except where
+that restriction is prohibited by applicable law.
+
+The software is provided AS IS, without warranty of any kind, to the extent
+permitted by law.
+
+The full terms are at https://miiso.dev/terms and the privacy notice is at
+https://miiso.dev/privacy.
+
+[Draft — packaging placeholder. This notice summarises Bard's Licence Model
+for the Linux bundles; the owner's final EULA text replaces it before the first
+public Linux release.]

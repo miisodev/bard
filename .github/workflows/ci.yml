@@ -133,9 +133,9 @@ jobs:
         run: cargo audit --file src-tauri/Cargo.lock
 
       # Proves the Linux link end to end: compiles the crate for real, links
-      # WebKitGTK and the audio stack, and packs a .deb. `--no-sign` because
-      # the base config enables updater artifacts — a deb is a self-contained
-      # updater target, so the CLI wants an updater key — and CI holds none.
-      # Signing belongs to the release machine, not to this gate.
+      # WebKitGTK and the audio stack, and packs a .deb and an .rpm. `--no-sign`
+      # because the base config enables updater artifacts — a deb is a
+      # self-contained updater target, so the CLI wants an updater key — and CI
+      # holds none. Signing belongs to the release machine, not to this gate.
       - name: Linux bundle
-        run: bun run tauri build --bundles deb --no-sign
+        run: bun run tauri build --bundles deb,rpm --no-sign

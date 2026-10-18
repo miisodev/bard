@@ -13,7 +13,6 @@
     "core:window:allow-close",
     "core:event:allow-unlisten",
     "dialog:allow-open",
-    "updater:default",
     "allow-get-state",
     "allow-get-setting-str",
     "allow-set-theme",

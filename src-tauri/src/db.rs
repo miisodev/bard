@@ -120,7 +120,8 @@ pub struct AppState {
     pub mic_ready: bool,
     pub active_item_id: Option<i64>,
     pub license: crate::license::LicenseStatus,
-    /// "direct" for the miiso.dev download, "store" for the Microsoft Store copy.
+    /// "direct" for the miiso.dev download, "store" for the Microsoft Store
+    /// copy, "flatpak" inside a Flatpak sandbox.
     pub channel: String,
     /// "theme", "light", "dark" or "custom"; the custom colour is `background_color`.
     pub background: String,
