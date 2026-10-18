@@ -9,6 +9,17 @@ pub const POSITION_SETTING_KEY: &str = "dictation_overlay_position";
 pub const DEFAULT_POSITION: &str = "bottom-middle";
 const EDGE_MARGIN: f64 = 40.0;
 
+/// The pill's size in logical pixels. `tauri.conf.json` creates the window at
+/// this size, and `present` re-asserts it on every pill show because the review
+/// sheet is the same window at the size below.
+const PILL_WIDTH: f64 = 260.0;
+const PILL_HEIGHT: f64 = 60.0;
+
+/// The review sheet's size in logical pixels. The sheet's own stylesheet lays
+/// out to these numbers; the two move together.
+const REVIEW_WIDTH: f64 = 420.0;
+const REVIEW_HEIGHT: f64 = 300.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Vertical {
     Top,
@@ -101,6 +112,10 @@ pub fn reposition(app: &AppHandle) {
 const HIDDEN: u8 = 0;
 const ACTIVE: u8 = 1;
 const STALE: u8 = 2;
+/// The review sheet: the one mode in which the overlay is allowed to take
+/// focus, and the one in which the click guard lets every button event through
+/// to whoever it belongs to.
+const REVIEW: u8 = 3;
 
 const LISTENING: u8 = 1;
 const WORKING: u8 = 2;
@@ -220,9 +235,78 @@ pub fn hide(app: &AppHandle) {
     });
 }
 
+/// Turn the pill into the review sheet: 420 × 300 at the anchored edge, shown
+/// and focused once, with the finished take handed to its webview as
+/// `dictation-review`.
+///
+/// The click guard stands down entirely for the sheet — `MODE` goes `REVIEW`,
+/// so every button event is passed through. The sheet is a dialog now: it is
+/// meant to be clicked, its fields typed in, and a click beside it must not
+/// dismiss the take.
+pub fn show_review(app: &AppHandle, text: &str) {
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    MODE.store(REVIEW, Ordering::SeqCst);
+    PHASE.store(0, Ordering::SeqCst);
+    let text = text.to_owned();
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        // The generation covers a close that overtook this show; the state
+        // check covers a cancel that landed in the same instant. Either way
+        // the sheet must not appear over a take that no longer exists.
+        if GENERATION.load(Ordering::SeqCst) != generation || !super::is_reviewing() {
+            return;
+        }
+        let Some(win) = task_app.get_webview_window("overlay") else {
+            return;
+        };
+        review_present(&task_app, &win);
+        let _ = task_app.emit("dictation-review", serde_json::json!({ "text": text }));
+        let _ = task_app.emit("dictation-overlay", "review");
+    });
+}
+
+/// End the review: hide the sheet, give up the ability to take focus, and put
+/// the pill's own size back on the window.
+///
+/// The hide is deliberately doubled. tao's own keeps tao's model of the window
+/// true — its `show()` is a no-op while its VISIBLE flag is set, so the flag has
+/// to go back to false with the window or the next review would never appear.
+/// The pill's native hide guarantees the window actually leaves even when
+/// tao's model had not caught up with a native show (the review never reached
+/// its tao show, say a cancel in the same instant).
+pub fn close_review(app: &AppHandle) {
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    MODE.store(HIDDEN, Ordering::SeqCst);
+    PHASE.store(0, Ordering::SeqCst);
+    let task_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if let Some(win) = task_app.get_webview_window("overlay") {
+            // Both hides, and both are load-bearing. tao's keeps tao's model of
+            // the window true — its `show()` is a no-op while its VISIBLE flag
+            // is set, so the flag has to go back to false with the window. The
+            // native one guarantees the window actually leaves: if the review
+            // never got to its tao show (a cancel in the same instant), tao
+            // still believes the window is hidden from the native pill shows,
+            // and its own hide would do nothing at all.
+            let _ = win.hide();
+            native::hide(&win);
+            let _ = win.set_focusable(false);
+            let _ = win.set_size(tauri::LogicalSize::new(PILL_WIDTH, PILL_HEIGHT));
+        }
+        let _ = task_app.emit("dictation-overlay", "idle");
+    });
+}
+
 /// The × on a report, or a click elsewhere: put a finished pill away. A live
-/// take is only ever ended by cancelling it.
+/// take is only ever ended by cancelling it, and the review sheet closes only
+/// through its own Confirm, Copy or Dismiss.
 pub fn dismiss(app: &AppHandle) {
+    if MODE.load(Ordering::SeqCst) == REVIEW {
+        return;
+    }
     if MODE.load(Ordering::SeqCst) != ACTIVE {
         hide(app);
     }
@@ -255,11 +339,51 @@ fn present(app: &AppHandle, win: &tauri::WebviewWindow) {
     // Placed when it appears and left there for the whole take: a pill that
     // followed the pointer to another monitor between phases read as the
     // take itself moving away.
+    //
+    // The pill's own size is re-asserted on every show, before the anchor is
+    // computed: the review sheet is this same window at 420 × 300, and a next
+    // take must not inherit the sheet's geometry from any close path that was
+    // skipped. The anchor is then worked out for the size the window really is.
+    let _ = win.set_size(tauri::LogicalSize::new(PILL_WIDTH, PILL_HEIGHT));
     if !native::is_visible(win) {
         position(app, win);
     }
     remember_rect(win);
     native::show_without_focus(win);
+}
+
+/// The review sheet's window presentation: sized, placed, then shown and
+/// focused exactly once.
+fn review_present(app: &AppHandle, win: &tauri::WebviewWindow) {
+    // tao's focus steal can synthesise an Alt press/release — `SendInput` is
+    // literally how tao forces the foreground — and Alt is one of Bard's
+    // gesture keys: Alt × 2 opens the drawing canvas, AltGr × 2 opens Settings.
+    // A stray tap would arm that gesture and a pair would fire it. The
+    // synthetic guard makes the raw-input hook drop Alt and AltGr for the
+    // length of the steal (see the filter in `capture.rs`), and entering it
+    // also resets the gesture machine, so nothing the steal produces can be
+    // read as a shortcut. The sleep below holds the guard over the send.
+    let _synthetic = crate::capture::SyntheticInputGuard::enter();
+
+    let _ = win.set_size(tauri::LogicalSize::new(REVIEW_WIDTH, REVIEW_HEIGHT));
+    position_review(app, win);
+    remember_rect(win);
+    // Focus, exactly once per review, in this order:
+    //
+    // tao's `set_focus` is a no-op until tao's own VISIBLE flag is set, and the
+    // pill is shown with `SetWindowPos` from under tao — so only the `show()`
+    // below tells tao the window is up. Its first ever show of a window created
+    // with `focus: false` uses `SW_SHOWNOACTIVATE`; that is expected, and the
+    // `set_focus` after it runs `force_window_active`. If it fails anyway, the
+    // window is left focusable and topmost, so a click activates it: the sheet
+    // is fully mouse-operable and there is no retry loop.
+    let _ = win.set_focusable(true);
+    let _ = win.show();
+    let _ = win.set_focus();
+    // Let the hook see — and drop — the injected Alt while the guard is still
+    // up. The sleep is on the main thread on purpose: the steal just happened
+    // here, and a guard that lifts before the hook runs would drop nothing.
+    std::thread::sleep(Duration::from_millis(60));
 }
 
 fn remember_rect(win: &tauri::WebviewWindow) {
@@ -334,6 +458,10 @@ fn judge(mode: u8, holding: bool, target: Target, pressed: bool, press_was_held:
     }
     match (mode, target) {
         (HIDDEN, _) => Verdict::Pass,
+        // The review sheet is a dialog. Every click — on the sheet, on its ×,
+        // on whatever sits behind it — is the person's to make; the guard
+        // swallows nothing and dismisses nothing.
+        (REVIEW, _) => Verdict::Pass,
         (ACTIVE, Target::Close) => Verdict::HoldAndCancel,
         (ACTIVE, Target::Pill) => Verdict::HoldAndNudge,
         (ACTIVE, Target::Elsewhere) if holding => Verdict::HoldAndNudge,
@@ -530,26 +658,33 @@ mod native {
     pub fn run_mouse_hook() {}
 }
 
-fn position(app: &AppHandle, win: &tauri::WebviewWindow) {
-    let cursor_monitor = app
-        .cursor_position()
+/// The monitor the overlay belongs on: the one under the pointer when it
+/// appears, falling back to where the window already is, then the primary.
+fn monitor_for(app: &AppHandle, win: &tauri::WebviewWindow) -> Option<tauri::Monitor> {
+    app.cursor_position()
         .ok()
-        .and_then(|point| app.monitor_from_point(point.x, point.y).ok().flatten());
-    let Some(monitor) = cursor_monitor
+        .and_then(|point| app.monitor_from_point(point.x, point.y).ok().flatten())
         .or_else(|| win.current_monitor().ok().flatten())
         .or_else(|| win.primary_monitor().ok().flatten())
-    else {
+}
+
+/// The stored anchor, or the default when nothing valid is stored.
+fn current_anchor(app: &AppHandle) -> (Vertical, Horizontal) {
+    let value = crate::db::get_setting(app, POSITION_SETTING_KEY)
+        .unwrap_or_else(|| DEFAULT_POSITION.to_string());
+    parse_position(&value).unwrap_or_else(|| {
+        parse_position(DEFAULT_POSITION).expect("default overlay position is valid")
+    })
+}
+
+fn position(app: &AppHandle, win: &tauri::WebviewWindow) {
+    let Some(monitor) = monitor_for(app, win) else {
         return;
     };
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
     let outer = win.outer_size().unwrap_or_default();
     let scale = win.scale_factor().unwrap_or(1.0);
-    let value = crate::db::get_setting(app, POSITION_SETTING_KEY)
-        .unwrap_or_else(|| DEFAULT_POSITION.to_string());
-    let (vertical, horizontal) = parse_position(&value).unwrap_or_else(|| {
-        parse_position(DEFAULT_POSITION).expect("default overlay position is valid")
-    });
     let (x, y) = position_for(
         Screen {
             x: monitor_position.x,
@@ -562,7 +697,34 @@ fn position(app: &AppHandle, win: &tauri::WebviewWindow) {
             height: outer.height,
         },
         scale,
-        (vertical, horizontal),
+        current_anchor(app),
+    );
+    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+}
+
+/// Place the review sheet on the same monitor as the pill, at the same stored
+/// anchor, but measured against the monitor's work area — the sheet is 420 ×
+/// 300 and the taskbar is not a place to put half of it.
+fn position_review(app: &AppHandle, win: &tauri::WebviewWindow) {
+    let Some(monitor) = monitor_for(app, win) else {
+        return;
+    };
+    let work = monitor.work_area();
+    let outer = win.outer_size().unwrap_or_default();
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let (x, y) = sheet_position_for(
+        Screen {
+            x: work.position.x,
+            y: work.position.y,
+            width: work.size.width,
+            height: work.size.height,
+        },
+        WindowSize {
+            width: outer.width,
+            height: outer.height,
+        },
+        scale,
+        current_anchor(app),
     );
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
@@ -590,6 +752,19 @@ fn position_for(
         Vertical::Bottom => screen.y as f64 + available_height - margin_y,
     };
     (x.round() as i32, y.round() as i32)
+}
+
+/// The sheet's placement rule: the six pill anchors against the work-area
+/// rectangle, with `position_for`'s own clamp when the work area is smaller
+/// than the sheet. Named and separate so the choice of rectangle is a thing
+/// with tests, not a comment on one call site.
+fn sheet_position_for(
+    work_area: Screen,
+    window: WindowSize,
+    scale: f64,
+    anchor: (Vertical, Horizontal),
+) -> (i32, i32) {
+    position_for(work_area, window, scale, anchor)
 }
 
 #[cfg(test)]
@@ -647,6 +822,32 @@ mod tests {
     }
 
     #[test]
+    fn the_review_sheet_passes_every_click_through() {
+        use Target::*;
+        // Every target, every press, every held combination: the sheet is a
+        // dialog and the guard is not in its way. The single exception is the
+        // release of a press that was held back before the take ended — that
+        // stays held so the application never sees half a click, exactly as it
+        // does after every other ending.
+        for target in [Elsewhere, Pill, Close] {
+            for pressed in [false, true] {
+                for press_was_held in [false, true] {
+                    let expected = if !pressed && press_was_held {
+                        Verdict::Hold
+                    } else {
+                        Verdict::Pass
+                    };
+                    assert_eq!(
+                        judge(REVIEW, false, target, pressed, press_was_held),
+                        expected,
+                        "target {target:?} pressed {pressed} held {press_was_held}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_stalled_take_stops_holding_the_desktop_after_ninety_seconds() {
         // Whatever the transcription watchdog allows, this is the bound on how
         // long the user's own clicks are swallowed. A take that stalls must not
@@ -662,6 +863,10 @@ mod tests {
         // A report holds nothing.
         assert!(!holds_clicks(STALE, WORKING, 0));
         assert!(!holds_clicks(HIDDEN, LISTENING, 0));
+        // Neither does the review sheet: it is a dialog, and its buttons are
+        // the person's to click.
+        assert!(!holds_clicks(REVIEW, LISTENING, 0));
+        assert!(!holds_clicks(REVIEW, WORKING, 0));
         // And the click hold always ends sooner than the take ceiling, so a
         // wedged take never becomes a wedged desktop.
         assert!(
@@ -729,5 +934,93 @@ mod tests {
             position_for(screen, window, 1.0, (vertical, horizontal)),
             (100, 50)
         );
+    }
+
+    #[test]
+    fn places_the_review_sheet_at_every_anchor() {
+        // The pill's six anchors, with the sheet's own 420 × 300 geometry.
+        let work = Screen {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let sheet = WindowSize {
+            width: 420,
+            height: 300,
+        };
+        for (value, expected) in [
+            ("top-left", (40, 40)),
+            ("top-middle", (750, 40)),
+            ("top-right", (1460, 40)),
+            ("bottom-left", (40, 740)),
+            ("bottom-middle", (750, 740)),
+            ("bottom-right", (1460, 740)),
+        ] {
+            let anchor = parse_position(value).expect("valid position");
+            assert_eq!(
+                sheet_position_for(work, sheet, 1.0, anchor),
+                expected,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn clamps_the_review_sheet_onto_a_small_screen() {
+        // A work area smaller than the sheet itself: every anchor still
+        // resolves to an on-screen origin — the work area's own corner —
+        // rather than to a negative or an off-screen edge.
+        let work = Screen {
+            x: 100,
+            y: 50,
+            width: 380,
+            height: 260,
+        };
+        let sheet = WindowSize {
+            width: 420,
+            height: 300,
+        };
+        for value in [
+            "top-left",
+            "top-middle",
+            "top-right",
+            "bottom-left",
+            "bottom-middle",
+            "bottom-right",
+        ] {
+            let anchor = parse_position(value).expect("valid position");
+            assert_eq!(
+                sheet_position_for(work, sheet, 1.0, anchor),
+                (100, 50),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_review_sheet_uses_the_work_area_not_the_monitor() {
+        // A 40 px taskbar along the bottom: with the work area the sheet's
+        // bottom edge sits on it; with the monitor's own height the same
+        // anchor puts the sheet 40 px lower, half of it behind the taskbar.
+        let monitor = Screen {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let work = Screen {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1040,
+        };
+        let sheet = WindowSize {
+            width: 420,
+            height: 300,
+        };
+        let anchor = parse_position("bottom-left").expect("valid position");
+        assert_eq!(sheet_position_for(work, sheet, 1.0, anchor), (40, 700));
+        assert_eq!(position_for(monitor, sheet, 1.0, anchor), (40, 740));
     }
 }
