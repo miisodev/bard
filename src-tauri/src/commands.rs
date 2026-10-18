@@ -335,6 +335,9 @@ pub fn get_setting_str(app: AppHandle, key: String) -> String {
         "sound_on_capture",
         "clipboard_retention_days",
         "dictation_retention_days",
+        // The shelf's edge, so both the panel (its `data-edge` layout) and the
+        // Settings selector can read which edge it is docked to.
+        "shelf_edge",
     ];
     if !PUBLIC_SETTING_KEYS.contains(&key.as_str()) {
         return String::new();
@@ -917,12 +920,22 @@ pub fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
 pub fn paste_back(app: AppHandle) {
     crate::panel::hide_now(&app);
     std::thread::spawn(move || {
-        // hide_now queues the hide and the foreground restore on the UI
-        // thread; the chord has to land after the target window is active.
-        std::thread::sleep(std::time::Duration::from_millis(160));
+        // The shelf slides out now instead of vanishing, so the paste cannot be
+        // timed off a fixed sleep: too early and the chord lands in the shelf
+        // itself, and there is no later chance. Wait for the handshake — the
+        // window is hidden and the foreground is back by the time it is open —
+        // and paste anyway when it never comes, because not pasting is the one
+        // outcome the chord cannot have.
+        crate::panel::wait_hidden(PASTE_BACK_WAIT);
         crate::paste::send_paste(&app);
     });
 }
+
+/// How long `paste_back` waits for the shelf to finish sliding away. Longer
+/// than the hide's own wait for the frontend's ack, so a listening frontend is
+/// never cut off, and bounded, so a renderer that never answers cannot swallow
+/// the paste.
+const PASTE_BACK_WAIT: Duration = Duration::from_millis(700);
 
 #[tauri::command]
 pub fn copy_item(app: AppHandle, id: i64) -> Result<(), String> {
@@ -1236,6 +1249,42 @@ pub fn hide_panel(app: AppHandle) {
 #[tauri::command]
 pub fn toggle_panel(app: AppHandle) {
     crate::panel::toggle_now(&app);
+}
+
+/// Dock the shelf to one of the screen's four edges. A visible shelf moves the
+/// moment the edge is chosen — the edge is the thing the person is looking at —
+/// and the next show anchors to whatever was stored.
+#[tauri::command]
+pub fn set_shelf_edge(app: AppHandle, edge: String) -> Result<(), String> {
+    let Some(edge) = crate::geometry::Edge::checked(&edge) else {
+        return Err("The shelf docks to the top, right, bottom or left edge.".into());
+    };
+    db::set_setting_checked(&app, crate::geometry::EDGE_SETTING, edge.as_str())?;
+    if let Some(win) = app.get_webview_window("main") {
+        if win.is_visible().unwrap_or(false) {
+            // Window operations are a Windows-main-thread responsibility, and
+            // this is called from whichever window's Settings pane it came from.
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(win) = handle.get_webview_window("main") {
+                    crate::geometry::anchor(&handle, &win, edge);
+                }
+            });
+        }
+    }
+    // Every window re-reads what it needs on this, so a panel that is already
+    // out can lay itself out for the new edge instead of waiting for the next
+    // show. It is the same signal every other setting change raises.
+    refresh(&app);
+    Ok(())
+}
+
+/// The panel's sign that the shelf has finished sliding out. The window is not
+/// hidden and the foreground does not go back until this arrives, so the slide
+/// is never cut off by the window disappearing underneath it.
+#[tauri::command]
+pub fn shelf_hidden() {
+    crate::panel::shelf_hidden_ack();
 }
 
 #[tauri::command]

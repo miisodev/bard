@@ -8,6 +8,7 @@
     "core:window:allow-start-resize-dragging",
     "allow-get-appearance",
     "allow-set-background",
+    "allow-set-shelf-edge",
     "core:event:allow-listen",
     "core:window:allow-close",
     "core:event:allow-unlisten",

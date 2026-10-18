@@ -36,6 +36,8 @@ const COMMANDS: &[&str] = &[
     "show_panel",
     "hide_panel",
     "toggle_panel",
+    "set_shelf_edge",
+    "shelf_hidden",
     "get_models",
     "get_model",
     "set_model",
