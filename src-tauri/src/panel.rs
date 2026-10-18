@@ -344,6 +344,13 @@ fn remember_foreground() {
     LAST_HWND.store(crate::fg::current(), Ordering::SeqCst);
 }
 
+/// The window the panel was summoned over, for a feature that outlives the
+/// panel's own focus: a sketch drawn while the panel is open goes back to the
+/// app the panel came from. 0 when nothing is remembered.
+pub fn remembered_foreground() -> isize {
+    LAST_HWND.load(Ordering::SeqCst)
+}
+
 fn restore_foreground() {
     crate::fg::focus(LAST_HWND.load(Ordering::SeqCst));
 }

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 use image::GenericImageView;
 use std::time::Duration;
@@ -840,6 +841,14 @@ pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
     let Some(win) = app.get_webview_window(label) else {
         return;
     };
+    if label == "draw" {
+        // Draw's delivery target, remembered as it opens. A panel button runs
+        // this with the panel in front, so the app the panel was summoned over
+        // stands in for a foreground that is one of ours; the gesture path has
+        // already recorded the person's own app, and sees the same foreground
+        // again here.
+        remember_draw_target();
+    }
     if win.is_fullscreen().unwrap_or(false) {
         let _ = win.set_fullscreen(false);
     }
@@ -923,6 +932,9 @@ pub fn draw_gesture(app: &AppHandle) {
             license_blocked(&handle, error);
             return;
         }
+        // The person is still in their own app here: this is the window the
+        // finished sketch goes back to.
+        remember_draw_target();
         toggle_secondary_alone(&handle, "draw");
     });
 }
@@ -941,6 +953,239 @@ pub fn open_draw(app: AppHandle) {
         return;
     }
     show_secondary(&app, "draw", true);
+}
+
+/// The window a sketch is delivered to: the app Draw was opened over. The
+/// gesture runs while the person is still in their app, so the live foreground
+/// is the target; a panel button runs with the panel in front, so the window
+/// the panel was summoned over stands in. Never one of ours — a sketch must
+/// land where it was drawn for, and the clipboard is the honest fallback when
+/// knowledge of that window is gone.
+static DRAW_TARGET: AtomicIsize = AtomicIsize::new(0);
+
+/// Remember where Draw was opened over. Called as the window opens, from the
+/// gesture path and from the panel's own show path.
+fn remember_draw_target() {
+    let foreground = crate::fg::current();
+    let remembered = crate::panel::remembered_foreground();
+    DRAW_TARGET.store(
+        draw_target_choice(
+            foreground,
+            crate::fg::is_ours(foreground),
+            remembered,
+            crate::fg::is_ours(remembered),
+        ),
+        Ordering::SeqCst,
+    );
+}
+
+/// The rule, kept pure so it has tests: the live foreground when it is not
+/// ours, the panel's memory when it is, and nothing at all when both are
+/// Bard's own windows or absent.
+fn draw_target_choice(
+    foreground: isize,
+    foreground_is_ours: bool,
+    remembered: isize,
+    remembered_is_ours: bool,
+) -> isize {
+    if foreground != 0 && !foreground_is_ours {
+        return foreground;
+    }
+    if remembered != 0 && !remembered_is_ours {
+        return remembered;
+    }
+    0
+}
+
+/// What every failed hand-off says. The sketch is already on the clipboard —
+/// the window copies it before it asks — so the person is one keystroke away
+/// wherever they are.
+const DRAW_HANDOFF_FALLBACK: &str = "Saved and copied — paste it with Ctrl+V.";
+
+/// How long the hand-off waits for the remembered window to come forward. The
+/// hide and the focus are synchronous; this is the settle for the OS's own
+/// focus arbitration, bounded so the click never feels swallowed.
+const DRAW_SEND_SETTLE: Duration = Duration::from_millis(160);
+
+/// Deliver the sketch on the clipboard to the app Draw was opened over.
+///
+/// The companion is hidden and the remembered app is brought forward before
+/// the paste chord, because the chord goes wherever the focus is when it is
+/// sent. A missing or unusable target, or Bard still holding the foreground
+/// when the chord is due, ends in the person-readable fallback instead — a
+/// chord landing in the wrong window is worse than one the person makes
+/// themselves.
+#[tauri::command]
+pub fn send_drawing(app: AppHandle) -> Result<(), String> {
+    let target = DRAW_TARGET.load(Ordering::SeqCst);
+    if target == 0 || crate::fg::is_ours(target) {
+        crate::crash::record_event("draw:send-no-target");
+        return Err(DRAW_HANDOFF_FALLBACK.into());
+    }
+    if let Some(win) = app.get_webview_window("draw") {
+        crate::panel::hide_companion(&app, &win);
+    }
+    crate::fg::focus(target);
+    std::thread::sleep(DRAW_SEND_SETTLE);
+    if crate::fg::foreground_is_ours() {
+        crate::crash::record_event("draw:send-focus-stolen");
+        return Err(DRAW_HANDOFF_FALLBACK.into());
+    }
+    crate::paste::send_paste(&app);
+    crate::crash::record_event("draw:send-pasted");
+    Ok(())
+}
+
+/// Write the sketch as an SVG to wherever the person says. The suggested name
+/// is only an offer to the platform's own Save dialog, sanitised so a name
+/// from the canvas can never smuggle a path; `None` means the dialog was
+/// closed, which is not a failure.
+#[tauri::command]
+pub async fn save_svg(
+    app: AppHandle,
+    svg: String,
+    suggested_name: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Save sketch")
+        .add_filter("SVG image", &["svg"])
+        .set_file_name(svg_file_name(&suggested_name))
+        .blocking_save_file();
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|error| format!("Bard could not use that location: {error}"))?;
+    std::fs::write(&path, svg.as_bytes())
+        .map_err(|error| format!("Bard could not save the sketch: {error}"))?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
+/// A safe name for the Save dialog: the sketch's own, shorn of path
+/// separators and the characters Windows refuses in a name, with the `.svg`
+/// the filter promises. The dialog still gets the last word — this only has
+/// to be a good first offer.
+fn svg_file_name(suggested: &str) -> String {
+    let cleaned: String = suggested
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim().trim_matches('.').trim();
+    let stem: String = cleaned.chars().take(80).collect();
+    let stem = stem.trim_end_matches(|c| c == ' ' || c == '.');
+    let stem = if stem.is_empty() { "Sketch" } else { stem };
+    if stem.to_ascii_lowercase().ends_with(".svg") {
+        stem.to_string()
+    } else {
+        format!("{stem}.svg")
+    }
+}
+
+/// Open Draw with one of the panel's images as a starting point. The panel
+/// calls this from an image card's menu; Draw then fetches the pixels itself
+/// through `item_image_data`, so the image crosses the IPC once. The seed is
+/// the item id and nothing else.
+#[tauri::command]
+pub fn open_draw_with_image(app: AppHandle, item_id: i64) -> Result<(), String> {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error.clone());
+        return Err(error);
+    }
+    show_secondary(&app, "draw", false);
+    let _ = app.emit_to(
+        "draw",
+        "draw-seed",
+        serde_json::json!({ "itemId": item_id }),
+    );
+    Ok(())
+}
+
+/// The canvas's tools, the frontend's own set: Select, Pen, Line, Arrow,
+/// Rectangle, Ellipse, Text.
+const DRAW_TOOLS: &[&str] = &["select", "pen", "line", "arrow", "rect", "ellipse", "text"];
+
+/// A fresh toolbar: pen, the page's own ink and a 4px stroke — Draw's own
+/// defaults, so the first launch and a stored setting agree. The default
+/// colour is the frontend's first swatch, whose value is the dark page's ink;
+/// the canvas resolves it against whichever page is up.
+const DRAW_DEFAULT_TOOL: &str = "pen";
+const DRAW_DEFAULT_COLOR: &str = "#1d1d1f";
+const DRAW_DEFAULT_WIDTH: i64 = 4;
+
+/// Wider than any stroke the toolbar offers, so a bad caller is refused here
+/// rather than painting a wall; 1 is the thinnest pen.
+const DRAW_WIDTH_MIN: i64 = 1;
+const DRAW_WIDTH_MAX: i64 = 64;
+
+/// A stored tool, or the default when the row is missing or names a tool this
+/// build has never heard of.
+fn draw_tool_or_default(tool: Option<String>) -> String {
+    tool.filter(|tool| DRAW_TOOLS.contains(&tool.as_str()))
+        .unwrap_or_else(|| DRAW_DEFAULT_TOOL.into())
+}
+
+/// A stored stroke width, or the default when the row is missing or outside
+/// the canvas's range.
+fn draw_width_or_default(width: Option<i64>) -> i64 {
+    width
+        .filter(|width| (DRAW_WIDTH_MIN..=DRAW_WIDTH_MAX).contains(width))
+        .unwrap_or(DRAW_DEFAULT_WIDTH)
+}
+
+/// Whether a pen colour can be stored. Deliberately lenient: the canvas offers
+/// the theme's inks, its hues and a custom hex, and the value is a person's
+/// choice, not a path or an identifier — bounded and printable is enough.
+fn draw_color_ok(color: &str) -> bool {
+    !color.is_empty() && color.len() <= 32 && !color.chars().any(char::is_control)
+}
+
+/// A stored pen colour, or the default.
+fn draw_color_or_default(color: Option<String>) -> String {
+    color
+        .filter(|color| draw_color_ok(color))
+        .unwrap_or_else(|| DRAW_DEFAULT_COLOR.into())
+}
+
+/// Save the toolbar's three choices. One write for all three, so a crash
+/// cannot leave the tool from one session beside the colour from another, and
+/// validated here so only values the canvas can draw with are stored.
+#[tauri::command]
+pub fn set_draw_prefs(
+    app: AppHandle,
+    tool: String,
+    color: String,
+    width: i64,
+) -> Result<(), String> {
+    if !DRAW_TOOLS.contains(&tool.as_str()) {
+        return Err("Bard has no such drawing tool.".into());
+    }
+    if !(DRAW_WIDTH_MIN..=DRAW_WIDTH_MAX).contains(&width) {
+        return Err(format!(
+            "A drawing width is {} to {}.",
+            DRAW_WIDTH_MIN, DRAW_WIDTH_MAX
+        ));
+    }
+    if !draw_color_ok(&color) {
+        return Err("That colour cannot be saved for the pen.".into());
+    }
+    db::set_settings_checked(
+        &app,
+        &[
+            ("draw_tool", tool.as_str()),
+            ("draw_color", color.as_str()),
+            ("draw_width", &width.to_string()),
+        ],
+    )
 }
 
 #[tauri::command]
@@ -1169,6 +1414,9 @@ pub struct Appearance {
     background_color: String,
     draw_background: String,
     draw_background_color: String,
+    draw_tool: String,
+    draw_color: String,
+    draw_width: i64,
 }
 
 #[tauri::command]
@@ -1180,6 +1428,9 @@ pub async fn get_appearance(app: AppHandle) -> Appearance {
             background_color: String::new(),
             draw_background: "theme".into(),
             draw_background_color: String::new(),
+            draw_tool: DRAW_DEFAULT_TOOL.into(),
+            draw_color: DRAW_DEFAULT_COLOR.into(),
+            draw_width: DRAW_DEFAULT_WIDTH,
         };
     }
     Appearance {
@@ -1188,6 +1439,11 @@ pub async fn get_appearance(app: AppHandle) -> Appearance {
         background_color: db::get_setting(&app, "background_color").unwrap_or_default(),
         draw_background: db::get_setting(&app, "draw_background").unwrap_or_else(|| "theme".into()),
         draw_background_color: db::get_setting(&app, "draw_background_color").unwrap_or_default(),
+        draw_tool: draw_tool_or_default(db::get_setting(&app, "draw_tool")),
+        draw_color: draw_color_or_default(db::get_setting(&app, "draw_color")),
+        draw_width: draw_width_or_default(
+            db::get_setting(&app, "draw_width").and_then(|value| value.parse().ok()),
+        ),
     }
 }
 
@@ -1525,5 +1781,97 @@ mod acl_tests {
             "commands the ACL would refuse:\n{}",
             missing.join("\n")
         );
+    }
+}
+
+#[cfg(test)]
+mod draw_tests {
+    use super::*;
+
+    #[test]
+    fn the_live_foreground_is_the_delivery_target() {
+        assert_eq!(draw_target_choice(12, false, 0, false), 12);
+        // The live foreground beats the panel's older memory.
+        assert_eq!(draw_target_choice(12, false, 34, false), 12);
+    }
+
+    #[test]
+    fn a_foreground_of_ours_falls_back_to_the_panels_memory() {
+        assert_eq!(draw_target_choice(12, true, 34, false), 34);
+        // No foreground at all is the same question as one of ours.
+        assert_eq!(draw_target_choice(0, false, 34, false), 34);
+    }
+
+    #[test]
+    fn bard_itself_is_never_a_delivery_target() {
+        assert_eq!(draw_target_choice(12, true, 34, true), 0);
+        assert_eq!(draw_target_choice(0, false, 34, true), 0);
+        assert_eq!(draw_target_choice(0, false, 0, false), 0);
+    }
+
+    #[test]
+    fn a_suggested_svg_name_keeps_its_stem_and_gains_the_extension() {
+        assert_eq!(svg_file_name("Sketch"), "Sketch.svg");
+        assert_eq!(svg_file_name("sketch.svg"), "sketch.svg");
+        assert_eq!(svg_file_name("Sketch.SVG"), "Sketch.SVG");
+        assert_eq!(svg_file_name("café"), "café.svg");
+    }
+
+    #[test]
+    fn a_suggested_svg_name_can_never_carry_a_path() {
+        let name = svg_file_name("../../etc/passwd");
+        assert!(!name.contains('/') && !name.contains('\\'));
+        assert!(name.ends_with(".svg"));
+        let name = svg_file_name("a/b\\c:d*e?");
+        assert_eq!(name, "a b c d e.svg");
+    }
+
+    #[test]
+    fn an_empty_or_dotted_svg_name_falls_back_to_the_default() {
+        assert_eq!(svg_file_name(""), "Sketch.svg");
+        assert_eq!(svg_file_name("   "), "Sketch.svg");
+        assert_eq!(svg_file_name("..."), "Sketch.svg");
+        assert_eq!(svg_file_name("sketch."), "sketch.svg");
+    }
+
+    #[test]
+    fn a_long_svg_name_is_capped() {
+        let name = svg_file_name(&"x".repeat(400));
+        assert!(name.len() <= 84, "{name}");
+        assert!(name.ends_with(".svg"));
+    }
+
+    #[test]
+    fn a_stored_tool_this_build_knows_survives_a_read() {
+        assert_eq!(draw_tool_or_default(Some("rect".into())), "rect");
+        assert_eq!(draw_tool_or_default(Some("spray".into())), "pen");
+        assert_eq!(draw_tool_or_default(None), "pen");
+    }
+
+    #[test]
+    fn a_stored_width_outside_the_canvas_range_reads_as_the_default() {
+        assert_eq!(draw_width_or_default(Some(8)), 8);
+        assert_eq!(draw_width_or_default(Some(0)), 4);
+        assert_eq!(draw_width_or_default(Some(65)), 4);
+        assert_eq!(draw_width_or_default(None), 4);
+    }
+
+    #[test]
+    fn a_stored_colour_is_kept_leniently_but_bounded() {
+        assert!(draw_color_ok("#1d1d1f"));
+        assert!(draw_color_ok("red"));
+        assert!(!draw_color_ok(""));
+        assert!(!draw_color_ok(&"a".repeat(33)));
+        assert!(!draw_color_ok("two\nlines"));
+        assert_eq!(draw_color_or_default(Some("#8e5cf6".into())), "#8e5cf6");
+        assert_eq!(draw_color_or_default(Some(String::new())), "#1d1d1f");
+        assert_eq!(draw_color_or_default(None), "#1d1d1f");
+    }
+
+    #[test]
+    fn every_tool_the_frontend_draws_with_is_known_here() {
+        for tool in ["select", "pen", "line", "arrow", "rect", "ellipse", "text"] {
+            assert!(DRAW_TOOLS.contains(&tool), "{tool}");
+        }
     }
 }
