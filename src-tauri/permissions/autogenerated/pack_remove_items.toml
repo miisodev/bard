@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pack-remove-items"
+description = "Enables the pack_remove_items command without any pre-configured scope."
+commands.allow = ["pack_remove_items"]
+
+[[permission]]
+identifier = "deny-pack-remove-items"
+description = "Denies the pack_remove_items command without any pre-configured scope."
+commands.deny = ["pack_remove_items"]

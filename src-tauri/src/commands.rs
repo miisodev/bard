@@ -390,6 +390,86 @@ pub fn delete_section(app: AppHandle, id: i64) {
 }
 
 #[tauri::command]
+pub fn list_packs(app: AppHandle) -> Vec<db::PackSummary> {
+    db::list_packs(&app)
+}
+
+#[tauri::command]
+pub fn get_pack(app: AppHandle, id: i64) -> Result<db::PackDetail, String> {
+    db::get_pack(&app, id)
+}
+
+#[tauri::command]
+pub fn create_pack(
+    app: AppHandle,
+    name: String,
+    item_ids: Vec<i64>,
+) -> Result<db::PackSummary, String> {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error.clone());
+        return Err(error);
+    }
+    let pack = db::create_pack(&app, &name, &item_ids)?;
+    refresh(&app);
+    Ok(pack)
+}
+
+#[tauri::command]
+pub fn rename_pack(app: AppHandle, id: i64, name: String) -> Result<(), String> {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error.clone());
+        return Err(error);
+    }
+    db::rename_pack(&app, id, &name)?;
+    refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_pack(app: AppHandle, id: i64) -> Result<(), String> {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error.clone());
+        return Err(error);
+    }
+    db::delete_pack(&app, id)?;
+    refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn pack_add_items(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), String> {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error.clone());
+        return Err(error);
+    }
+    db::pack_add_items(&app, id, &item_ids)?;
+    refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn pack_remove_items(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), String> {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error.clone());
+        return Err(error);
+    }
+    db::pack_remove_items(&app, id, &item_ids)?;
+    refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn pack_reorder(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), String> {
+    if let Err(error) = crate::license::require(&app) {
+        license_blocked(&app, error.clone());
+        return Err(error);
+    }
+    db::pack_reorder(&app, id, &item_ids)?;
+    refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn update_item(app: AppHandle, id: i64, content: String) {
     if let Err(error) = crate::license::require(&app) {
         license_blocked(&app, error);
