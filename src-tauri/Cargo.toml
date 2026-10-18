@@ -51,7 +51,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 log = "0.4"
 anyhow = "1"
 ed25519-dalek = "2.1"
-tauri-plugin-updater = "2"
+# The updater's zip feature is compiled out. It pulls zip 4, which carries
+# RUSTSEC-2026-0367/0368/0369 (one critical) with the fix only in zip >= 9,
+# and the plugin's ^4 constraint cannot reach it. Bard's updates are bare
+# NSIS .exe artifacts, so the zip-extraction path never runs. Revisit with
+# tauri-plugin-updater 3.x.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]

@@ -64,7 +64,7 @@ jobs:
       # A prebuilt cargo-audit: rustsec/audit-check compiled it from source,
       # which cost twelve minutes of a job with a timeout. Fails on a
       # vulnerability; unmaintained/unsound warnings are reported, not fatal
-      # (8 as of 2026-09-29, all informational or outside the Windows build).
+      # (12 as of 2026-10-18, all informational or outside the Windows build).
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
