@@ -30,10 +30,17 @@ const RECEIPT_SETTING: &str = "license_receipt";
 const RECEIPT_USERNAME: &str = "license-receipt";
 const MACHINE_ID_SETTING: &str = "license_machine_id";
 const LAST_CHECK_SETTING: &str = "license_last_checked_at";
+/// The last wall-clock time this installation is known to have seen, kept in
+/// Credential Manager beside the trial pair. See `observed_now`.
+const LAST_SEEN_USERNAME: &str = "last-seen-at";
 /// How many distinct machines this key has been activated on, as far as this
 /// install has observed. Written when an activation succeeds.
 const ACTIVATION_COUNT_SETTING: &str = "license_activation_count";
 const DEFAULT_LICENSE_SERVER: &str = "https://miiso.dev/api/bard/license";
+/// What "Release this PC" answers when there is no cached activation to release.
+/// The seat exists on the service, not here, and only the portal or support can
+/// free it without the activation id a receipt carries.
+const NO_ACTIVATION_TO_RELEASE: &str = "This computer holds no saved activation to release. To free a seat held on a computer you no longer use, open Manage licence at miiso.dev/bard.";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const KEYRING_TIMEOUT: Duration = Duration::from_millis(400);
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(15 * 60);
@@ -53,12 +60,18 @@ const STATUS_TTL: Duration = Duration::from_secs(2);
 
 static STATUS_CACHE: Ttl<LicenseStatus> = Ttl::new(STATUS_TTL);
 
-/// How long a signed offline lease stays usable past the point it asked to be
-/// re-checked. Three days covers a laptop that is genuinely offline for a
-/// weekend without punishing someone whose connection is unreliable, and it
-/// replaces an unbounded month-long window in which a revoked licence could not
-/// be enforced at all.
-const OFFLINE_REVALIDATION_GRACE_SECONDS: i64 = 3 * 24 * 60 * 60;
+/// The high-water mark of wall-clock time this installation is known to have
+/// seen. Read once per process from Credential Manager, then advanced in
+/// memory; see `observed_now`.
+static LAST_SEEN: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static LAST_SEEN_READ: AtomicBool = AtomicBool::new(false);
+
+/// How far the wall clock must advance past the stored mark before the mark is
+/// written back. The mark exists to bound a clock that has moved backwards, so
+/// it needs to be current to within minutes, not seconds; one vault write per
+/// quarter of an hour keeps that promise without turning every status read into
+/// a write.
+const LAST_SEEN_WRITE_INTERVAL_SECONDS: i64 = 15 * 60;
 
 /// How many 15-minute intervals make one heartbeat — four hours.
 const REVALIDATION_HEARTBEAT_TICKS: u64 = 16;
@@ -217,7 +230,14 @@ struct Receipt {
 pub enum LicenseError {
     InvalidKey,
     CredentialStore,
-    Revoked,
+    /// The stored installation identity is present but is not the 32-hex form
+    /// the broker accepts. It is kept and reported, never replaced: a fresh ID
+    /// would bind the next activation to a second identity while the original
+    /// one still holds its seat.
+    DamagedInstallation,
+    /// The service has said this key or its activation can no longer be used,
+    /// carrying its own words. Only this signal is a revocation.
+    Revoked(String),
     Service(String),
     InvalidReceipt,
 }
@@ -229,8 +249,10 @@ impl fmt::Display for LicenseError {
             Self::CredentialStore => {
                 f.write_str("Windows Credential Manager could not store the licence key.")
             }
-            Self::Revoked => f.write_str("This Bard licence is no longer active."),
-            Self::Service(message) => f.write_str(message),
+            Self::DamagedInstallation => f.write_str(
+                "Bard cannot read this computer's installation identity. Contact support before activating again.",
+            ),
+            Self::Revoked(message) | Self::Service(message) => f.write_str(message),
             Self::InvalidReceipt => f.write_str("Bard received an invalid licence receipt."),
         }
     }
@@ -243,6 +265,11 @@ struct ServiceResponse {
     ok: bool,
     receipt: Option<String>,
     message: Option<String>,
+    /// The broker's machine-readable reason, present on every refusal it
+    /// decides itself (`{ok: false, code, message}`). It is what tells a
+    /// revocation apart from a mistyped key, and both apart from a proxy's
+    /// bare 404.
+    code: Option<String>,
 }
 
 // The three request bodies are a wire contract with the licence broker
@@ -348,6 +375,60 @@ fn now_seconds() -> i64 {
         .unwrap_or_default()
 }
 
+/// The clock reading the gate is allowed to believe: never earlier than the last
+/// time this installation is known to have seen.
+fn believable_now(mark: i64, now: i64) -> i64 {
+    mark.max(now)
+}
+
+/// The wall clock, floored by the last time this installation is known to have
+/// seen.
+///
+/// Every deadline this gate compares — the trial's end, the signed lease's
+/// `valid_until`, the receipt's own temporal bounds — is only as trustworthy as
+/// the clock it is compared against, and a clock moved backwards is the oldest
+/// way to make a 14-day trial or a 30-day offline lease run longer than either
+/// is allowed to. The mark lives in Credential Manager rather than SQLite for
+/// the same reason the trial pair does: it is the one store that survives the
+/// database, "Delete everything" and a reinstall, so a rolled-back clock cannot
+/// wash it away. It records the time and nothing about the person.
+///
+/// The mark is the higher of what is stored and the clock, and that is the only
+/// clamp: backwards it refuses to lose time, and forwards it takes the clock at
+/// its word — there is nothing better to believe, and a jump forward can only
+/// shorten a window, never extend one. It is written back at most once per
+/// interval of elapsed time.
+fn observed_now() -> i64 {
+    let now = now_seconds();
+    let seen = if LAST_SEEN_READ.swap(true, Ordering::SeqCst) {
+        LAST_SEEN.load(Ordering::Relaxed)
+    } else {
+        // One vault read per process: the mark only moves forward, so a value
+        // read at the start of a session cannot be stale in the direction that
+        // matters.
+        let stored = match read_credential_bounded(LAST_SEEN_USERNAME) {
+            CredentialRead::Value(value) => value.parse::<i64>().unwrap_or_default(),
+            CredentialRead::Absent => 0,
+            // A mark that could not be read is not written over: the same
+            // mistake as minting a machine id in front of a locked vault.
+            CredentialRead::Unavailable => {
+                crate::crash::record_event("licence:last-seen-unavailable");
+                now
+            }
+        };
+        LAST_SEEN.store(stored, Ordering::Relaxed);
+        stored
+    };
+    let floor = believable_now(seen, now);
+    if floor > seen {
+        LAST_SEEN.store(floor, Ordering::Relaxed);
+        if floor.saturating_sub(seen) >= LAST_SEEN_WRITE_INTERVAL_SECONDS {
+            let _ = write_credential_bounded(LAST_SEEN_USERNAME, floor.to_string());
+        }
+    }
+    floor
+}
+
 fn new_machine_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
@@ -365,6 +446,24 @@ fn canonical_machine_id(candidate: &str) -> Option<String> {
     is_machine_id(candidate).then(|| candidate.to_ascii_lowercase())
 }
 
+/// What a credential-stored installation id is worth.
+enum StoredMachineId {
+    /// 32 hex digits, in whatever case or padding an earlier build left them:
+    /// the same installation, sent in the broker's one spelling.
+    Usable(String),
+    /// Present, but not an installation id. Damage, not absence.
+    Damaged,
+}
+
+/// Judge a stored id without touching it. Trimming first means a stray newline
+/// an older writer left behind is padding, not damage.
+fn judge_machine_id(stored: &str) -> StoredMachineId {
+    match canonical_machine_id(stored.trim()) {
+        Some(canonical) => StoredMachineId::Usable(canonical),
+        None => StoredMachineId::Damaged,
+    }
+}
+
 /// The stable identifier this installation is bound to.
 ///
 /// The ordering here is the whole point. A credential read that did not *answer*
@@ -375,12 +474,18 @@ fn canonical_machine_id(candidate: &str) -> Option<String> {
 /// stalls are ordinary on domain-joined machines, in RDP sessions, and behind
 /// locked vaults.
 ///
-/// So an unavailable store is a hard error, and only a confirmed `NoEntry` is
-/// permission to create.
+/// A stored value that is not a well-formed ID is damage of the same kind, and
+/// it is neither replaced with a fresh identity nor silently overwritten: the
+/// next activation would bind to a second identity while the first still holds
+/// its seat. The person is told and pointed at support instead. Only a confirmed
+/// `NoEntry` is permission to create.
 fn machine_id(app: &tauri::AppHandle) -> Result<String, LicenseError> {
     match read_credential_bounded(INSTALLATION_ID_USERNAME) {
-        CredentialRead::Value(existing) if is_machine_id(&existing) => {
-            let canonical = existing.to_ascii_lowercase();
+        CredentialRead::Value(existing) => {
+            let StoredMachineId::Usable(canonical) = judge_machine_id(&existing) else {
+                crate::crash::record_event("licence:machine-id-damaged");
+                return Err(LicenseError::DamagedInstallation);
+            };
             if canonical != existing {
                 // The broker has never accepted another spelling, so no receipt
                 // can be bound to it and rewriting loses nothing.
@@ -392,10 +497,7 @@ fn machine_id(app: &tauri::AppHandle) -> Result<String, LicenseError> {
             crate::crash::record_event("licence:machine-id-unavailable");
             return Err(LicenseError::CredentialStore);
         }
-        // A stored value that is not a well-formed ID is corrupt rather than
-        // absent, and replacing it would be the same mistake as a timeout. The
-        // legacy migration below is the one path allowed to write here.
-        CredentialRead::Value(_) | CredentialRead::Absent => {}
+        CredentialRead::Absent => {}
     }
 
     // Migrate the old opaque value once so existing paid activations remain
@@ -551,6 +653,32 @@ pub fn start_trial(app: &tauri::AppHandle) -> Result<LicenseStatus, LicenseError
     Ok(status(app))
 }
 
+/// The bounds inside the receipt's own signature, re-checked so a lease older
+/// than the longest one the broker issues — or whose own timestamps disagree —
+/// cannot be believed even though the signature is real.
+fn temporal_bounds_valid(receipt: &Receipt, now: i64) -> bool {
+    receipt.issued_at <= now + 300
+        && receipt.issued_at >= now.saturating_sub(30 * 24 * 60 * 60 + 300)
+        && receipt.valid_until >= receipt.issued_at
+        && receipt.valid_until <= receipt.issued_at.saturating_add(30 * 24 * 60 * 60)
+        && receipt.next_check_at >= receipt.issued_at
+        && receipt.next_check_at <= receipt.issued_at.saturating_add(24 * 60 * 60 + 300)
+        && receipt.license_expires_at >= receipt.issued_at
+        && receipt.valid_until <= receipt.license_expires_at
+}
+
+/// Whether this signed lease still entitles the machine holding it: the bounds
+/// inside the signature, the entitlement, the machine binding, and the two ends
+/// of the window — the offline lease's own `valid_until` and the paid term's
+/// `license_expires_at`.
+fn lease_entitles(receipt: &Receipt, now: i64, machine_matches: bool) -> bool {
+    temporal_bounds_valid(receipt, now)
+        && receipt.entitlement == "active"
+        && receipt.valid_until > now
+        && receipt.license_expires_at > now
+        && machine_matches
+}
+
 fn status_from_receipt(
     app: &tauri::AppHandle,
     receipt: &Receipt,
@@ -559,36 +687,30 @@ fn status_from_receipt(
 ) -> LicenseStatus {
     let (trial_started_at, trial_expires_at) =
         existing_trial_window(app).unwrap_or_else(|| (now_seconds(), now_seconds()));
-    let now = now_seconds();
-    let temporal_bounds_valid = receipt.issued_at <= now + 300
-        && receipt.issued_at >= now.saturating_sub(30 * 24 * 60 * 60 + 300)
-        && receipt.valid_until >= receipt.issued_at
-        && receipt.valid_until <= receipt.issued_at.saturating_add(30 * 24 * 60 * 60)
-        && receipt.next_check_at >= receipt.issued_at
-        && receipt.next_check_at <= receipt.issued_at.saturating_add(24 * 60 * 60 + 300)
-        && receipt.license_expires_at >= receipt.issued_at
-        && receipt.valid_until <= receipt.license_expires_at;
-    let machine_matches = machine_id(app)
-        .map(|machine| receipt.machine_id == machine)
+    let now = observed_now();
+    // Offline use is bounded by the lease's own signed `valid_until`, at most
+    // 30 days from issue: the window the licence card and the terms promise.
+    // The receipt still asks to be re-checked within about a day, and the
+    // revalidation loop does that whenever a connection exists, but a laptop
+    // that is genuinely offline keeps the whole lease it was signed. A shorter
+    // grace made a promise the client did not keep, and a longer window is not
+    // one the broker ever signs.
+    let machine = machine_id(app);
+    let machine_matches = machine
+        .as_ref()
+        .map(|machine| receipt.machine_id == *machine)
         .unwrap_or(false);
-    // The receipt asks the client to re-check within 24 hours. Previously nothing
-    // enforced that, so a licence revoked or ended on the server stayed usable
-    // for the whole 30-day lease as long as the machine stayed offline — bounded,
-    // but a month rather than days. A short grace keeps genuine offline use
-    // (a laptop on a train, a weekend away) working while making the offline
-    // window days instead of a month.
-    let revalidation_current =
-        receipt.next_check_at > now.saturating_sub(OFFLINE_REVALIDATION_GRACE_SECONDS);
-    let valid = temporal_bounds_valid
-        && receipt.entitlement == "active"
-        && receipt.valid_until > now
-        && receipt.license_expires_at > now
-        && machine_matches
-        && revalidation_current;
+    let valid = lease_entitles(receipt, now, machine_matches);
     let default_message = match receipt.entitlement.as_str() {
         "suspended" => Some("This Bard licence is temporarily suspended.".into()),
         "ended" => {
             Some("This Bard licence has ended. Buy another licence to keep creating.".into())
+        }
+        // A receipt that cannot be matched because the stored identity is
+        // damaged has a different answer from one that has simply expired, and
+        // it is the one the person can act on.
+        _ if matches!(machine, Err(LicenseError::DamagedInstallation)) => {
+            Some(LicenseError::DamagedInstallation.to_string())
         }
         _ => Some("The Bard licence has expired or is not valid on this computer.".into()),
     };
@@ -608,17 +730,18 @@ fn status_from_receipt(
         } else {
             default_message
         },
-        // How many of the three seats are in use. The signed receipt identifies
-        // this activation but not the count, so the local record of activations
-        // is the honest source: it is what this machine has seen, and the UI
-        // presents it as "activations of 3 used" rather than as a live figure.
+        // What this machine has observed of its own activations. The signed
+        // receipt identifies this activation but carries no count, and the
+        // broker does not send one, so this number is not the buyer's live
+        // figure and is not rendered as one: the card states the limit only,
+        // and the Polar portal is where the real list lives.
         activation_count: crate::db::get_setting(app, ACTIVATION_COUNT_SETTING)
             .and_then(|value| value.parse::<i64>().ok()),
         activation_limit: Some(ACTIVATION_LIMIT),
-        // Only meaningful while the lease is running on an offline signature.
-        // `valid_until` is the end of that window, so the remaining days are the
-        // difference between it and now.
-        offline_lease_days_left: (receipt.valid_until > now).then(|| {
+        // Only while the licence is usable. Beside "Activation required", a
+        // countdown to the end of a lease reads as a promise the card is not
+        // keeping.
+        offline_lease_days_left: (valid && receipt.valid_until > now).then(|| {
             receipt
                 .valid_until
                 .saturating_sub(now)
@@ -646,6 +769,14 @@ pub fn require(app: &tauri::AppHandle) -> Result<(), String> {
 /// behind "Delete all data". Nothing else may write the cache directly.
 fn invalidate_status() {
     STATUS_CACHE.invalidate();
+}
+
+/// The current status with a one-off note, for an action that completed without
+/// changing anything but owes the person an explanation.
+fn status_with_message(app: &tauri::AppHandle, message: &str) -> LicenseStatus {
+    let mut current = status(app);
+    current.message = Some(message.to_owned());
+    current
 }
 
 pub fn status(app: &tauri::AppHandle) -> LicenseStatus {
@@ -728,7 +859,7 @@ fn compute_status(app: &tauri::AppHandle) -> LicenseStatus {
         }
         .with_terms(app);
     };
-    let now = now_seconds();
+    let now = observed_now();
     if now < expires {
         return LicenseStatus {
             state: "trial".into(),
@@ -781,20 +912,23 @@ fn service_url(path: &str) -> String {
     )
 }
 
-fn service_message(status: StatusCode, body: &str) -> String {
-    let parsed = serde_json::from_str::<ServiceResponse>(body).ok();
-    let message = parsed
-        .and_then(|response| response.message)
-        .unwrap_or_else(|| match status {
-            StatusCode::UNAUTHORIZED => "The licence key was not accepted.".into(),
-            StatusCode::TOO_MANY_REQUESTS => {
-                "The licence service is busy. Try again shortly.".into()
-            }
-            StatusCode::PAYMENT_REQUIRED => {
-                "The licence service could not confirm this subscription.".into()
-            }
-            _ => "The licence service could not complete the request.".into(),
-        });
+/// The service's sentence when its body carries none, chosen by status.
+fn default_service_message(status: StatusCode) -> String {
+    match status {
+        StatusCode::UNAUTHORIZED => "That licence key was not accepted.".into(),
+        StatusCode::NOT_FOUND => "That licence key was not found.".into(),
+        StatusCode::TOO_MANY_REQUESTS => "The licence service is busy. Try again shortly.".into(),
+        StatusCode::PAYMENT_REQUIRED => {
+            "The licence service could not confirm this licence.".into()
+        }
+        _ => "The licence service could not complete the request.".into(),
+    }
+}
+
+/// A service message as it may be rendered: bounded and free of control
+/// characters, so nothing the broker or a proxy sends back can rewrite the
+/// window it is shown in.
+fn sanitise_message(message: &str) -> String {
     let mut output = String::new();
     for character in message.chars().take(240) {
         if character.is_control() {
@@ -803,10 +937,44 @@ fn service_message(status: StatusCode, body: &str) -> String {
             output.push(character);
         }
     }
-    if output.is_empty() {
-        "The licence service could not complete the request.".into()
-    } else {
-        output
+    output
+}
+
+/// The reason a request was refused, in the service's own words where it has
+/// them.
+///
+/// The broker answers every refusal it decides with `{ok: false, code, message}`
+/// and the client used to throw the body away for 401/403/404, so a mistyped
+/// key, a fourth computer and a refunded key all read "This Bard licence is no
+/// longer active." The code answers the second question too: whether the cached
+/// receipt is dead. Only an explicit revocation is; a bare 404 from a proxy or a
+/// stale route has no code and is a failure to complete the request.
+fn service_error(status: StatusCode, body: &str) -> LicenseError {
+    let fallback = default_service_message(status);
+    let (code, raw) = match serde_json::from_str::<ServiceResponse>(body) {
+        Ok(response) => (
+            response.code.unwrap_or_default(),
+            response.message.unwrap_or(fallback),
+        ),
+        Err(_) => (String::new(), fallback),
+    };
+    let mut message = sanitise_message(&raw);
+    if message.trim().is_empty() {
+        message = default_service_message(status);
+    }
+    match code.as_str() {
+        "LICENSE_INACTIVE" | "KEY_NOT_FOUND" => LicenseError::Revoked(message),
+        // Polar refuses a fourth activation the same way it refuses an
+        // activation on a key it will not honour, so the broker's sentence
+        // cannot say which happened. The seat limit is the one a person can do
+        // something about, and the place to do it is the portal.
+        "ACTIVATION_REJECTED" => {
+            message.push_str(
+                " Free a seat from Manage licence on miiso.dev if three computers are already active.",
+            );
+            LicenseError::Service(message)
+        }
+        _ => LicenseError::Service(message),
     }
 }
 
@@ -836,13 +1004,7 @@ async fn post_service(
         LicenseError::Service("The licence service returned an unreadable response.".into())
     })?;
     if !status.is_success() {
-        if matches!(
-            status,
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
-        ) {
-            return Err(LicenseError::Revoked);
-        }
-        return Err(LicenseError::Service(service_message(status, &text)));
+        return Err(service_error(status, &text));
     }
     let response: ServiceResponse = serde_json::from_str(&text).map_err(|_| {
         LicenseError::Service("The licence service returned an invalid response.".into())
@@ -883,11 +1045,10 @@ fn store_response_receipt(
         }
     }
     write_credential_bounded(RECEIPT_USERNAME, encoded.clone())?;
-    // Record that this machine now holds an activation, so the licence surface
-    // can say how many of the three seats are in use. The count is what this
-    // install has observed across successful activations on this machine; it is
-    // not a live figure from the broker, and the UI presents it as "activations
-    // used" rather than as an authoritative total.
+    // Record that this machine now holds an activation. The count is what this
+    // install has observed of its own activations, not the buyer's live figure:
+    // the signed receipt carries none and the broker sends none, so the card
+    // states the limit rather than a number that would be wrong on a second PC.
     let observed = crate::db::get_setting(app, ACTIVATION_COUNT_SETTING)
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0)
@@ -1001,11 +1162,15 @@ pub async fn refresh(app: &tauri::AppHandle) -> LicenseStatus {
                 Err(_) => status(app),
             }
         }
-        Err(LicenseError::Revoked) => {
+        Err(LicenseError::Revoked(message)) => {
             note_revalidation_outcome(true);
             let _ = delete_credential_bounded(RECEIPT_USERNAME);
             let _ = crate::db::set_setting_checked(app, RECEIPT_SETTING, "");
-            status(app)
+            // Keep the service's own words. "Not found" and "not active" are
+            // different problems, and the old generic sentence said neither.
+            let mut revoked = status(app);
+            revoked.message = Some(message);
+            revoked
         }
         Err(_) => {
             note_revalidation_outcome(false);
@@ -1030,9 +1195,7 @@ pub fn spawn_revalidation(app: tauri::AppHandle) {
         let mut ticks: u64 = 0;
         // The first pass runs before the first sleep, not 15 minutes in. A
         // licence that is already past its recheck point would otherwise be
-        // unenforced for a quarter of an hour after launch, and the new
-        // three-day grace is measured from `next_check_at`, so that window is
-        // time the user cannot use.
+        // unenforced for a quarter of an hour after launch.
         loop {
             ticks += 1;
             // Every four hours, and only while a licence is actually in play.
@@ -1048,8 +1211,11 @@ pub fn spawn_revalidation(app: tauri::AppHandle) {
                 if !current.key_configured {
                     return;
                 }
+                // `observed_now` is also where the last-seen mark advances, so
+                // this loop writes it about every quarter of an hour on a
+                // running install.
                 let due = cached_receipt(&app)
-                    .map(|receipt| receipt.next_check_at <= now_seconds())
+                    .map(|receipt| receipt.next_check_at <= observed_now())
                     .unwrap_or(false);
                 if due {
                     let _ = tauri::async_runtime::block_on(refresh(&app));
@@ -1070,20 +1236,20 @@ pub async fn deactivate(app: &tauri::AppHandle) -> Result<LicenseStatus, License
         return Ok(status(app));
     };
     // A machine with no cached receipt is the *normal* state of a restricted or
-    // lapsed install, and it is precisely the machine a person needs to free a
-    // seat from. Returning an error there made the only control that could help
-    // them unavailable in the only situation they would use it, and the UI had to
-    // paper over it by clearing local credentials and reporting success while the
-    // seat stayed taken.
+    // lapsed install. It cannot release a seat: the broker's deactivate needs the
+    // activation id that only a receipt carries — `validateInput` rejects an
+    // empty one as invalid and the call would be answered 400 — and Polar's own
+    // deactivate is by activation id too. Asking anyway burned a request to be
+    // told nothing, and the UI papered over it by clearing the local key and
+    // blaming the network while the seat stayed taken.
     //
-    // So the request goes out with no activation id, and the service is asked to
-    // release whatever this key holds for this machine. If the key is not signed
-    // in here, that is a no-op and the honest answer is still "this machine holds
-    // no seat".
-    let activation_id = cached_receipt(app).map(|receipt| receipt.activation_id);
-    if activation_id.is_none() {
+    // So this answers with what is true and where the seat can actually be
+    // freed, and touches neither the key nor any local state: the key is the
+    // credential the portal and support identify the purchase by.
+    let Some(activation_id) = cached_receipt(app).map(|receipt| receipt.activation_id) else {
         crate::crash::record_event("licence:deactivate-without-receipt");
-    }
+        return Ok(status_with_message(app, NO_ACTIVATION_TO_RELEASE));
+    };
     let machine = match machine_id(app) {
         Ok(machine) => machine,
         Err(error) => {
@@ -1094,7 +1260,7 @@ pub async fn deactivate(app: &tauri::AppHandle) -> Result<LicenseStatus, License
     let request = DeactivateRequest {
         key: &key,
         machine_id: &machine,
-        activation_id: activation_id.as_deref().unwrap_or(""),
+        activation_id: &activation_id,
         app_version: env!("CARGO_PKG_VERSION"),
     };
     let payload = match serde_json::to_value(request) {
@@ -1126,19 +1292,26 @@ pub async fn deactivate(app: &tauri::AppHandle) -> Result<LicenseStatus, License
     Ok(status(app))
 }
 
+/// The credentials "Delete everything" removes: the key the person supplied and
+/// the signed receipt bound to it. Everything else in the vault is Bard's own
+/// bookkeeping — the installation identity, the trial pair, the last-seen mark —
+/// and none of it is the person's data.
+///
+/// The old list took all five. That turned one button into an unlimited trial
+/// reset and, worse, a burned paid seat: the next activation minted a new
+/// identity while the old activation stayed held. Keeping them is also what the
+/// trial pair and the machine-id comments already promise, and what the Data
+/// pane now says.
+fn erased_credentials() -> [&'static str; 2] {
+    [LICENSE_USERNAME, RECEIPT_USERNAME]
+}
+
 pub fn erase_local(app: &tauri::AppHandle) -> Result<(), LicenseError> {
     // Every entry is attempted even if one fails, and the first failure is
-    // reported at the end. Bailing on the first error left a half-erased set,
-    // which for the trial pair means a secret with no MAC — the state the app
-    // reports as "could not verify its trial state", with no in-product way out.
+    // reported at the end: a half-erased set leaves a key without its receipt or
+    // the reverse, and the app cannot tell the person which half went.
     let mut first_error = None;
-    for entry in [
-        LICENSE_USERNAME,
-        RECEIPT_USERNAME,
-        INSTALLATION_ID_USERNAME,
-        TRIAL_SECRET_USERNAME,
-        TRIAL_STATE_USERNAME,
-    ] {
+    for entry in erased_credentials() {
         if let Err(error) = delete_credential_bounded(entry) {
             first_error.get_or_insert(error);
         }
@@ -1242,6 +1415,163 @@ mod tests {
         assert_eq!(canonical_machine_id(&fresh), Some(fresh.clone()));
         assert_eq!(canonical_machine_id("not-an-id"), None);
         assert_eq!(canonical_machine_id(&upper[..31]), None);
+    }
+
+    /// A stored value that is not a well-formed ID is damage, and it is neither
+    /// replaced with a fresh identity (which would burn a seat) nor silently
+    /// overwritten. Padding around a real ID is not damage.
+    #[test]
+    fn a_damaged_stored_id_is_reported_not_replaced() {
+        let upper = "DB7D4813DB8C4D9DA34A9BC4329A32D9";
+        assert!(matches!(
+            judge_machine_id(&format!("\n{upper} ")),
+            StoredMachineId::Usable(id) if id == "db7d4813db8c4d9da34a9bc4329a32d9"
+        ));
+        assert!(matches!(
+            judge_machine_id("not-an-id"),
+            StoredMachineId::Damaged
+        ));
+        assert!(matches!(
+            judge_machine_id(&upper[..31]),
+            StoredMachineId::Damaged
+        ));
+        assert!(matches!(judge_machine_id(""), StoredMachineId::Damaged));
+        assert_eq!(
+            LicenseError::DamagedInstallation.to_string(),
+            "Bard cannot read this computer's installation identity. Contact support before activating again."
+        );
+    }
+
+    /// "Delete everything" removes the key and the lease and keeps Bard's own
+    /// bookkeeping: the installation identity, the trial pair and the last-seen
+    /// mark. Keeping them is what stops the button from granting another 14 days
+    /// and from burning a paid seat.
+    #[test]
+    fn delete_everything_keeps_the_licence_machinery() {
+        assert_eq!(erased_credentials(), [LICENSE_USERNAME, RECEIPT_USERNAME]);
+        for kept in [
+            INSTALLATION_ID_USERNAME,
+            TRIAL_SECRET_USERNAME,
+            TRIAL_STATE_USERNAME,
+            LAST_SEEN_USERNAME,
+        ] {
+            assert!(!erased_credentials().contains(&kept));
+        }
+    }
+
+    /// The lease's own signed `valid_until` is the offline promise — up to 30
+    /// days — and the re-check the broker asks for does not shorten it to days.
+    #[test]
+    fn a_signed_lease_is_kept_for_its_whole_window() {
+        let issued = 1_760_000_000;
+        let day = 24 * 60 * 60;
+        let receipt = Receipt {
+            v: 1,
+            lease_version: 1,
+            product: "bard".into(),
+            key_id: "2026-01".into(),
+            key_fingerprint: "0".repeat(64),
+            machine_id: "m".into(),
+            activation_id: "a".into(),
+            entitlement: "active".into(),
+            lease_sequence: 1,
+            issued_at: issued,
+            license_expires_at: issued + 365 * day,
+            valid_until: issued + 30 * day,
+            next_check_at: issued + 20 * 60 * 60,
+        };
+        assert!(lease_entitles(&receipt, issued + 29 * day, true));
+        assert!(!lease_entitles(&receipt, receipt.valid_until, true));
+        // The machine binding and the paid term still decide on their own.
+        assert!(!lease_entitles(&receipt, issued + day, false));
+        assert!(!lease_entitles(
+            &Receipt {
+                license_expires_at: issued + 10 * day,
+                valid_until: issued + 10 * day,
+                ..receipt.clone()
+            },
+            issued + 11 * day,
+            true
+        ));
+    }
+
+    /// The clock the gate believes never runs before the last time this
+    /// installation was seen. A rollback therefore buys nothing, and a jump
+    /// forward raises the mark, so the time it claimed cannot be recovered by
+    /// moving the clock back afterwards.
+    #[test]
+    fn a_backwards_clock_cannot_buy_time_back() {
+        let seen = 1_760_000_000;
+        let day = 24 * 60 * 60;
+        assert_eq!(believable_now(0, seen), seen);
+        assert_eq!(believable_now(seen, seen - 30 * day), seen);
+        let jumped = seen + 400 * day;
+        let after_jump = believable_now(seen, jumped);
+        assert_eq!(after_jump, jumped);
+        assert_eq!(believable_now(after_jump, seen + day), jumped);
+    }
+
+    /// A refusal keeps the broker's own sentence, and its code decides whether
+    /// the cached receipt is dead. A bare 404 from a proxy is not a revocation,
+    /// and the three-computer case carries the way to free a seat.
+    #[test]
+    fn broker_refusals_keep_their_own_words() {
+        let not_found = service_error(
+            StatusCode::NOT_FOUND,
+            r#"{"ok":false,"code":"KEY_NOT_FOUND","message":"That licence key was not found."}"#,
+        );
+        assert!(matches!(
+            not_found,
+            LicenseError::Revoked(ref message) if message == "That licence key was not found."
+        ));
+
+        let inactive = service_error(
+            StatusCode::FORBIDDEN,
+            r#"{"ok":false,"code":"LICENSE_INACTIVE","message":"That Bard licence is not active."}"#,
+        );
+        assert!(matches!(inactive, LicenseError::Revoked(_)));
+
+        let mistyped = service_error(
+            StatusCode::BAD_REQUEST,
+            r#"{"ok":false,"code":"INVALID_KEY","message":"Enter a valid Bard licence key."}"#,
+        );
+        assert!(matches!(
+            mistyped,
+            LicenseError::Service(ref message) if message == "Enter a valid Bard licence key."
+        ));
+
+        let seat_limit = service_error(
+            StatusCode::FORBIDDEN,
+            r#"{"ok":false,"code":"ACTIVATION_REJECTED","message":"That licence cannot be activated on this computer."}"#,
+        );
+        match seat_limit {
+            LicenseError::Service(message) => {
+                assert!(message.starts_with("That licence cannot be activated on this computer."));
+                assert!(message.contains("Manage licence on miiso.dev"));
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+
+        // No body, no code: a routing failure, never a licence that ended.
+        let bare = service_error(StatusCode::NOT_FOUND, "<html>Not Found</html>");
+        assert!(matches!(
+            bare,
+            LicenseError::Service(ref message) if message == "That licence key was not found."
+        ));
+
+        // The service's message is bounded and stripped of control characters
+        // before it can reach the window.
+        let hostile = service_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!(
+                r#"{{"ok":false,"code":"INTERNAL_ERROR","message":"{}"}}"#,
+                "x".repeat(300)
+            ),
+        );
+        assert!(matches!(
+            hostile,
+            LicenseError::Service(ref message) if message.len() <= 240
+        ));
     }
 
     #[test]

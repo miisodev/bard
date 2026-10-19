@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, Eye, EyeOff, LoaderCircle } from "lucide-react";
+import { ExternalLink, Eye, EyeOff, LoaderCircle, X } from "lucide-react";
 import { api } from "../store";
 import { InlineConfirm } from "../settings/ui";
 import type { LicenseStatus } from "../types";
@@ -7,6 +7,8 @@ import type { LicenseStatus } from "../types";
 const PURCHASE_URL = "https://miiso.dev/bard";
 /** What a licence buys: one payment, this many computers, no account. */
 const ACTIVATION_LIMIT = 3;
+/** How close to the end the calm expiry note appears. */
+const EXPIRY_WARNING_DAYS = 7;
 
 function dateLabel(seconds: number | null): string {
   if (!seconds) return "";
@@ -29,15 +31,17 @@ function daysLeft(seconds: number | null): number {
  */
 function terms(status: LicenseStatus): string[] {
   const lines: string[] = [];
-  if (typeof status.activationCount === "number") {
-    const limit = status.activationLimit ?? ACTIVATION_LIMIT;
-    const used = Math.min(status.activationCount, limit);
-    lines.push(`Active on ${used} of ${limit} PCs`);
+  // The count the backend records is what *this* PC has observed of its own
+  // activations, not the buyer's live figure — the signed lease carries no
+  // count and the broker sends none — so it is deliberately not rendered as
+  // one. The limit is a promise; the Polar portal is where the real list is.
+  const limit = status.activationLimit ?? ACTIVATION_LIMIT;
+  if (typeof status.activationLimit === "number") {
+    lines.push(`Activates on up to ${limit} ${limit === 1 ? "computer" : "computers"}`);
   }
   if (typeof status.offlineLeaseDaysLeft === "number") {
     // The lease renews on every daily check, so this only counts down while the
-    // PC is offline. "30 days left" beside "Licensed" read as the licence
-    // ending in a month; say what the number is.
+    // PC is offline, and the backend sends it only while the licence is usable.
     const days = Math.max(0, Math.round(status.offlineLeaseDaysLeft));
     lines.push(`Works offline for ${days} ${days === 1 ? "day" : "days"}`);
   }
@@ -58,6 +62,7 @@ export default function LicenseCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmRelease, setConfirmRelease] = useState(false);
+  const [warningDismissed, setWarningDismissed] = useState(false);
 
   const activate = async () => {
     if (!key.trim() || busy) return;
@@ -104,13 +109,13 @@ export default function LicenseCard({
   /**
    * Freeing this computer's activation.
    *
-   * A lapsed or restricted licence used to have no way out at all: only
-   * Activate and Buy, so a user who wanted to move the licence to another
-   * machine could not. `deactivate_license` is the real release — it tells the
-   * service and frees the slot. It fails when there is no cached receipt to
-   * release, which is exactly the state a restricted machine is in, and
-   * `clear_license` is the local half. When only the local half succeeds, that
-   * is said plainly rather than reported as a freed slot.
+   * The backend decides what happened and says so: with no cached receipt there
+   * is no activation id the service can release, and it answers with that and
+   * the route to the portal instead of an error. When the call itself fails,
+   * its own sentence is shown — it knows whether the service could not be
+   * reached or refused the release — and the local key stays where it is either
+   * way, because it is the credential the portal and support identify the
+   * purchase by.
    */
   const release = async () => {
     if (busy) return;
@@ -120,14 +125,7 @@ export default function LicenseCard({
     try {
       onStatus?.(await api.deactivateLicense());
     } catch (reason) {
-      try {
-        onStatus?.(await api.clearLicense());
-        setError(
-          "The key was removed from this computer. Bard could not reach the licence service, so the activation itself is unchanged.",
-        );
-      } catch {
-        setError(reason instanceof Error ? reason.message : String(reason));
-      }
+      setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(false);
     }
@@ -142,6 +140,16 @@ export default function LicenseCard({
   // licence is in, so releasing it has to be offered wherever there is one.
   const releasable = status.keyConfigured;
   const termLines = terms(status);
+  // A licence or a trial that is ending is a date, not an event: one calm strip
+  // inside the card, which can be put away, rather than a toast or an alert.
+  const endingDaysLeft =
+    active && status.expiresAt
+      ? daysLeft(status.expiresAt)
+      : trial && status.trialExpiresAt
+        ? daysLeft(status.trialExpiresAt)
+        : null;
+  const expiryWarning =
+    !warningDismissed && endingDaysLeft !== null && endingDaysLeft <= EXPIRY_WARNING_DAYS;
 
   return (
     <section className={`license-card${compact ? " compact" : ""}`} aria-labelledby="bard-license-title">
@@ -187,6 +195,24 @@ export default function LicenseCard({
             </span>
           ))}
         </p>
+      ) : null}
+
+      {expiryWarning ? (
+        <div className="license-banner" role="status">
+          <span>
+            {active
+              ? `Your licence ends in ${endingDaysLeft} ${endingDaysLeft === 1 ? "day" : "days"}, on ${dateLabel(status.expiresAt)}. Your timeline stays readable after that.`
+              : `Your trial ends in ${endingDaysLeft} ${endingDaysLeft === 1 ? "day" : "days"}, on ${dateLabel(status.trialExpiresAt)}. Buy a licence to keep capture, dictation and draw going.`}
+          </span>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Dismiss expiry warning"
+            onClick={() => setWarningDismissed(true)}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        </div>
       ) : null}
 
       {active ? (
