@@ -200,7 +200,7 @@ jobs:
           }
           $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $stage 'latest.json') -Encoding utf8
           $env:GH_TOKEN = $env:RELEASE_TOKEN
-          gh release create $env:TAG --repo miisodev/bard-releases --title "Bard $version" --notes "Bard $version for Windows x64. See https://miiso.dev/tools/bard." --target $env:TAG 2>$null
+          gh release create $env:TAG --repo miisodev/bard-releases --title "Bard $version" --notes "Bard $version for Windows x64. See https://miiso.dev/bard." --target $env:TAG 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release upload $env:TAG --repo miisodev/bard-releases --clobber (Join-Path $stage '*')
           } else {

@@ -34,12 +34,54 @@ $provenance = [ordered]@{
 }
 $provenance | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $OutputDir "release-provenance.json") -Encoding utf8
 
-$cargo = cargo metadata --manifest-path src-tauri/Cargo.toml --locked --format-version 1 --no-deps | ConvertFrom-Json
+# The whole resolved graph for the Windows target — not --no-deps: an SBOM
+# whose component list is the product itself cannot answer what it exists to
+# answer. --filter-platform scopes it to the crates Windows actually compiles
+# (no GTK/WebKit) and resolves without building anything.
+$cargo = cargo metadata --manifest-path src-tauri/Cargo.toml --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc | ConvertFrom-Json
 $package = Get-Content package.json -Raw | ConvertFrom-Json
-$components = @(
-  $cargo.packages | ForEach-Object {
-    [ordered]@{ type = "library"; name = $_.name; version = $_.version; purl = "pkg:cargo/$($_.name)@$($_.version)" }
+
+# CycloneDX 1.5 takes either a licence object or an SPDX expression. Most
+# crates carry an SPDX expression; the older "MIT/Apache-2.0" spelling is a
+# cargo convention, not SPDX, so it travels as a named licence instead.
+$spdxToken = '^(?:\(*[A-Za-z0-9.+-]+\)*|OR|AND|WITH)$'
+function Get-Licenses($Text) {
+  if ([string]::IsNullOrWhiteSpace($Text)) { return }
+  $value = "$Text".Trim()
+  if (@($value -split '\s+' | Where-Object { $_ -notmatch $spdxToken }).Count -eq 0) {
+    return ,@{ expression = $value }
   }
+  return ,@{ license = @{ name = $value } }
+}
+
+$crates = @($cargo.packages | Sort-Object { "pkg:cargo/$($_.name)@$($_.version)" } | ForEach-Object {
+  $component = [ordered]@{ type = "library"; name = $_.name; version = $_.version; purl = "pkg:cargo/$($_.name)@$($_.version)" }
+  $licenses = @(Get-Licenses $_.license)
+  if ($licenses.Count -gt 0) { $component["licenses"] = $licenses }
+  $component
+})
+
+if (-not (Test-Path node_modules)) {
+  throw "node_modules is missing; the SBOM needs the installed frontend dependencies. Run bun install --frozen-lockfile first."
+}
+$npm = @($package.dependencies.PSObject.Properties.Name | Sort-Object | ForEach-Object {
+  $name = $_
+  $installed = Join-Path "node_modules" (Join-Path $name "package.json")
+  if (-not (Test-Path $installed)) { throw "node_modules/$name is missing; run bun install --frozen-lockfile first." }
+  $entry = Get-Content $installed -Raw | ConvertFrom-Json
+  $license = if ($entry.license) { $entry.license } elseif ($entry.licenses) { $entry.licenses } else { $null }
+  if ($license -is [array]) {
+    $license = ($license | ForEach-Object { if ($_ -is [string]) { $_ } else { $_.type } } | Where-Object { $_ }) -join " OR "
+  } elseif ($license -isnot [string] -and $license.type) {
+    $license = $license.type
+  }
+  $component = [ordered]@{ type = "library"; name = $name; version = $entry.version; purl = "pkg:npm/$name@$($entry.version)" }
+  $licenses = @(Get-Licenses $license)
+  if ($licenses.Count -gt 0) { $component["licenses"] = $licenses }
+  $component
+})
+
+$components = @($crates) + @($npm) + @(
   [ordered]@{ type = "application"; name = $package.name; version = $package.version; purl = "pkg:npm/$($package.name)@$($package.version)" }
 )
 [ordered]@{

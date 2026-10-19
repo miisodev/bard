@@ -4,7 +4,7 @@ import { api } from "../store";
 import { InlineConfirm } from "../settings/ui";
 import type { LicenseStatus } from "../types";
 
-const PURCHASE_URL = "https://miiso.dev/tools/bard";
+const PURCHASE_URL = "https://miiso.dev/bard";
 /** What a licence buys: one payment, this many computers, no account. */
 const ACTIVATION_LIMIT = 3;
 
