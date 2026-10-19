@@ -47,7 +47,7 @@ model or derived work.
 - **OpenRouter** — optional, user-enabled text-only post-processing. Bard
   sends the finished transcript text and selected model identifier, not audio,
   images, or clipboard history.
-- **Polar** — checkout, annual subscription billing, licence-key issuance, and
+- **Polar** — checkout, one-time licence sales, licence-key issuance, and
   customer portal.
 - **Hugging Face and GitHub** — model and installer file delivery. The desktop
   client does not upload captures or transcripts to either service.

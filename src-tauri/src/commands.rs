@@ -264,17 +264,20 @@ pub fn get_crash_report() -> Result<Option<CrashReport>, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Updates are not a licensed feature. Gating them on the licence trapped a
+/// lapsed buyer on a version they could not leave — the one control that could
+/// fix a broken release was the one the expiry took away. The updater refuses
+/// the Store and Linux channels itself and verifies the signed manifest, so
+/// nothing here needs the licence.
 #[tauri::command]
 pub async fn check_for_update(
     app: AppHandle,
 ) -> Result<Option<crate::updater::UpdateInfo>, String> {
-    crate::license::require(&app)?;
     crate::updater::check(&app).await
 }
 
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
-    crate::license::require(&app)?;
     crate::updater::install(&app).await
 }
 
@@ -1547,9 +1550,9 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Opens a miiso.dev page — purchase, licence management, terms, privacy — in
-/// the default browser. The webview has no opener of its own, so a plain link
-/// went nowhere; only Bard's own site is allowed through.
+/// Opens a miiso.dev page — purchase, licence management, terms, privacy,
+/// support — in the default browser. The webview has no opener of its own, so a
+/// plain link went nowhere; only Bard's own site is allowed through.
 #[tauri::command]
 pub fn open_link(url: String) -> Result<(), String> {
     // `&` and `%` are gone from the allowlist. This is not command injection —
@@ -1558,11 +1561,16 @@ pub fn open_link(url: String) -> Result<(), String> {
     // argument is a behaviour of Explorer this project should not depend on.
     // The two real call sites pass fixed `https://miiso.dev/...` paths, so a
     // tight allowlist costs nothing.
+    //
+    // `#` stays: the Support link and the Refine pane's "Report it" both end in
+    // the site's `#support` fragment, and rejecting it made both links silently
+    // do nothing. A fragment is never sent to a server, and the host is already
+    // pinned to miiso.dev.
     let allowed = url.starts_with("https://miiso.dev/")
         && url.len() <= 256
         && url
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "/:.-_=".contains(c));
+            .all(|c| c.is_ascii_alphanumeric() || "/:.-_=#".contains(c));
     if !allowed {
         return Err("Bard only opens pages on miiso.dev.".into());
     }

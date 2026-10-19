@@ -2924,6 +2924,22 @@ mark {
   color: var(--text-3);
 }
 
+/* The expiry note: a quiet strip inside the card. It states a date rather than
+   an event, so it is not a toast — and it can be put away. */
+.license-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
+  border-left: 2px solid var(--warning);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
 .license-activation {
   justify-content: flex-start;
   flex-wrap: wrap;

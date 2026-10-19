@@ -205,11 +205,12 @@ export interface LicenseStatus {
   lastCheckedAt: number | null;
   message: string | null;
   /**
-   * Activations in use, and the ceiling. A licence is three Windows
-   * computers — a headline term of a $20 purchase that was nowhere in the
-   * product — so the backend reports the count when it can and the card shows
-   * it when it arrives. Optional because the backend does not report it yet:
-   * absent means "not reported", never "zero used".
+   * Activations in use, and the ceiling. A licence is three computers — a
+   * headline term of a $20 purchase — but the signed lease carries no count and
+   * the broker sends none: this value is what the local install has observed of
+   * its own activations, so the card renders the limit only and never presents
+   * this as the buyer's live figure. Optional because the backend does not
+   * always report it: absent means "not reported", never "zero used".
    */
   activationCount?: number | null;
   activationLimit?: number | null;
