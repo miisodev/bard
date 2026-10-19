@@ -125,7 +125,17 @@ pub const EDGE_SETTING: &str = "shelf_edge";
 pub const MONITOR_SETTING: &str = "shelf_monitor";
 
 /// How deep the shelf is on a horizontal edge, in logical pixels.
-pub const SHELF_THICKNESS_H: f64 = 250.0;
+///
+/// The band is as deep as one card plus the chrome around it, and the card has
+/// to be worth looking at: a picture is the card's whole body, and three lines
+/// of `--fs-base` at `--lh-base` are 61px. Both are measured against the card
+/// the side bands have always drawn — `--shelf-card-h` is 148px, so its body is
+/// 148 − 32 (head) − 28 (foot) = 88px: a real thumbnail, and three lines with
+/// room to spare. The rest is the band's own furniture, all of it in
+/// styles.css and all of it measured there: 2px of window border, a 54px rail,
+/// a 24px pager, the 10px the body pads under the cards and a 54px foot.
+/// 148 + 2 + 54 + 24 + 10 + 54 = 292.
+pub const SHELF_THICKNESS_H: f64 = 292.0;
 
 /// How wide it is on a vertical edge, in logical pixels.
 pub const SHELF_THICKNESS_V: f64 = 440.0;
@@ -535,9 +545,9 @@ mod tests {
             shelf_rect(WORK, Edge::Bottom, 1.0),
             Rect {
                 x: 0,
-                y: 790,
+                y: 748,
                 width: 1920,
-                height: 250
+                height: 292
             }
         );
         assert_eq!(
@@ -546,7 +556,7 @@ mod tests {
                 x: 0,
                 y: 0,
                 width: 1920,
-                height: 250
+                height: 292
             }
         );
         assert_eq!(
@@ -582,9 +592,9 @@ mod tests {
             shelf_rect(second, Edge::Bottom, 1.0),
             Rect {
                 x: 1920,
-                y: 1130,
+                y: 1088,
                 width: 2560,
-                height: 250
+                height: 292
             }
         );
         assert_eq!(
@@ -600,7 +610,7 @@ mod tests {
 
     #[test]
     fn the_shelf_is_measured_in_logical_pixels() {
-        assert_eq!(shelf_rect(WORK, Edge::Bottom, 1.5).height, 375);
+        assert_eq!(shelf_rect(WORK, Edge::Bottom, 1.5).height, 438);
         assert_eq!(shelf_rect(WORK, Edge::Right, 2.0).width, 880);
     }
 
@@ -641,9 +651,9 @@ mod tests {
                 Edge::Top,
                 Rect {
                     x: 0,
-                    y: -250,
+                    y: -292,
                     width: 1920,
-                    height: 250,
+                    height: 292,
                 },
             ),
             (
@@ -652,7 +662,7 @@ mod tests {
                     x: 0,
                     y: 1040,
                     width: 1920,
-                    height: 250,
+                    height: 292,
                 },
             ),
             (

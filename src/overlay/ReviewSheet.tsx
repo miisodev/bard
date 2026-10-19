@@ -12,9 +12,21 @@ import {
 
 /** Rust's refusals are written for a person; an invoke failure is not. */
 function failureText(reason: unknown, fallback: string): string {
-  if (reason instanceof Error && reason.message) return reason.message;
+  if (reason instanceof Error && reason.message) return humanise(reason.message);
   const text = String(reason ?? "").replace(/^Error:\s*/i, "").trim();
-  return text || fallback;
+  return text ? humanise(text) : fallback;
+}
+
+/*
+  One refusal arrives written for the log rather than for a person: the take
+  this sheet is about has already ended — confirmed, cancelled or filed — which
+  the sheet cannot fix and the person cannot act on. Everything else Rust says
+  for these commands is a sentence someone can read, and is passed through.
+*/
+function humanise(text: string): string {
+  return /no dictation waiting in the review sheet/i.test(text)
+    ? "This take was already finished."
+    : text;
 }
 
 const FALLBACK: Record<ReviewCommand, string> = {
@@ -22,6 +34,14 @@ const FALLBACK: Record<ReviewCommand, string> = {
   confirm: "Bard couldn't reach the app it started in.",
   dismiss: "Bard couldn't close the review.",
 };
+
+/**
+ * The body's focus: how many tries it gets and how far apart. The native window
+ * is brought forward with its own bounded retry (overlay.rs); this is the
+ * webview's half of the same moment.
+ */
+const FOCUS_ATTEMPTS = 3;
+const FOCUS_RETRY_MS = 40;
 
 /*
   A finished take, opened for review: the pill grown into a sheet. Every
@@ -43,10 +63,22 @@ export default function ReviewSheet({
 
   useEffect(() => {
     // WebView2 can report the webview unfocused for a tick after the native
-    // window takes focus; the retry is the shelf's own trick.
-    const focus = () => body.current?.focus();
+    // window takes focus, and the sheet is the one dialog whose whole point is
+    // the caret: a single attempt that landed early left the body unfocused
+    // until the person clicked it. Three tries at a short interval, and the
+    // first one that takes ends them.
+    let attempt = 0;
+    let timer = 0;
+    const focus = () => {
+      const target = body.current;
+      if (!target) return;
+      target.focus();
+      attempt += 1;
+      if (attempt < FOCUS_ATTEMPTS && document.activeElement !== target) {
+        timer = window.setTimeout(focus, FOCUS_RETRY_MS);
+      }
+    };
     focus();
-    const timer = window.setTimeout(focus, 0);
     return () => window.clearTimeout(timer);
   }, []);
 

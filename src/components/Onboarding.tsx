@@ -200,7 +200,7 @@ export default function Onboarding({
       <div className="mark">{WAVE}</div>
 
       {/* The promise. One column on a side edge; on a band it sits beside the
-          body instead of above it, so a 250px-tall window keeps its room. */}
+          body instead of above it, so a band-tall window keeps its room. */}
       <div className="onb-copy">
         {step === 0 ? (
           <>

@@ -55,7 +55,7 @@ type RowAction = {
 
 /**
  * The menu's pages. The pack steps live in the same box rather than a flyout:
- * the shelf is a 250px band, a nested menu would open off its edge or into a
+ * the shelf is a band, a nested menu would open off its edge or into a
  * scroller, and stepping forward and back keeps every choice one key away.
  */
 type View = "actions" | "add" | "name";

@@ -279,7 +279,7 @@ export default function DataPane({ refresh }: PaneProps) {
         </Row>
         <Row
           label="Clear history"
-          hint="Removes every item in the timeline, including your notes, drawings and favourites."
+          hint="Removes every item in the shelf, including your notes, drawings and favourites."
         >
           <Button variant="danger" onClick={() => setConfirm("history")}>
             Clear history
@@ -309,7 +309,7 @@ export default function DataPane({ refresh }: PaneProps) {
             onConfirm={() => void runDanger(api.clearHistory, "Couldn't clear history. Try again.")}
             confirmLabel="Clear history"
           >
-            Clear the whole timeline? Notes, drawings and favourites go too, and cannot come back.
+            Clear the whole shelf? Notes, drawings and favourites go too, and cannot come back.
           </InlineConfirm>
         ) : null}
         {confirm === "delete" ? (

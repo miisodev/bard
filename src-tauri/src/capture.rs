@@ -19,6 +19,11 @@ pub const SENTINEL: &str = "\u{200B}bard::capturing\u{200B}";
 static SYNTHETIC_INPUT: AtomicBool = AtomicBool::new(false);
 /// How many synthetic-input guards are live. See [`SyntheticInputGuard`].
 static SYNTHETIC_DEPTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// How many of the current burst's synthetic keys the hook has dropped. Zeroed
+/// when a burst begins, and counted where the drop happens, so a caller that
+/// has to hold the guard can wait for the burst's keys rather than for a clock
+/// — see [`wait_for_synthetic`].
+static SYNTHETIC_DROPPED: AtomicU64 = AtomicU64::new(0);
 static GESTURE_RESET: AtomicBool = AtomicBool::new(false);
 
 /// True only while the raw-input hook thread is inside `hook::listen`. The worker
@@ -100,6 +105,7 @@ impl SyntheticInputGuard {
         // is part of the same synthetic event, and clearing mid-sequence would
         // drop the pending state the outer one established.
         if outermost {
+            SYNTHETIC_DROPPED.store(0, Ordering::SeqCst);
             GESTURE_RESET.store(true, Ordering::SeqCst);
         }
         Self { outermost }
@@ -211,6 +217,32 @@ fn drops_synthetic(burst: bool, event_type: &EventType) -> bool {
     burst && is_synthetic_key(event_type)
 }
 
+/// How often [`wait_for_synthetic`] looks at the count while it waits.
+const SYNTHETIC_POLL: Duration = Duration::from_millis(2);
+
+/// Wait, up to `bound`, for the hook to have dropped `expected` of this burst's
+/// synthetic keys, and report whether it did.
+///
+/// A guard that drops every Alt and Control it sees is worth exactly as long as
+/// the synthetic keys need it: hold it longer and a real press that arrives in
+/// the meantime is discarded with them. Waiting for the burst's own keys — the
+/// hook counts them as it drops them — lifts the guard a millisecond or two
+/// after the tap has passed, where a fixed sleep held it over the whole window
+/// whether the tap had been and gone or never came. The bound is what a burst
+/// that sends nothing at all costs, and it is the ceiling, not the wait.
+pub fn wait_for_synthetic(expected: u64, bound: Duration) -> bool {
+    let started = Instant::now();
+    loop {
+        if SYNTHETIC_DROPPED.load(Ordering::SeqCst) >= expected {
+            return true;
+        }
+        if started.elapsed() >= bound {
+            return false;
+        }
+        thread::sleep(SYNTHETIC_POLL);
+    }
+}
+
 /// Start the raw-input hook. `sender` is moved in rather than cloned so the hook
 /// thread holds the only sender: when the thread ends, the channel closes and the
 /// worker sees it. A clone kept anywhere else would hide the failure forever.
@@ -225,7 +257,11 @@ fn spawn_listener(sender: mpsc::Sender<Event>) {
         let end = crate::hook::listen(move |event| {
             EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
             let burst = SYNTHETIC_INPUT.load(Ordering::SeqCst);
-            if !drops_synthetic(burst, &event.event_type) {
+            if drops_synthetic(burst, &event.event_type) {
+                // Counted where the drop happens, so a caller holding the guard
+                // can tell a tap that has passed from one still in flight.
+                SYNTHETIC_DROPPED.fetch_add(1, Ordering::SeqCst);
+            } else {
                 let _ = hook_sender.send(event);
             }
         });
@@ -659,5 +695,30 @@ mod tests {
         assert!(drops_synthetic(true, &control));
         assert!(drops_synthetic(true, &alt));
         assert!(!drops_synthetic(true, &typed));
+    }
+
+    /// The review sheet holds the guard while tao's Alt tap is in flight. The
+    /// wait has to end the moment the tap has been seen, and it has to end on
+    /// its own when no tap was sent at all — a steal that hangs would leave the
+    /// sheet's own presentation unfinished.
+    #[test]
+    fn waiting_for_a_burst_ends_on_the_keys_or_on_the_bound() {
+        let _guard = SyntheticInputGuard::enter();
+        // Nothing to wait for is answered at once, without spending the bound.
+        let started = Instant::now();
+        assert!(wait_for_synthetic(0, Duration::from_millis(200)));
+        assert!(started.elapsed() < Duration::from_millis(100));
+
+        // A tap that never comes costs the bound and no more.
+        let started = Instant::now();
+        assert!(!wait_for_synthetic(2, Duration::from_millis(40)));
+        assert!(started.elapsed() >= Duration::from_millis(40));
+
+        // The tap itself: counted where the drop happens, and answered from
+        // there without waiting out the bound.
+        SYNTHETIC_DROPPED.fetch_add(2, Ordering::SeqCst);
+        let started = Instant::now();
+        assert!(wait_for_synthetic(2, Duration::from_millis(200)));
+        assert!(started.elapsed() < Duration::from_millis(100));
     }
 }

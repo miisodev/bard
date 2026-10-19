@@ -364,7 +364,7 @@ fn present(app: &AppHandle, win: &tauri::WebviewWindow) {
 }
 
 /// The review sheet's window presentation: sized, placed, then shown and
-/// focused exactly once.
+/// focused, with a bounded retry, exactly once.
 fn review_present(app: &AppHandle, win: &tauri::WebviewWindow) {
     // tao's focus steal can synthesise an Alt press/release — `SendInput` is
     // literally how tao forces the foreground — and Alt is one of Bard's
@@ -373,7 +373,8 @@ fn review_present(app: &AppHandle, win: &tauri::WebviewWindow) {
     // synthetic guard makes the raw-input hook drop Alt and AltGr for the
     // length of the steal (see the filter in `capture.rs`), and entering it
     // also resets the gesture machine, so nothing the steal produces can be
-    // read as a shortcut. The sleep below holds the guard over the send.
+    // read as a shortcut. The wait below holds the guard until the tap has
+    // passed — and no longer than that.
     let _synthetic = crate::capture::SyntheticInputGuard::enter();
 
     let _ = win.set_size(tauri::LogicalSize::new(REVIEW_WIDTH, REVIEW_HEIGHT));
@@ -392,17 +393,46 @@ fn review_present(app: &AppHandle, win: &tauri::WebviewWindow) {
     // pill is shown with `SetWindowPos` from under tao — so only the `show()`
     // below tells tao the window is up. Its first ever show of a window created
     // with `focus: false` uses `SW_SHOWNOACTIVATE`; that is expected, and the
-    // `set_focus` after it runs `force_window_active`. If it fails anyway, the
-    // window is left focusable and topmost, so a click activates it: the sheet
-    // is fully mouse-operable and there is no retry loop.
+    // `set_focus` after it runs `force_window_active`. That call is
+    // synchronous, so the attempt is answered on the spot — and it is retried a
+    // couple of times, because an attempt that lands before the window can take
+    // focus at all used to leave the sheet untyped for the whole take. If all
+    // of them fail, the window is left focusable and topmost, so a click
+    // activates it: the sheet is fully mouse-operable and there is no retry
+    // loop.
     let _ = win.set_focusable(true);
     let _ = win.show();
-    let _ = win.set_focus();
+    for attempt in 1..=FOCUS_ATTEMPTS {
+        let _ = win.set_focus();
+        if win.is_focused().unwrap_or(false) {
+            break;
+        }
+        if attempt < FOCUS_ATTEMPTS {
+            std::thread::sleep(FOCUS_ATTEMPT_PAUSE);
+        }
+    }
     // Let the hook see — and drop — the injected Alt while the guard is still
-    // up. The sleep is on the main thread on purpose: the steal just happened
-    // here, and a guard that lifts before the hook runs would drop nothing.
-    std::thread::sleep(Duration::from_millis(60));
+    // up. Waiting on the hook's own count rather than a clock is what keeps a
+    // real Alt press from being discarded with it: the guard lifts as soon as
+    // the tap has passed, usually a millisecond or two after this call, and a
+    // steal that sends no tap at all costs only the bound.
+    crate::capture::wait_for_synthetic(TAP_KEYS, TAP_SETTLE);
 }
+
+/// How many times the sheet asks to be brought forward, and the pause between
+/// attempts. The steal itself is synchronous; the pause is for the window that
+/// is not yet in a state to take focus, and it is short because the sheet's own
+/// contents are emitted after this returns.
+const FOCUS_ATTEMPTS: usize = 3;
+const FOCUS_ATTEMPT_PAUSE: Duration = Duration::from_millis(15);
+
+/// What tao's Alt tap is: a press and its release. See [`wait_for_synthetic`].
+/// [`TAP_SETTLE`] is the ceiling on holding the guard when no tap is sent —
+/// tao only needs the tap when `SetForegroundWindow` fails outright — and it is
+/// the window a real Alt press could be lost in, so it stays at the 60ms the
+/// fixed sleep used to spend unconditionally.
+const TAP_KEYS: u64 = 2;
+const TAP_SETTLE: Duration = Duration::from_millis(60);
 
 fn remember_rect(win: &tauri::WebviewWindow) {
     let (Ok(position), Ok(size)) = (win.outer_position(), win.outer_size()) else {

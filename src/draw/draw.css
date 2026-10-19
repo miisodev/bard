@@ -105,6 +105,23 @@
 .draw-canvas.tool-text   { cursor: text; }
 .draw-canvas.tool-eraser { cursor: cell; }
 
+/* An empty page says what it is for: the tools are 500px below it in the
+   toolbar, and a blank white rectangle answers nothing. It takes no pointer
+   events, so the first stroke is not eaten by the sentence offering it. */
+.draw-hint {
+  position: absolute;
+  /* The canvas's own box: the surface pads 12px either side of it. */
+  inset: 0 var(--sp-6);
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0 var(--sp-9);
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  pointer-events: none;
+}
+
 /* ---------- toolbar ---------- */
 
 /*
@@ -401,6 +418,7 @@
 }
 
 .canvas-match {
+  position: relative;
   justify-self: start;
   padding: 0;
   border: none;
@@ -409,6 +427,14 @@
   font: inherit;
   font-size: var(--fs-sm);
   cursor: pointer;
+}
+
+/* The words are the whole control, and 12px of text is under the 24px floor:
+   the box grows under the type rather than around it, so nothing moves. */
+.canvas-match::before {
+  content: "";
+  position: absolute;
+  inset: -5px -7px;
 }
 
 .canvas-match:hover { text-decoration: underline; }

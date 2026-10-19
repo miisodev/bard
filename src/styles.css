@@ -843,7 +843,7 @@ body {
   color: var(--text-2);
 }
 
-/* The commands stay reachable in a 250px shelf band: the member list scrolls
+/* The commands stay reachable in a shelf band: the member list scrolls
    under the foot rather than taking it out of view. */
 .pack-view-foot {
   position: sticky;
@@ -988,7 +988,7 @@ body {
   opacity: 0.85;
 }
 
-/* The quick-paste badge: the first five cards of a page are Ctrl+1–5. */
+/* The quick-paste badge: every card on the page whose digit is bound. */
 .card-key {
   display: inline-grid;
   place-items: center;
@@ -1100,15 +1100,17 @@ body {
 
 /* ---------- colour card ---------- */
 
+/* The swatch and its name sit side by side rather than stacked: a 64px chip
+   above a name and a hex is 105px of content in an 88px body, and the line
+   that fell off the bottom was the value — the one the card exists to show. */
 .card-color {
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--sp-3);
-  text-align: center;
+  gap: var(--sp-5);
+  text-align: left;
 }
 
 .color-chip {
@@ -1122,7 +1124,7 @@ body {
 .color-text {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--sp-1);
   min-width: 0;
 }
@@ -1134,31 +1136,22 @@ body {
 }
 
 .color-value {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
-/* On a side band the card is short: the swatch sits beside its name instead
-   of above it, so both keep their room. */
-.app[data-edge="left"] .card-color,
-.app[data-edge="right"] .card-color {
-  flex-direction: row;
-  justify-content: flex-start;
-  gap: var(--sp-5);
-  text-align: left;
-}
-
+/* On a side band the card is shorter than its width; the chip steps down so
+   the name and the hex keep their room. */
 .app[data-edge="left"] .color-chip,
 .app[data-edge="right"] .color-chip {
   width: 48px;
   height: 48px;
   border-radius: 14px;
-}
-
-.app[data-edge="left"] .color-text,
-.app[data-edge="right"] .color-text {
-  align-items: flex-start;
 }
 
 /* ---------- card foot ---------- */
@@ -1584,6 +1577,16 @@ body {
   left: 15px;
 }
 
+/* 34 × 20 of track is the design; the target owes the 24px floor, and a pseudo
+   grows the hit area around the switch without moving it or its row. The
+   inset clears the switch's own hairline border, which is what the pseudo is
+   positioned against. */
+.toggle::before {
+  content: "";
+  position: absolute;
+  inset: -4px -2px;
+}
+
 .segmented {
   display: flex;
   border: 1px solid var(--border);
@@ -1649,10 +1652,23 @@ body {
 /* The shortcut sheet rides the same scrim and card as the section switcher, so
    the two overlays in the panel are visibly one product. It is a modal, so it
    gets the card's height ceiling: the panel is resizable and a sheet taller
-   than the window would be clipped by it. */
+   than the window would be clipped by it.
+   The sheet is a wide, short surface — the shelf is a band — so the key map
+   lies in columns rather than one 226px-tall column, which is what it was: a
+   scroller hiding three quarters of the list behind a scrollbar. `auto-fit`
+   collapses back to one column on the narrow side bands, where there is no
+   width to spend. */
 .sheet-card.shortcuts {
+  width: min(920px, calc(100vw - 32px));
   gap: var(--sp-7);
   max-height: calc(100% - 24px);
+}
+
+.sheet-card.shortcuts .shortcut-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  align-items: start;
+  gap: var(--sp-7) var(--sp-9);
 }
 
 .shortcut-sheet-head {
@@ -1756,13 +1772,87 @@ body {
   white-space: nowrap;
 }
 
+/* ---------- colour preview ---------- */
+
+/*
+  A colour card's preview, on the sheet's own card. It had no rules at all: the
+  swatch, the three notations and their Copy controls rendered as a bare
+  column, so a hex value sat flush against its label and the pick-up buttons
+  arrived as loose icons. Only the head's close came dressed, because it shares
+  a class with every other sheet.
+*/
+
+.color-preview {
+  gap: var(--sp-5);
+}
+
+.color-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+}
+
+/* The colour at a size the shelf never has room for, hairlined so a swatch
+   that happens to match the card behind it is still a shape. */
+.color-preview-swatch {
+  height: 96px;
+  border-radius: var(--r-control);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.color-preview-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.color-preview-label {
+  flex: none;
+  width: 34px;
+  font-family: var(--font-small);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-caption);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* Selectable, because carrying the value out in the form you want is the
+   reason the sheet exists. */
+.color-preview-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  user-select: text;
+}
+
+/* The card's own scale, like the head's close: a 34px pill belongs to the
+   panel chrome, not inside a sheet. */
+.color-preview-copy {
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+}
+
+.color-preview-copy:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
 /* ---------- onboarding ---------- */
 
 /*
   The first run, on either dock. On the side edges it is the tall column it
   has always been: mark, promise, the step's body, then its actions. On the
-  bottom and top bands the same parts lie in a wide row — a 250px band stacked
-  vertically would scroll away from its own buttons — with the body scrolling
+  bottom and top bands the same parts lie in a wide row — those parts stacked
+  vertically would scroll away from their own buttons — with the body scrolling
   on its own if one step needs more than the band has.
 */
 
@@ -2071,6 +2161,7 @@ body {
 }
 
 .overlay-x {
+  position: relative;
   border: 0;
   background: transparent;
   color: var(--text-3);
@@ -2083,6 +2174,15 @@ body {
   padding: 0;
   display: grid;
   place-items: center;
+}
+
+/* A 12px glyph in a 20px well is the pill's own scale — it is 34px tall — so
+   the target's 24px floor is met by a pseudo around it. The guard's own close
+   area (CLOSE_* in dictation/overlay.rs) already spans it. */
+.overlay-x::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
 }
 
 .overlay-x svg {
@@ -2182,8 +2282,10 @@ body {
 .overlay-pager button {
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  /* A glyph-only box, so 24px costs no ink: it is the 24px target the arrows
+     owe, drawn for the revisions a take can hold. */
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: none;
   background: none;
@@ -2495,8 +2597,8 @@ body {
   z-index: 70;
   min-width: 190px;
   /* The pack steps and the item rows together can outgrow a shelf band, which
-     is 250px tall on the bottom and top edges; the menu scrolls instead of
-     clipping an action. */
+     is shorter than this menu; the menu scrolls instead of clipping an
+     action. */
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   background: var(--surface);
@@ -2831,16 +2933,6 @@ mark {
 .field:focus { box-shadow: var(--focus-ring); }
 .field::placeholder { color: var(--placeholder); }
 
-.tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px var(--sp-4);
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-}
-
 /* A recorded chord reads as keycaps, not as code: each key its own cap. */
 .keys {
   display: inline-flex;
@@ -2955,6 +3047,7 @@ mark {
 }
 
 .link-button {
+  position: relative;
   justify-self: start;
   border: 0;
   padding: 0;
@@ -2963,6 +3056,14 @@ mark {
   font: inherit;
   font-size: var(--fs-sm);
   cursor: pointer;
+}
+
+/* The words are the whole control, and 12px of text is under the 24px floor:
+   the box grows under the type rather than around it, so nothing moves. */
+.link-button::before {
+  content: "";
+  position: absolute;
+  inset: -5px -7px;
 }
 
 .link-button:hover { text-decoration: underline; }

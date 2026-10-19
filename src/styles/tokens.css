@@ -104,7 +104,10 @@
   /*
      The edge-docked shelf. The window itself is anchored and sized by Rust;
      these are what the cards, the rail and the zones are laid out from, and
-     the page size is measured against them at runtime.
+     the page size is measured against them at runtime. The band is as deep as
+     one card plus its chrome on a horizontal edge — the arithmetic and the
+     number it comes to are in `SHELF_THICKNESS_H` (src-tauri/src/geometry.rs),
+     which is the constant that has to move with `--shelf-card-h`.
   */
   --shelf-rail-h: 48px;
   --shelf-card-w: 236px;      /* horizontal bands: one card's width */

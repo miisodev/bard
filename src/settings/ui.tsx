@@ -307,49 +307,6 @@ export function Progress({ percent, label, valueText }: {
   );
 }
 
-function qualitativeMeterValue(value: number): string {
-  if (value < 25) return "Low";
-  if (value < 50) return "Moderate";
-  if (value < 75) return "High";
-  return "Very high";
-}
-
-/**
- * A coarse relative reading, shown as a bar rather than a number because the
- * number would imply a precision these scores do not have. They rank Bard's
- * own choices against one another; they are not benchmark results.
- */
-export function Meter({ label, value }: { label: string; value: number }) {
-  const bounded = Math.max(0, Math.min(100, value));
-  const qualitative = qualitativeMeterValue(bounded);
-  return (
-    <div className="meter">
-      <span className="meter-label">{label}</span>
-      <span
-        className="meter-track"
-        role="img"
-        aria-label={`Relative ${label.toLowerCase()}: ${qualitative}`}
-        title={`Relative ${label.toLowerCase()}: ${qualitative}`}
-      >
-        <span className="meter-fill" style={{ width: `${bounded}%` }} />
-      </span>
-    </div>
-  );
-}
-
-/** Reads as a capability rather than a label: "English only", "Streaming". */
-export function Tag({ children, tone = "default", title }: {
-  children: ReactNode;
-  tone?: "default" | "accent" | "success" | "danger" | "muted";
-  title?: string;
-}) {
-  return (
-    <span className={`tag${tone === "default" ? "" : ` ${tone}`}`} title={title}>
-      {children}
-    </span>
-  );
-}
-
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "—";
   const gb = bytes / 1024 ** 3;
