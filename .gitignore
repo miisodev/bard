@@ -6,3 +6,5 @@ src-tauri/gen
 .DS_Store
 Thumbs.db
 .vite
+# Production-readiness audit output (2026-10-18)
+production-readiness/
