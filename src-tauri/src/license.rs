@@ -429,6 +429,29 @@ fn observed_now() -> i64 {
     floor
 }
 
+/// Move the wall-clock mark forward to an instant the licence service has just
+/// proved.
+///
+/// A signed receipt's `issued_at` is the service's own clock. A receipt must
+/// never be rejected for being "from the future": that sentence only ever means
+/// the local clock is behind, which is ordinary on a machine that dual-boots
+/// (Linux writes the RTC as local time, Windows then reads it as UTC) or whose
+/// CMOS battery has died. Left alone, a two-hour lag made the broker's own
+/// freshly signed receipt invalid and told a paying customer their licence had
+/// expired, with no hint that the clock was the cause.
+///
+/// The mark is written at once rather than on the next quarter-hour tick,
+/// because the correction has to survive the next launch; a receipt already in
+/// the vault from before this build is covered by `receipt_now` as well.
+fn observe_instant(instant: i64) {
+    let now = observed_now();
+    if instant <= now {
+        return;
+    }
+    LAST_SEEN.store(instant, Ordering::Relaxed);
+    let _ = write_credential_bounded(LAST_SEEN_USERNAME, instant.to_string());
+}
+
 fn new_machine_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
@@ -667,6 +690,18 @@ fn temporal_bounds_valid(receipt: &Receipt, now: i64) -> bool {
         && receipt.valid_until <= receipt.license_expires_at
 }
 
+/// The clock the gate uses for a receipt: the local clock, floored by the
+/// receipt's own signed issue time.
+///
+/// A receipt the service signed is never "from the future" — its issue time is
+/// evidence of a lower bound on the real time, and a local clock below it is
+/// the clock that is wrong. `temporal_bounds_valid` keeps its five-minute
+/// forward tolerance for anything else, but a receipt is judged against a clock
+/// that cannot fall behind its own issuance.
+fn receipt_now(local_now: i64, receipt: &Receipt) -> i64 {
+    local_now.max(receipt.issued_at)
+}
+
 /// Whether this signed lease still entitles the machine holding it: the bounds
 /// inside the signature, the entitlement, the machine binding, and the two ends
 /// of the window — the offline lease's own `valid_until` and the paid term's
@@ -687,7 +722,10 @@ fn status_from_receipt(
 ) -> LicenseStatus {
     let (trial_started_at, trial_expires_at) =
         existing_trial_window(app).unwrap_or_else(|| (now_seconds(), now_seconds()));
-    let now = observed_now();
+    // A two-hour lag between this machine and the broker is enough to make a
+    // freshly issued receipt look future-dated; the signed issue time is the
+    // floor for what the gate believes, not an accusation against the licence.
+    let now = receipt_now(observed_now(), receipt);
     // Offline use is bounded by the lease's own signed `valid_until`, at most
     // 30 days from issue: the window the licence card and the terms promise.
     // The receipt still asks to be re-checked within about a day, and the
@@ -1044,6 +1082,11 @@ fn store_response_receipt(
             return Err(LicenseError::InvalidReceipt);
         }
     }
+    // The service has just answered, so its signed issue time is the best
+    // evidence of the real time this installation has. Advance the mark before
+    // the status is computed so a slow local clock cannot invalidate the lease
+    // it just received, and persist the correction for the next launch.
+    observe_instant(receipt.issued_at);
     write_credential_bounded(RECEIPT_USERNAME, encoded.clone())?;
     // Record that this machine now holds an activation. The count is what this
     // install has observed of its own activations, not the buyer's live figure:
@@ -1509,6 +1552,41 @@ mod tests {
         let after_jump = believable_now(seen, jumped);
         assert_eq!(after_jump, jumped);
         assert_eq!(believable_now(after_jump, seen + day), jumped);
+    }
+
+    /// A service clock ahead of the local clock must not invalidate the
+    /// service's own receipt. A dual-boot RTC put a real machine two hours
+    /// behind; every activation succeeded at the broker and then the client
+    /// called its own receipt invalid, telling a paying customer the licence
+    /// had expired. The signed issue time is the floor, never an accusation.
+    #[test]
+    fn a_service_ahead_of_the_local_clock_still_entitles() {
+        let local = 1_760_000_000;
+        let day = 24 * 60 * 60;
+        let issued = local + 2 * 60 * 60;
+        let receipt = Receipt {
+            v: 1,
+            lease_version: 1,
+            product: "bard".into(),
+            key_id: "2026-01".into(),
+            key_fingerprint: "0".repeat(64),
+            machine_id: "m".into(),
+            activation_id: "a".into(),
+            entitlement: "active".into(),
+            lease_sequence: 1,
+            issued_at: issued,
+            license_expires_at: issued + 365 * day,
+            valid_until: issued + 30 * day,
+            next_check_at: issued + 20 * 60 * 60,
+        };
+        // The raw local clock rejects the receipt the service just signed.
+        assert!(!temporal_bounds_valid(&receipt, local));
+        // The signed issue time is the floor, and the lease holds from there.
+        assert_eq!(receipt_now(local, &receipt), issued);
+        assert!(lease_entitles(&receipt, receipt_now(local, &receipt), true));
+        // A local clock ahead of the service is not rewritten: the lease simply
+        // runs out against the later clock.
+        assert!(!lease_entitles(&receipt, receipt.valid_until, true));
     }
 
     /// A refusal keeps the broker's own sentence, and its code decides whether
