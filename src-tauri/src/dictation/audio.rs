@@ -357,7 +357,11 @@ fn start_monitor(shared: Arc<Shared>, app: AppHandle) -> JoinHandle<()> {
                     mic_level_update(emitted, monitor.level(), monitor.probability())
                 {
                     emitted = Some((level.to_bits(), probability.to_bits()));
-                    let _ = app.emit("mic-level", (level, probability));
+                    // Addressed, not broadcast: the meter's one consumer is the
+                    // pill in the overlay. This used to reach all four windows
+                    // five times a second, and the panel re-rendered the whole
+                    // shelf for a level nothing in it drew.
+                    let _ = app.emit_to("overlay", "mic-level", (level, probability));
                 }
             }
 

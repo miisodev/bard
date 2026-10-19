@@ -9,7 +9,13 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# `protocol-asset` serves the shelf's image covers from the app's own images
+# directory over the `asset` scheme, streamed by the webview (and range-cached
+# by it) instead of a base64 data URL per card. It is the feature Tauri provides
+# for exactly this; the alternative was megabytes of string per 4K screenshot
+# crossing the IPC and being decoded twice. The scope is registered at runtime
+# from `main.rs` and covers only `images\`.
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
@@ -80,7 +86,12 @@ minisign-verify = "0.2.5"
 panic = "abort"
 codegen-units = 1
 lto = "thin"
-opt-level = "s"
+# 3, not "s". The size profile was paying for the installer in exactly the
+# loops a person feels: every base64 in and out of the IPC, the PNG encoder and
+# the whole-timeline JSON, the SHA-256 over a model, and the VAD. "s" typically
+# costs 1.3–2.5× there; the installer gains a few hundred kB back, which is
+# measured on a release build rather than assumed here.
+opt-level = 3
 # Keep release symbols/PDB line tables so a customer crash report can be
 # symbolized by the release operator. The panic hook still writes useful
 # evidence when the PDB is unavailable.

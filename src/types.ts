@@ -23,6 +23,22 @@ export interface Attachment {
   position: number;
 }
 
+/**
+ * The `captured` event: one item just landed in the timeline.
+ *
+ * The item itself travels with the event so the shelf can put it on screen
+ * without re-reading the whole timeline, which is the difference between a
+ * capture costing one small message and costing a full state read in every
+ * open window. `removed` is how many older items the same capture's retention
+ * pass deleted — when that is more than zero a read is on its way, because a
+ * splice cannot say what went.
+ */
+export interface CapturedEvent {
+  id: number;
+  item?: Item;
+  removed: number;
+}
+
 /** A pack: kept items grouped into one unit for the shelf's Packs zone. */
 export interface PackSummary {
   id: number;

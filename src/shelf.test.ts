@@ -4,6 +4,8 @@ import {
   colorChannels,
   escapeOutcome,
   filterItems,
+  filterShelf,
+  insertCaptured,
   itemKind,
   itemPreview,
   matchesFilter,
@@ -21,6 +23,7 @@ import {
   toHsl,
   toHslText,
   toRgbText,
+  TYPE_FILTERS,
 } from "./shelf";
 import type { Item } from "./types";
 
@@ -96,6 +99,62 @@ describe("filterItems", () => {
     expect(filterItems(items, "", "all", true).map((i) => i.id)).toEqual([2, 5]);
     expect(filterItems(items, "miiso", "all", true).map((i) => i.id)).toEqual([2]);
     expect(filterItems(items, "", "image", false).map((i) => i.id)).toEqual([4]);
+  });
+});
+
+describe("filterShelf", () => {
+  const items = [
+    item({ id: 1, content: "Ship the release notes" }),
+    item({ id: 2, content: "https://miiso.dev/docs", favorite: 1 }),
+    item({ id: 3, content: "#2f6fed" }),
+    item({ id: 4, kind: "image", origin: "manual" }),
+    item({ id: 5, content: "dictated line", origin: "dictation", favorite: 1 }),
+  ];
+
+  it("answers the same list as filterItems, chip by chip", () => {
+    for (const query of ["", "release", "RELEASE", "nothing here"]) {
+      for (const favoritesOnly of [false, true]) {
+        const view = filterShelf(items, query, "all", favoritesOnly);
+        for (const chip of TYPE_FILTERS) {
+          expect(filterShelf(items, query, chip.id, favoritesOnly).visible.map((i) => i.id)).toEqual(
+            filterItems(items, query, chip.id, favoritesOnly).map((i) => i.id),
+          );
+        }
+        expect(view.visible.map((i) => i.id)).toEqual(
+          filterItems(items, query, "all", favoritesOnly).map((i) => i.id),
+        );
+      }
+    }
+  });
+
+  it("counts every chip in the same pass, under the same filter", () => {
+    const { counts } = filterShelf(items, "", "all", false);
+    for (const chip of TYPE_FILTERS) {
+      expect(counts[chip.id]).toBe(filterItems(items, "", chip.id, false).length);
+    }
+    // A query applies to the counts as well: it is the same pass.
+    const searched = filterShelf(items, "miiso", "all", false).counts;
+    expect(searched.link).toBe(1);
+    expect(searched.text).toBe(0);
+    expect(searched.all).toBe(1);
+  });
+});
+
+describe("insertCaptured", () => {
+  it("puts a capture after the pins, newest first", () => {
+    const items = [
+      item({ id: 9, pinnedAt: 30 }),
+      item({ id: 4, pinnedAt: 10 }),
+      item({ id: 8 }),
+      item({ id: 7 }),
+    ];
+    expect(insertCaptured(items, item({ id: 10 })).map((i) => i.id)).toEqual([9, 4, 10, 8, 7]);
+  });
+
+  it("goes last when everything is pinned, and replaces its own id", () => {
+    const pinned = [item({ id: 2, pinnedAt: 1 }), item({ id: 1, pinnedAt: 1 })];
+    expect(insertCaptured(pinned, item({ id: 3 })).map((i) => i.id)).toEqual([2, 1, 3]);
+    expect(insertCaptured(pinned, item({ id: 1 })).map((i) => i.id)).toEqual([2, 1]);
   });
 });
 

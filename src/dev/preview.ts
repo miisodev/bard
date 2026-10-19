@@ -328,6 +328,11 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "clipboard_image_data":
       return null;
     case "item_image_data":
+    case "item_cover_url":
+      return IMAGES.get(Number(args.id)) ?? null;
+    // Attachment covers come from the same fixture map; the preview has no
+    // attachment files, so an id it does not know is simply no picture.
+    case "attachment_cover_url":
       return IMAGES.get(Number(args.id)) ?? null;
     // The packs commands, with the behaviour Rust has: summaries carry the
     // leading members, mutations move the same rows, and a refusal is a

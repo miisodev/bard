@@ -175,7 +175,7 @@ fn handle_gesture(action: GestureAction, app: &AppHandle) {
                 // at another window, so the only place they will see the failure
                 // is the panel.
                 log::warn!("item paste failed: {error}");
-                let _ = app.emit("capture-failed", error);
+                let _ = app.emit_to("main", "capture-failed", error);
             }
         }
         GestureAction::DictationPress { token } => crate::dictation::gesture_press(app, token),
@@ -576,7 +576,7 @@ fn do_capture(app: &AppHandle) {
                 return;
             }
         } else if let Ok(image) = cb.get_image() {
-            if crate::monitor::capture_image(app, &image) {
+            if crate::monitor::capture_image(app, image) {
                 restore_snapshot(app, &old);
                 return;
             }

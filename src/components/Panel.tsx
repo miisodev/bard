@@ -14,7 +14,7 @@ import { DRAW_FRICTION_NOTE, DRAW_SHORTCUT_GROUPS } from "../draw/shortcuts";
 import {
   clampPage,
   escapeOutcome,
-  filterItems,
+  filterShelf,
   nextIndex,
   PACK_NO_TEXT,
   packText,
@@ -155,10 +155,15 @@ export default function Panel({
     return index;
   }, [state.attachments]);
 
-  const visible = useMemo(
-    () => filterItems(state.items, query, filter, favoritesOnly),
+  const view = useMemo(
+    () => filterShelf(state.items, query, filter, favoritesOnly),
     [state.items, query, filter, favoritesOnly],
   );
+  // One pass over the list answers both the page's cards and every chip's
+  // count — see `filterShelf`. Six passes per change classified every item six
+  // times and lowercased its content six times.
+  const visible = view.visible;
+  const counts = view.counts;
 
   /** Visible order, by id. Every arrow key and every range is a lookup here. */
   const order = useMemo(() => {
@@ -173,14 +178,6 @@ export default function Panel({
     () => pageItems(visible, currentPage, perPage),
     [visible, currentPage, perPage],
   );
-
-  const counts = useMemo(() => {
-    const next = {} as Record<TypeFilter, number>;
-    for (const chip of TYPE_FILTERS) {
-      next[chip.id] = filterItems(state.items, query, chip.id, favoritesOnly).length;
-    }
-    return next;
-  }, [state.items, query, favoritesOnly]);
 
   const doneCount = useMemo(
     () => state.items.reduce((count, item) => (item.done !== 0 ? count + 1 : count), 0),
@@ -404,7 +401,9 @@ export default function Panel({
   }, [pageCards, focusCard]);
 
   useEffect(() => {
-    void api.getState().then(onState);
+    // The panel is rendered only once `App` has a state to give it, so its own
+    // mount has nothing to read: this used to be a second full `get_state` at
+    // startup, in parallel with the one that had just produced the props.
     void api.getSoundOnCapture().then(setSoundOnCapture);
     refreshPacks();
   }, [onState, refreshPacks]);

@@ -279,7 +279,7 @@ pub fn start(app: &AppHandle) -> bool {
         }
         if !audio::mic_ready() {
             clear_owner();
-            let _ = app.emit("dictation-error", "No microphone found.");
+            let _ = app.emit_to("main", "dictation-error", "No microphone found.");
             overlay::show_report(app, "No microphone found");
             return false;
         }
@@ -293,7 +293,7 @@ pub fn start(app: &AppHandle) -> bool {
         overlay::show_report(app, "Microphone unavailable");
         *state_lock() = DictState::Idle;
         clear_owner();
-        let _ = app.emit("dictation-error", error);
+        let _ = app.emit_to("main", "dictation-error", error);
         return false;
     }
     true
@@ -469,14 +469,14 @@ pub fn stop(app: &AppHandle) {
         if let Some(error) = recording.error {
             overlay::show_report(&app, "Recording failed");
             *state_lock() = DictState::Idle;
-            let _ = app.emit("dictation-error", error);
+            let _ = app.emit_to("main", "dictation-error", error);
             return;
         }
         let mut samples = recording.samples;
         if samples.is_empty() || !recording.speech_detected {
             overlay::show_report(&app, "Nothing heard");
             *state_lock() = DictState::Idle;
-            let _ = app.emit("dictation-error", "Nothing heard.");
+            let _ = app.emit_to("main", "dictation-error", "Nothing heard.");
             return;
         }
         if samples.len() < 16000 {
@@ -522,7 +522,7 @@ pub fn stop(app: &AppHandle) {
                 }
                 if let Err(error) = crate::paste::set_text(&app, &text) {
                     overlay::show_report(&app, "Couldn't paste");
-                    let _ = app.emit("dictation-error", error);
+                    let _ = app.emit_to("main", "dictation-error", error);
                     *state_lock() = DictState::Idle;
                     return;
                 }
@@ -555,7 +555,7 @@ pub fn stop(app: &AppHandle) {
                         }
                         crate::db::set_active_item(&app, Some(item_id));
                         let _ = crate::db::cleanup_origin(&app, "dictation");
-                        let _ = app.emit("dictation-panel", text);
+                        let _ = app.emit_to("main", "dictation-panel", text);
                     }
                     Delivery::Foreground => {
                         // The words go to the field you were typing in, and that
@@ -569,13 +569,13 @@ pub fn stop(app: &AppHandle) {
             Ok(_) => {
                 overlay::show_report(&app, "Nothing heard");
                 *state_lock() = DictState::Idle;
-                let _ = app.emit("dictation-error", "Nothing heard.");
+                let _ = app.emit_to("main", "dictation-error", "Nothing heard.");
                 return;
             }
             Err(e) => {
                 overlay::show_report(&app, "Transcription failed");
                 *state_lock() = DictState::Idle;
-                let _ = app.emit("dictation-error", e);
+                let _ = app.emit_to("main", "dictation-error", e);
                 return;
             }
         }
@@ -886,7 +886,7 @@ fn confirm_timeline(app: &AppHandle, text: String) -> Result<(), String> {
     }
     crate::db::set_active_item(app, Some(item_id));
     let _ = crate::db::cleanup_origin(app, "dictation");
-    let _ = app.emit("dictation-panel", text);
+    let _ = app.emit_to("main", "dictation-panel", text);
     close_review(app);
     Ok(())
 }

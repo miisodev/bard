@@ -974,30 +974,41 @@ fn file_stamp(metadata: &fs::Metadata) -> (u64, u128, u128, u64) {
 /// files and Bard-owned imports always carry a positive size and SHA-256; an
 /// empty checksum is never treated as permission to skip integrity checking.
 ///
-/// Known weakness, deliberately left in place pending a decision that is not
-/// this module's to make. The memo below skips the hash when the file's stamp is
-/// unchanged, and a stamp is `(size, last write, creation)` — nothing guaranteed
-/// to differ when the *content* differs. Measured on the filesystem this project
-/// is built on: rewriting an eight-byte file in place left `last_write_time` **and**
-/// `creation_time` at exactly `134348792418400104`, unchanged across a five-second
-/// wait. So a same-size rewrite of an already-verified model is accepted from the
-/// memo without ever being hashed. This is not a theoretical race and it is not
-/// clock-tick quantisation; on this filesystem the stamp does not move at all.
+/// # What is trusted, exactly
 ///
-/// It is not simply deleted because the fast path is load-bearing:
-/// `dictation::model::transcribe_inner` calls `verify_model_file` before every
-/// capture, and re-hashing a multi-gigabyte model per dictation is not viable
-/// (roughly 0.3–1 s per capture, more on a two-gigabyte model). Deleting the memo
-/// would also be the wrong fix on its own — the unsoundness is the timestamp, not
-/// the memo — and it would be a security fix bought with a latency regression
-/// across the whole product, decided in a file this module does not own.
+/// A successful hash is written to a durable marker: `verified_markers()`,
+/// keyed by the canonicalised path and holding the file's `(size, last write,
+/// creation)` stamp and the SHA-256 that was proven at it. The read is only
+/// reached while the marker's stamp still matches the file on disk *and* the
+/// checksum it records is the one being asked about; anything else re-hashes,
+/// and a re-hash that fails refuses as it always did.
 ///
-/// Needs orchestrator: `dictation/model.rs` — verify once per *session* rather
-/// than once per capture. `SESSION` is already keyed by the path and is discarded
-/// when the model changes, so a verdict recorded alongside it costs one hash per
-/// model load instead of one per dictation. With that in place the memo here can
-/// be deleted outright and `verify_pinned_file` can hash unconditionally, closing
-/// the hole rather than documenting it.
+/// What that buys is the launch cost. The alternative was a SHA-256 of up to
+/// 1.69 GB on every launch (the model file is hashed once per process, and a
+/// process starts every time Bard does), which competes with first paint and
+/// is the reason a cold dictation had a watchdog floor in the first place.
+///
+/// What it costs is a guarantee that was always conditional anyway: the trust
+/// is the filesystem's stamps, not the bytes. On this filesystem an in-place
+/// same-size rewrite has been measured to leave `last_write_time` **and**
+/// `creation_time` bit-for-bit unchanged — see the note this function carried
+/// while the memo was removed — so a model replaced that way, by a tool that
+/// also left both stamps alone, would be accepted. Sizes, writes through any
+/// ordinary path, renames, re-downloads and catalogue changes all move the
+/// stamp or the checksum, so they re-hash.
+///
+/// Tamper surface: `%LOCALAPPDATA%\com.miisodev.bard\model-verification.json`
+/// (or the platform's data directory), a plain JSON file in the user's own
+/// profile. Anyone who can rewrite a multi-gigabyte model file can rewrite the
+/// marker that vouches for it, so this is not and never was defence against a
+/// local attacker — the checksum's job is a download that arrived wrong, a
+/// stale partial write, a catalogue mismatch or a file at the wrong path, and
+/// every one of those is still caught. Deleting the file costs a re-hash and
+/// nothing else.
+///
+/// The marker is rewritten in full after each successful verification, from an
+/// in-memory map loaded once per process; a write that fails costs the next
+/// launch one hash, so it is not reported.
 pub fn verify_pinned_file(
     path: &Path,
     expected_size: u64,
@@ -1018,27 +1029,95 @@ pub fn verify_pinned_file(
             metadata.len()
         ));
     }
-    // Hashed unconditionally.
-    //
-    // There used to be a memo keyed on `(size, last_write_time, creation_time)`,
-    // on the theory that a changed file moves a timestamp. Measured on this
-    // filesystem, it does not: an in-place same-size rewrite left both
-    // `last_write_time` and `creation_time` bit-for-bit identical, so the memo was
-    // effectively "verify once per process, ever" and `verify_pinned_file`
-    // returned `Ok` for a model whose bytes no longer matched the hash it exists to
-    // guarantee. It showed up as a test that failed 6 runs in 25.
-    //
-    // The cost of removing it is one SHA-256 per call, and the call sites are
-    // bounded: `dictation::model` verifies once per process per model rather than
-    // once per capture, and this function's other caller has just done a full
-    // `Model::load` — which dominates a hash by orders of magnitude. Removing an
-    // unsound cache is cheap here, which is the only reason it was ever optional.
+    let stamp = stamp_of(&metadata);
+    let key = normalized_path_string(&canonicalize_for_comparison(path));
+    if marker_vouches(&key, stamp, &expected_sha256) {
+        return Ok(());
+    }
     let actual =
         sha256_file(path).map_err(|error| format!("Could not hash model file: {error}"))?;
     if !actual.eq_ignore_ascii_case(&expected_sha256) {
         return Err("Model checksum does not match the verified catalogue value.".into());
     }
+    record_verification(&key, stamp, &actual);
     Ok(())
+}
+
+/// A file's identity for the verification marker, in the three numbers that are
+/// cheap to read and impossible to fake without touching the file.
+type FileStamp = (u64, u64, u64);
+
+/// The stamp the marker stores. [`file_stamp`] reads 128-bit values on the
+/// platforms where the clock offers them; the marker is JSON, whose numbers are
+/// 64-bit, and every real timestamp and FILETIME tick fits in one.
+fn stamp_of(metadata: &fs::Metadata) -> FileStamp {
+    let (size, modified, created, _) = file_stamp(metadata);
+    (size, modified as u64, created as u64)
+}
+
+/// One verified file: the stamp its bytes were proven at, and the checksum.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct VerifiedFile {
+    size: u64,
+    modified: u64,
+    created: u64,
+    sha256: String,
+}
+
+/// Every verification this machine has recorded, loaded once per process.
+fn verified_markers() -> &'static Mutex<HashMap<String, VerifiedFile>> {
+    static MARKERS: OnceLock<Mutex<HashMap<String, VerifiedFile>>> = OnceLock::new();
+    MARKERS.get_or_init(|| {
+        let loaded = marker_path()
+            .and_then(|path| fs::read_to_string(path).ok())
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        Mutex::new(loaded)
+    })
+}
+
+/// Where the markers live: beside the database, never beside the model — the
+/// models directory is scanned, listed and pruned, and a file in it that is not
+/// a model has no business being there.
+fn marker_path() -> Option<PathBuf> {
+    crate::paths::data_dir().map(|dir| dir.join("model-verification.json"))
+}
+
+/// Whether a previous verification covers this exact file, byte-for-byte as far
+/// as the filesystem can say.
+fn marker_vouches(key: &str, stamp: FileStamp, sha256: &str) -> bool {
+    let markers = verified_markers()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    markers.get(key).is_some_and(|record| {
+        (record.size, record.modified, record.created) == stamp
+            && record.sha256.eq_ignore_ascii_case(sha256)
+    })
+}
+
+/// Record a verification that just succeeded.
+fn record_verification(key: &str, stamp: FileStamp, sha256: &str) {
+    let snapshot = {
+        let mut markers = verified_markers()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        markers.insert(
+            key.to_owned(),
+            VerifiedFile {
+                size: stamp.0,
+                modified: stamp.1,
+                created: stamp.2,
+                sha256: sha256.to_ascii_lowercase(),
+            },
+        );
+        serde_json::to_string(&*markers)
+    };
+    let (Some(path), Ok(json)) = (marker_path(), snapshot) else {
+        return;
+    };
+    // A failed write is not worth reporting: it costs the next launch one hash
+    // of the same file, which is exactly what would have happened anyway.
+    let _ = fs::write(path, json);
 }
 
 /// The engine answer Bard already holds for this file, or `None` when it has
@@ -1120,7 +1199,7 @@ fn probe_local_model_inner(
     let result = probe_model_path(&path)?;
     crate::db::set_custom_model_compatibility(app, path_arg, result.status);
     crate::db::set_custom_model_compatibility(app, &path.to_string_lossy(), result.status);
-    let _ = app.emit("refresh", ());
+    crate::commands::refresh(app);
     Ok(result)
 }
 
@@ -1200,7 +1279,7 @@ fn activate_model_inner(app: &AppHandle, id: &str, engine_checked: bool) -> Resu
     }
     crate::db::set_setting_checked(app, "model_id", id)?;
     let _ = app.emit("model-activated", serde_json::json!({"id": id}));
-    let _ = app.emit("refresh", ());
+    crate::commands::refresh(app);
     Ok(())
 }
 
@@ -1227,7 +1306,7 @@ pub(crate) fn emit_model_installed(app: &AppHandle, id: &str) {
         "model-installed",
         serde_json::json!({"id": id, "activated": false}),
     );
-    let _ = app.emit("refresh", ());
+    crate::commands::refresh(app);
     // Compatibility signal for the current settings/onboarding listeners. It
     // means installation finished, not that Bard switched the active model.
     let _ = app.emit(
@@ -2195,8 +2274,8 @@ mod tests {
         fs::write(&path, b"modified-and-longer").unwrap();
         assert!(verify_pinned_file(&path, 8, &digest).is_err());
 
-        // A same-size rewrite is refused by the hash, on a path the memo has
-        // never seen so the hash is certain to run.
+        // A same-size rewrite is refused by the hash, on a path no marker has
+        // ever vouched for so the hash is certain to run.
         let fresh = dir.join("fresh.gguf");
         fs::write(&fresh, b"verified").unwrap();
         fs::write(&fresh, b"modified").unwrap();
@@ -2205,28 +2284,68 @@ mod tests {
             "a same-size rewrite must fail its pinned checksum"
         );
 
-        // What the memo above cannot promise: once a path has been verified, the
-        // only thing standing between a same-size rewrite and a pass is the file
-        // stamp. On the filesystem these tests run on, the stamp does not move at
-        // all — an eight-byte rewrite left both `last_write_time` and
+        // What the durable marker cannot promise: once a path has been verified,
+        // the only thing standing between a same-size rewrite and a pass is the
+        // file stamp. On the filesystem these tests run on, the stamp does not
+        // move at all — an eight-byte rewrite left both `last_write_time` and
         // `creation_time` at 134348792418400104 across a five-second wait — so
-        // `verify_pinned_file` answers from the memo and blesses the mutation.
+        // the marker vouches for the mutation. That is the exact trust model
+        // `verify_pinned_file` documents, reported here rather than asserted.
         //
         // This is reported rather than asserted, because whether a same-size
         // rewrite is visible at all is a property of the filesystem, not of this
         // code. Asserting either way would make the suite lie on one platform or
-        // the other. See the note on `verify_pinned_file` and the
-        // `needs orchestrator` item for `dictation/model.rs`.
+        // the other. See the trust model on `verify_pinned_file`.
         let before = file_stamp(&fs::metadata(&path).unwrap());
         fs::write(&path, b"verified").unwrap();
         std::thread::sleep(Duration::from_millis(50));
         let after = file_stamp(&fs::metadata(&path).unwrap());
         if after == before {
             log::warn!(
-                "hf-test:verification-memo-cannot-see-content path={} stamp={after:?} \
-                 -- a same-size model rewrite is invisible to the pinned-checksum memo",
+                "hf-test:verification-marker-cannot-see-content path={} stamp={after:?} \
+                 -- a same-size model rewrite is invisible to the verification marker",
                 path.display()
             );
+        }
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_verified_file_is_not_hashed_again_until_something_moves() {
+        let dir = temp_dir("marker");
+        let path = dir.join("model.gguf");
+        fs::write(&path, b"verified").unwrap();
+        let digest = sha256_file(&path).unwrap();
+        let key = normalized_path_string(&canonicalize_for_comparison(&path));
+
+        // The first verification is a hash, and it leaves a marker.
+        assert!(verify_pinned_file(&path, 8, &digest).is_ok());
+        let stamp = stamp_of(&fs::metadata(&path).unwrap());
+        assert!(marker_vouches(&key, stamp, &digest));
+
+        // A read that agrees with the marker is answered from it…
+        assert!(verify_pinned_file(&path, 8, &digest).is_ok());
+        // …and one that asks about different bytes is not: the marker is keyed
+        // by the checksum as well as the stamp, so a catalogue change re-hashes
+        // and fails.
+        assert!(verify_pinned_file(&path, 8, &"0".repeat(64)).is_err());
+
+        // A file the marker has never seen is hashed — including one of the
+        // same size, which is the case a stamp alone cannot see.
+        let fresh = dir.join("fresh.gguf");
+        fs::write(&fresh, b"modified").unwrap();
+        assert!(verify_pinned_file(&fresh, 8, &digest).is_err());
+
+        // Leave the machine's marker file as it was found: the entries this test
+        // added are for a scratch path and would otherwise accumulate.
+        {
+            let mut markers = verified_markers()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            markers.remove(&key);
+            if let (Some(marker), Ok(json)) = (marker_path(), serde_json::to_string(&*markers)) {
+                let _ = fs::write(marker, json);
+            }
         }
         fs::remove_dir_all(dir).ok();
     }

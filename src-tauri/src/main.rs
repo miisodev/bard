@@ -200,6 +200,17 @@ fn main() {
             }
             let images_dir = data_dir.join("images");
             std::fs::create_dir_all(&images_dir)?;
+            // The shelf's image covers are loaded from the `asset` protocol, so
+            // the images folder — and nothing else — goes into its scope. The
+            // URL for a file is only ever handed out after `paste` has checked
+            // that the file is inside this folder and inside the size cap, so
+            // this is the second lock on the same door.
+            if let Err(error) = handle
+                .asset_protocol_scope()
+                .allow_directory(&images_dir, false)
+            {
+                log::warn!("image covers will fall back to nothing: {error}");
+            }
             app.manage(commands::ImagesDir(images_dir));
             crate::license::spawn_revalidation(handle.clone());
             let startup_args: Vec<String> = std::env::args().collect();
@@ -338,8 +349,10 @@ fn main() {
             commands::paste_back,
             commands::copy_attachment,
             commands::item_image_data,
+            commands::item_cover_url,
             commands::clipboard_image_data,
             commands::attachment_image_data,
+            commands::attachment_cover_url,
             commands::set_theme,
             commands::set_onboarding_completed,
             commands::set_autostart,

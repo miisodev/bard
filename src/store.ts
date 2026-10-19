@@ -54,6 +54,10 @@ export const api = {
   itemImageData: (id: number) => invoke<string | null>("item_image_data", { id }),
   attachmentImageData: (id: number) =>
     invoke<string | null>("attachment_image_data", { id }),
+  /** A card's cover: an asset URL for the file, not the file in base64. */
+  itemCoverUrl: (id: number) => invoke<string | null>("item_cover_url", { id }),
+  attachmentCoverUrl: (id: number) =>
+    invoke<string | null>("attachment_cover_url", { id }),
   setActiveItem: (id: number | null) => invoke<void>("set_active_item", { id }),
   /** Dock the shelf to another edge. Rust re-anchors and echoes `shelf-edge`. */
   setShelfEdge: (edge: ShelfEdge) => invoke<void>("set_shelf_edge", { edge }),

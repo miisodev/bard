@@ -4,6 +4,7 @@ import {
   constrain,
   duplicate,
   emptyHistory,
+  eraseCrossed,
   eraseTargets,
   exportSvg,
   handleAt,
@@ -266,6 +267,34 @@ describe("eraseTargets", () => {
     const after = [a, b, c].filter((s) => !ids.includes(s.id));
     const step = undo(record(emptyHistory(), before), after);
     expect(step?.shapes.map((s) => s.id)).toEqual([a.id, b.id, c.id]);
+  });
+});
+
+describe("eraseCrossed", () => {
+  it("answers segment by segment what the whole sweep answers", () => {
+    const shapes = [line(0, 100, 100, 100), rect(40, 95, 20, 10), rect(0, 0, 10, 10)];
+    const path = [
+      { x: 0, y: 0 },
+      { x: 10, y: 40 },
+      { x: 50, y: 99 },
+      { x: 90, y: 100 },
+      { x: 92, y: 101 },
+    ];
+    const whole = new Set(eraseTargets(shapes, path));
+    const incremental = new Set<number>();
+    for (let i = 1; i < path.length; i++) {
+      for (const id of eraseCrossed(shapes, path[i - 1], path[i])) incremental.add(id);
+    }
+    expect([...incremental].sort()).toEqual([...whole].sort());
+    // Topmost first, so the order a segment reports matches the whole sweep's.
+    expect(eraseCrossed(shapes, { x: 50, y: 90 }, { x: 50, y: 110 })).toEqual(
+      eraseTargets(shapes, [{ x: 50, y: 90 }, { x: 50, y: 110 }]),
+    );
+  });
+
+  it("sampling is the sweep's, so a fast flick cannot step over a stroke", () => {
+    const r = line(50, 100, 50, 100);
+    expect(eraseCrossed([r], { x: 0, y: 100 }, { x: 100, y: 100 })).toEqual([r.id]);
   });
 });
 
