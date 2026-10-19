@@ -166,6 +166,18 @@ export default function LicenseCard({
       {status.message ? (
         <p className="license-card-note" role="status">{status.message}</p>
       ) : null}
+      {/*
+        Revalidation retries by design, and used to say nothing either way, so
+        a service that could not be reached looked exactly like a licence that
+        never needed checking. This keeps the calm offline state and just says
+        the check is being retried; a successful check clears it.
+      */}
+      {status.revalidationFailing ? (
+        <p className="license-card-note" role="status">
+          Bard can't reach the licence service — retrying in the background. The licence
+          keeps working while Bard tries again.
+        </p>
+      ) : null}
       {termLines.length > 0 ? (
         <p className="license-card-note">
           {termLines.map((line, index) => (

@@ -1,12 +1,21 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { AlertCircle, FileWarning, LoaderCircle, RotateCcw } from "lucide-react";
+import { AlertCircle, Copy, FileWarning, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "../../store";
-import type { CrashReport } from "../../types";
+import type { CrashReport, RestorePreview } from "../../types";
 import type { PaneProps } from "../SettingsWindow";
 import { Button, Group, InlineConfirm, Note, Pane, Row, Select } from "../ui";
 
 type Notice = { tone: "success" | "danger"; text: string };
+
+function failureText(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.replace(/^Error:\s*/i, "").trim() || "Something went wrong.";
+}
+
+function itemCount(count: number): string {
+  return `${count.toLocaleString()} item${count === 1 ? "" : "s"}`;
+}
 
 const RETENTION_OPTIONS = [
   { value: "1", label: "1 day" },
@@ -38,6 +47,14 @@ export default function DataPane({ refresh }: PaneProps) {
   const [exportNotice, setExportNotice] = useState<Notice | null>(null);
   const [dangerError, setDangerError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"captures" | "history" | "delete" | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupNotice, setBackupNotice] = useState<Notice | null>(null);
+  const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreNotice, setRestoreNotice] = useState<Notice | null>(null);
+  const [copyingDiagnostics, setCopyingDiagnostics] = useState(false);
+  const [copiedDiagnostics, setCopiedDiagnostics] = useState(false);
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -115,6 +132,85 @@ export default function DataPane({ refresh }: PaneProps) {
     }
   };
 
+  const backUpNow = async () => {
+    if (backupBusy) return;
+    setBackupNotice(null);
+    const dir = await open({ directory: true });
+    if (typeof dir !== "string") return;
+    setBackupBusy(true);
+    try {
+      const summary = await api.backupNow(dir);
+      setBackupNotice({
+        tone: "success",
+        text: `Backed up ${itemCount(summary.counts.items)} and ${summary.counts.images.toLocaleString()} image${summary.counts.images === 1 ? "" : "s"} to ${summary.path}`,
+      });
+    } catch (error) {
+      setBackupNotice({ tone: "danger", text: failureText(error) });
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const chooseRestore = async () => {
+    if (restoreBusy) return;
+    setRestoreNotice(null);
+    setRestorePreview(null);
+    const dir = await open({ directory: true });
+    if (typeof dir !== "string") return;
+    setRestoreBusy(true);
+    try {
+      // The first call changes nothing: it validates the folder and reports
+      // what the backup holds so the confirmation below can state it.
+      const outcome = await api.restoreFromBackup(dir, false);
+      if (outcome.outcome === "needsConfirmation") {
+        setRestorePreview(outcome.preview);
+      }
+    } catch (error) {
+      setRestoreNotice({ tone: "danger", text: failureText(error) });
+    } finally {
+      setRestoreBusy(false);
+    }
+  };
+
+  const runRestore = async () => {
+    if (restoreBusy || !restorePreview) return;
+    setRestoreBusy(true);
+    setRestoreNotice(null);
+    try {
+      const outcome = await api.restoreFromBackup(restorePreview.path, true);
+      setRestorePreview(null);
+      if (outcome.outcome === "restored") {
+        setRestoreNotice({
+          tone: "success",
+          text:
+            `Restored ${itemCount(outcome.counts.items)} and ` +
+            `${outcome.counts.images.toLocaleString()} image${outcome.counts.images === 1 ? "" : "s"}. ` +
+            `Restart Bard to see everything. The data that was here is kept at ${outcome.previous}.`,
+        });
+        refresh();
+      }
+    } catch (error) {
+      setRestoreNotice({ tone: "danger", text: failureText(error) });
+    } finally {
+      setRestoreBusy(false);
+    }
+  };
+
+  const copyDiagnostics = async () => {
+    if (copyingDiagnostics) return;
+    setDiagnosticsError(null);
+    setCopiedDiagnostics(false);
+    setCopyingDiagnostics(true);
+    try {
+      await api.copyDiagnosticReport();
+      setCopiedDiagnostics(true);
+    } catch (error) {
+      setDiagnosticsError(failureText(error));
+    } finally {
+      setCopyingDiagnostics(false);
+    }
+  };
+
   const pruneNow = async () => {
     if (pruneLoading) return;
     setPruneLoading(true);
@@ -164,12 +260,55 @@ export default function DataPane({ refresh }: PaneProps) {
             Browse…
           </Button>
         </Row>
-        <Row label="Export to Markdown" hint="Writes bard-export.md to the folder above.">
+        <Row label="Export to Markdown" hint="Writes bard-export.md plus images/ and files/ to the folder above.">
           <Button onClick={() => void exportMarkdown()}>
             Export
           </Button>
         </Row>
         {exportNotice ? <Note tone={exportNotice.tone}>{exportNotice.text}</Note> : null}
+      </Group>
+
+      <Group
+        title="Backup"
+        note="A backup folder holds the database, the images and a manifest. Keep it on another drive; restore replaces Bard's local data with it."
+      >
+        <Row
+          label="Back up now"
+          hint="Writes a new Bard-backup-… folder into a folder you choose."
+        >
+          <Button onClick={() => void backUpNow()} disabled={backupBusy} ariaBusy={backupBusy}>
+            {backupBusy ? <LoaderCircle className="spinning" aria-hidden="true" /> : null}
+            {backupBusy ? "Backing up…" : "Back up…"}
+          </Button>
+        </Row>
+        {backupNotice ? <Note tone={backupNotice.tone}>{backupNotice.text}</Note> : null}
+        <Row
+          label="Restore from backup"
+          hint="Replaces the database and images from a backup folder. Nothing is written until you confirm."
+        >
+          <Button onClick={() => void chooseRestore()} disabled={restoreBusy} ariaBusy={restoreBusy}>
+            {restoreBusy ? <LoaderCircle className="spinning" aria-hidden="true" /> : null}
+            {restoreBusy ? "Reading…" : "Restore…"}
+          </Button>
+        </Row>
+        {restorePreview ? (
+          <InlineConfirm
+            onCancel={() => setRestorePreview(null)}
+            onConfirm={() => void runRestore()}
+            confirming={restoreBusy}
+            confirmLabel="Replace with backup"
+          >
+            Replace Bard's local data with the backup at {restorePreview.path}? It holds{" "}
+            {itemCount(restorePreview.manifest.counts.items)} and{" "}
+            {restorePreview.manifest.counts.images.toLocaleString()} image
+            {restorePreview.manifest.counts.images === 1 ? "" : "s"}
+            {restorePreview.fresh
+              ? "; this Bard holds nothing yet."
+              : `; this Bard holds ${itemCount(restorePreview.liveItems)} right now.`}{" "}
+            The data that is here is kept beside it, not deleted.
+          </InlineConfirm>
+        ) : null}
+        {restoreNotice ? <Note tone={restoreNotice.tone}>{restoreNotice.text}</Note> : null}
       </Group>
 
       <Group
@@ -257,6 +396,17 @@ export default function DataPane({ refresh }: PaneProps) {
           </Button>
         </Row>
         {crashError ? <Note tone="danger">{crashError}</Note> : null}
+        <Row
+          label="Copy diagnostic report"
+          hint="Bard's version, storage state, the latest crash report and recent lifecycle lines, on the clipboard for a support message. Nothing is sent anywhere."
+        >
+          <Button onClick={() => void copyDiagnostics()} disabled={copyingDiagnostics} ariaBusy={copyingDiagnostics}>
+            {copyingDiagnostics ? <LoaderCircle className="spinning" aria-hidden="true" /> : <Copy aria-hidden="true" />}
+            {copyingDiagnostics ? "Copying…" : "Copy report"}
+          </Button>
+        </Row>
+        {copiedDiagnostics ? <Note tone="success">Copied. Paste it into your support message.</Note> : null}
+        {diagnosticsError ? <Note tone="danger">{diagnosticsError}</Note> : null}
         {crashReport ? (
           <div className="crash-report">
             <div className="ellipsis" title={crashReport.path}>{crashReport.path}</div>

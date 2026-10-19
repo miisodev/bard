@@ -209,6 +209,12 @@ export interface AppState {
   sort: SortOrder;
   /** Absent on a build before the shelf; the shell then reads it as `bottom`. */
   shelfEdge?: ShelfEdge;
+  /**
+   * A storage problem worth telling the person about — a damaged history file
+   * set aside, or a file that could not be opened so Bard is running
+   * temporarily. Absent (or null) when opening was quiet.
+   */
+  storageNotice?: string | null;
 }
 
 export interface LicenseStatus {
@@ -234,6 +240,13 @@ export interface LicenseStatus {
    * check pending." message is rendered; this is the number behind it.
    */
   offlineLeaseDaysLeft?: number | null;
+  /**
+   * True while licence revalidation has failed for two or more cycles in a
+   * row: the service cannot be reached and Bard keeps retrying on its normal
+   * schedule. The licence keeps working on its offline lease; this only makes
+   * the retrying visible, and it clears the moment a check succeeds.
+   */
+  revalidationFailing?: boolean;
 }
 
 export interface UpdateInfo {
@@ -304,6 +317,53 @@ export interface PostprocessingSettings {
 export interface CrashReport {
   path: string;
   contents: string;
+}
+
+/** What a backup folder holds. `images` is the number of files copied. */
+export interface BackupCounts {
+  items: number;
+  sections: number;
+  packs: number;
+  attachments: number;
+  images: number;
+}
+
+/** The `manifest.json` a backup folder carries; the restore validates it. */
+export interface BackupManifest {
+  format: string;
+  formatVersion: number;
+  appVersion: string;
+  channel: string;
+  createdAt: number;
+  counts: BackupCounts;
+}
+
+export interface BackupSummary {
+  path: string;
+  counts: BackupCounts;
+}
+
+/**
+ * What `restoreFromBackup` answered. The first call asks —
+ * `needsConfirmation` carries the preview and changes nothing; a confirmed
+ * call answers `restored`, including where the replaced data was kept.
+ */
+export type RestoreOutcome =
+  | { outcome: "needsConfirmation"; preview: RestorePreview }
+  | {
+      outcome: "restored";
+      path: string;
+      counts: BackupCounts;
+      restartRequired: boolean;
+      previous: string;
+    };
+
+export interface RestorePreview {
+  path: string;
+  manifest: BackupManifest;
+  liveItems: number;
+  liveSections: number;
+  fresh: boolean;
 }
 
 export interface SavePostprocessingInput {

@@ -8,7 +8,7 @@
 //! transcript data, or provider secret.
 
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -63,6 +63,35 @@ const OFFLINE_REVALIDATION_GRACE_SECONDS: i64 = 3 * 24 * 60 * 60;
 /// How many 15-minute intervals make one heartbeat — four hours.
 const REVALIDATION_HEARTBEAT_TICKS: u64 = 16;
 static REFRESH_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+/// How many revalidation attempts in a row failed before the card says so.
+/// One transport blip is not worth a notice; two cycles is a pattern, and the
+/// notice clears the moment a check succeeds. The retry cadence itself is
+/// unchanged — this only makes it visible.
+const REVALIDATION_FAILURE_THRESHOLD: u64 = 2;
+
+/// Consecutive revalidation attempts that could not reach the service.
+static REVALIDATION_FAILURES: AtomicU64 = AtomicU64::new(0);
+
+fn revalidation_failures() -> u64 {
+    REVALIDATION_FAILURES.load(Ordering::Relaxed)
+}
+
+/// Whether the failure count has reached the point where the card should say
+/// "retrying". Pure over its input, so the boundary is testable.
+fn revalidation_failing(failures: u64) -> bool {
+    failures >= REVALIDATION_FAILURE_THRESHOLD
+}
+
+/// Record one revalidation outcome: a reached service clears the count, an
+/// unreachable one advances it.
+fn note_revalidation_outcome(reached: bool) {
+    if reached {
+        REVALIDATION_FAILURES.store(0, Ordering::Relaxed);
+    } else {
+        REVALIDATION_FAILURES.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 struct RefreshGuard;
 impl Drop for RefreshGuard {
@@ -136,6 +165,11 @@ pub struct LicenseStatus {
     /// validated against the service and no offline window is in play.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offline_lease_days_left: Option<i64>,
+    /// True while licence revalidation has failed for two or more cycles in a
+    /// row: the service cannot be reached and the client keeps retrying on its
+    /// normal schedule. The licence keeps working on its offline lease; this
+    /// only makes the retrying visible instead of silent.
+    pub revalidation_failing: bool,
 }
 
 /// The commercial terms, in one place. The UI must not hardcode these: a $20
@@ -157,6 +191,7 @@ impl LicenseStatus {
             activation_count: None,
             activation_limit: None,
             offline_lease_days_left: None,
+            revalidation_failing: false,
         }
     }
 }
@@ -589,6 +624,7 @@ fn status_from_receipt(
                 .saturating_sub(now)
                 .div_euclid(24 * 60 * 60)
         }),
+        revalidation_failing: false,
     }
 }
 
@@ -616,12 +652,19 @@ pub fn status(app: &tauri::AppHandle) -> LicenseStatus {
     if !crate::db::is_ready(app) {
         return LicenseStatus::unavailable();
     }
-    if let Some(cached) = STATUS_CACHE.get() {
-        return cached;
-    }
-    let computed = compute_status(app);
-    STATUS_CACHE.set(computed.clone());
-    computed
+    let mut status = match STATUS_CACHE.get() {
+        Some(cached) => cached,
+        None => {
+            let computed = compute_status(app);
+            STATUS_CACHE.set(computed.clone());
+            computed
+        }
+    };
+    // Stamped on every read rather than cached: the retry counter changes
+    // between two status reads, and the card has to clear the moment a check
+    // succeeds.
+    status.revalidation_failing = revalidation_failing(revalidation_failures());
+    status
 }
 
 fn compute_status(app: &tauri::AppHandle) -> LicenseStatus {
@@ -642,6 +685,7 @@ fn compute_status(app: &tauri::AppHandle) -> LicenseStatus {
             activation_count: None,
             activation_limit: None,
             offline_lease_days_left: None,
+            revalidation_failing: false,
         }
         .with_terms(app);
     }
@@ -662,6 +706,7 @@ fn compute_status(app: &tauri::AppHandle) -> LicenseStatus {
                 activation_count: None,
                 activation_limit: None,
                 offline_lease_days_left: None,
+                revalidation_failing: false,
             }
             .with_terms(app);
         }
@@ -679,6 +724,7 @@ fn compute_status(app: &tauri::AppHandle) -> LicenseStatus {
             activation_count: None,
             activation_limit: None,
             offline_lease_days_left: None,
+            revalidation_failing: false,
         }
         .with_terms(app);
     };
@@ -697,6 +743,7 @@ fn compute_status(app: &tauri::AppHandle) -> LicenseStatus {
             activation_count: None,
             activation_limit: None,
             offline_lease_days_left: None,
+            revalidation_failing: false,
         }
         .with_terms(app);
     }
@@ -713,6 +760,7 @@ fn compute_status(app: &tauri::AppHandle) -> LicenseStatus {
         activation_count: None,
         activation_limit: None,
         offline_lease_days_left: None,
+        revalidation_failing: false,
     }
     .with_terms(app)
 }
@@ -944,16 +992,25 @@ pub async fn refresh(app: &tauri::AppHandle) -> LicenseStatus {
     )
     .await;
     let refreshed = match result {
-        Ok(response) => match store_response_receipt(app, response, true, &key) {
-            Ok(status) => status,
-            Err(_) => status(app),
-        },
+        Ok(response) => {
+            // The service answered, so the retrying state clears even when the
+            // answer itself is rejected — the loop is talking to it again.
+            note_revalidation_outcome(true);
+            match store_response_receipt(app, response, true, &key) {
+                Ok(status) => status,
+                Err(_) => status(app),
+            }
+        }
         Err(LicenseError::Revoked) => {
+            note_revalidation_outcome(true);
             let _ = delete_credential_bounded(RECEIPT_USERNAME);
             let _ = crate::db::set_setting_checked(app, RECEIPT_SETTING, "");
             status(app)
         }
-        Err(_) => status(app),
+        Err(_) => {
+            note_revalidation_outcome(false);
+            status(app)
+        }
     };
     key.zeroize();
     invalidate_status();
@@ -1200,6 +1257,17 @@ mod tests {
             decode_receipt(fixture).expect("release public key must verify the canonical fixture");
         assert_eq!(receipt.key_id, "2026-01");
         assert_eq!(receipt.entitlement, "active");
+    }
+
+    #[test]
+    fn a_retrying_licence_is_flagged_only_after_two_failed_cycles() {
+        assert!(!revalidation_failing(0));
+        assert!(!revalidation_failing(1));
+        assert!(revalidation_failing(REVALIDATION_FAILURE_THRESHOLD));
+        assert!(revalidation_failing(REVALIDATION_FAILURE_THRESHOLD + 3));
+        // The field exists in every status shape, including the one that says
+        // the app is still starting.
+        assert!(!LicenseStatus::unavailable().revalidation_failing);
     }
 
     #[test]

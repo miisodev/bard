@@ -1,10 +1,25 @@
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-pub struct Db(pub Mutex<Option<Connection>>);
+/// The open database. Always open: [`open_or_recover`] never returns nothing,
+/// and the restore path holds this lock across its file swap, so no reader can
+/// observe the state between the old file closing and the new one opening.
+///
+/// It used to be `Mutex<Option<Connection>>`, and every read unwrapped it. A
+/// failed open then became a panic under `panic = "abort"` — a silent process
+/// death with no window, on a launch that showed nothing.
+pub struct Db(pub Mutex<Connection>);
+
+/// What opening the database has to report to a person — a damaged file set
+/// aside, a file that could not be opened, roaming data that could not be
+/// moved. Both `get_state` and the diagnostic report read it; nothing invents
+/// a value in it.
+pub struct DbNotice(pub Mutex<Option<String>>);
 
 /// Milliseconds since the Unix epoch, or 0 if the system clock is before it.
 ///
@@ -130,6 +145,11 @@ pub struct AppState {
     pub sort: String,
     /// The screen edge the shelf is docked to: one of `geometry::Edge`'s strings.
     pub shelf_edge: String,
+    /// A storage problem the person should know about — a damaged history file
+    /// set aside, a file that could not be opened. `None` when opening was
+    /// quiet; never invented.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_notice: Option<String>,
 }
 
 fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -140,8 +160,364 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::R
     Ok(columns.iter().any(|name| name == column))
 }
 
-pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
+/// The schema version this build writes. Migration snapshots are named with
+/// the version they were taken from, and `user_version` is written to match.
+const SCHEMA_VERSION: i64 = 4;
+
+/// How many pre-migration snapshots are kept beside the database.
+const MIGRATION_BACKUPS_KEPT: usize = 2;
+
+/// How many times opening an existing file is attempted before it is called
+/// unavailable. A file can be locked for a moment — a backup tool reading it,
+/// antivirus scanning it — and a retry turns that into an ordinary launch
+/// instead of a temporary database.
+const OPEN_ATTEMPTS: usize = 3;
+
+/// Every column added after the original schema. Each entry is checked before
+/// it runs, so applying the list to an older database adds only what is
+/// missing and to a current one adds nothing.
+const MIGRATIONS: &[(&str, &str, &str)] = &[
+    (
+        "items",
+        "section_id",
+        "ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL",
+    ),
+    ("items", "done", "ALTER TABLE items ADD COLUMN done INTEGER NOT NULL DEFAULT 0"),
+    ("items", "pinned_at", "ALTER TABLE items ADD COLUMN pinned_at INTEGER"),
+    (
+        "items",
+        "origin",
+        "ALTER TABLE items ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'",
+    ),
+    (
+        "custom_models",
+        "size_bytes",
+        "ALTER TABLE custom_models ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        "custom_models",
+        "sha256",
+        "ALTER TABLE custom_models ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "custom_models",
+        "ownership",
+        "ALTER TABLE custom_models ADD COLUMN ownership TEXT NOT NULL DEFAULT 'external'",
+    ),
+    (
+        "custom_models",
+        "compatibility",
+        "ALTER TABLE custom_models ADD COLUMN compatibility TEXT NOT NULL DEFAULT 'unverified'",
+    ),
+];
+
+pub fn init(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
+    configure(&conn, Some(path))?;
+    Ok(conn)
+}
+
+/// Set when [`open_or_recover`] had to replace or bypass the database file.
+///
+/// The startup orphan-image sweep reads it: a fresh database references none
+/// of the images beside it, so sweeping after a recovery would delete exactly
+/// the files the quarantined database was set aside to keep recoverable.
+static RECOVERED_THIS_LAUNCH: AtomicBool = AtomicBool::new(false);
+
+/// Whether this launch lost the use of the database file on disk — a damaged
+/// file quarantined, or a file that could not be opened at all.
+pub fn recovered_this_launch() -> bool {
+    RECOVERED_THIS_LAUNCH.load(Ordering::Relaxed)
+}
+
+/// Open the database at `path`, recovering from a corrupt file rather than
+/// dying on it.
+///
+/// Returns a connection that always works — the app must never hold state with
+/// no database under it — and a notice for a person when recovery changed the
+/// file or could not use it. Only `bard.db` and its `-wal`/`-shm` sidecars are
+/// touched: the images folder is never moved, so a quarantined database keeps
+/// every screenshot and drawing waiting for the file to be recovered.
+pub fn open_or_recover(path: &Path) -> (Connection, Option<String>) {
+    if path.exists() {
+        match open_existing(path) {
+            Existing::Ready(connection) => return (connection, None),
+            Existing::Unavailable(error) => {
+                crate::crash::record_event("db:open-failed");
+                log::warn!("could not open {}: {error}", path.display());
+                return (
+                    in_memory(),
+                    Some(
+                        "Bard could not open its history file, so it is running with a \
+                         temporary one. Another program may be using the file; close Bard \
+                         and open it again. Nothing on disk was changed."
+                            .into(),
+                    ),
+                );
+            }
+            Existing::Corrupt => match quarantine(path) {
+                Ok(kept) => match init(path) {
+                    Ok(connection) => {
+                        RECOVERED_THIS_LAUNCH.store(true, Ordering::Relaxed);
+                        crate::crash::record_event("db:quarantined");
+                        log::warn!("history file was damaged; kept as {}", kept.display());
+                        return (
+                            connection,
+                            Some(format!(
+                                "Bard found its history file damaged and set it aside as {}. \
+                                 It started a fresh history; your images were left untouched \
+                                 and the damaged file was kept.",
+                                kept.display()
+                            )),
+                        );
+                    }
+                    Err(error) => {
+                        crate::crash::record_event("db:recreate-failed");
+                        log::warn!("could not start a fresh history file: {error}");
+                        return (
+                            in_memory(),
+                            Some(
+                                "Bard found its history file damaged and could not start a \
+                                 fresh one, so it is running with a temporary history that \
+                                 will not be kept. The damaged file was left in place."
+                                    .into(),
+                            ),
+                        );
+                    }
+                },
+                Err(error) => {
+                    crate::crash::record_event("db:quarantine-failed");
+                    log::warn!("could not set the damaged history file aside: {error}");
+                    return (
+                        in_memory(),
+                        Some(
+                            "Bard found its history file damaged but could not set it aside, \
+                             so it is running with a temporary history. Nothing on disk was \
+                             changed."
+                                .into(),
+                        ),
+                    );
+                }
+            },
+        }
+    }
+    match init(path) {
+        Ok(connection) => (connection, None),
+        Err(error) => {
+            RECOVERED_THIS_LAUNCH.store(true, Ordering::Relaxed);
+            crate::crash::record_event("db:create-failed");
+            log::warn!("could not create {}: {error}", path.display());
+            (
+                in_memory(),
+                Some(
+                    "Bard could not create its history file, so it is running with a \
+                     temporary history that will not be kept."
+                        .into(),
+                ),
+            )
+        }
+    }
+}
+
+/// A working database with no file behind it, used when no file is usable.
+///
+/// The app keeps running — the alternative was a process that died on the
+/// first read — and everything written lands somewhere temporary, which the
+/// notice always says. Allocation failure here is the one case that cannot be
+/// handled: without memory a database is not the problem.
+pub fn in_memory() -> Connection {
+    RECOVERED_THIS_LAUNCH.store(true, Ordering::Relaxed);
+    let connection =
+        Connection::open_in_memory().expect("Bard could not allocate an in-memory database.");
+    if let Err(error) = configure(&connection, None) {
+        log::warn!("could not prepare the temporary database: {error}");
+    }
+    connection
+}
+
+enum Existing {
+    Ready(Connection),
+    Corrupt,
+    Unavailable(String),
+}
+
+/// The verdict of `PRAGMA quick_check`. Busy is deliberately its own case:
+/// a file someone else is using right now is not a damaged file, and moving
+/// it aside would turn a lock into data loss. Only `Corrupt` quarantines.
+enum Integrity {
+    Ok,
+    Corrupt(String),
+    Busy(String),
+}
+
+/// Open and prepare an existing file, retrying a transient lock.
+///
+/// Corruption is decided by `PRAGMA quick_check`, never by an open error: a
+/// file that merely cannot be opened right now is left exactly where it is,
+/// because moving it aside would turn a lock into data loss. `quick_check`
+/// failing is different — it means SQLite read the file and found it damaged.
+fn open_existing(path: &Path) -> Existing {
+    let mut last = String::new();
+    for attempt in 0..OPEN_ATTEMPTS {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+        let connection = match Connection::open(path) {
+            Ok(connection) => connection,
+            Err(error) => {
+                last = error.to_string();
+                continue;
+            }
+        };
+        // A short wait so a checkpoint or another process's brief lock does
+        // not read as a failure; the retry loop above covers the rest.
+        let _ = connection.busy_timeout(std::time::Duration::from_millis(500));
+        match quick_check(&connection) {
+            Integrity::Ok => {}
+            Integrity::Corrupt(verdict) => {
+                log::warn!("{} failed its integrity check: {verdict}", path.display());
+                return Existing::Corrupt;
+            }
+            Integrity::Busy(error) => {
+                last = error;
+                continue;
+            }
+        }
+        match configure(&connection, Some(path)) {
+            Ok(()) => return Existing::Ready(connection),
+            Err(error) => {
+                last = error.to_string();
+                continue;
+            }
+        }
+    }
+    Existing::Unavailable(last)
+}
+
+/// The first verdict of `PRAGMA quick_check`: `ok`, or the damage SQLite
+/// reports. This reads every page and index in the file and is the check the
+/// open path runs before a person can trust an empty timeline either way.
+fn quick_check(conn: &Connection) -> Integrity {
+    match conn.query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0)) {
+        Ok(verdict) if verdict == "ok" => Integrity::Ok,
+        Ok(verdict) => Integrity::Corrupt(verdict),
+        Err(error) if is_busy(&error) => Integrity::Busy(error.to_string()),
+        Err(error) => Integrity::Corrupt(error.to_string()),
+    }
+}
+
+/// SQLite's two "someone else is using it" answers, as opposed to damage.
+fn is_busy(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(inner, _)
+            if matches!(
+                inner.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+    )
+}
+
+/// Move a damaged database and its sidecars aside, timestamped, and return the
+/// new name. The images are deliberately not part of this: they are the bulk
+/// of the user's data and nothing is wrong with them.
+fn quarantine(path: &Path) -> Result<PathBuf, String> {
+    let kept = path.with_file_name(format!("bard.db.corrupt-{}", now_ms()));
+    std::fs::rename(path, &kept).map_err(|error| error.to_string())?;
+    let name = kept
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "bard.db.corrupt".into());
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = path.with_file_name(format!("bard.db{suffix}"));
+        if sidecar.exists() {
+            let _ = std::fs::rename(&sidecar, kept.with_file_name(format!("{name}{suffix}")));
+        }
+    }
+    Ok(kept)
+}
+
+/// Copy the database aside before a migration rewrites its schema.
+///
+/// `VACUUM INTO` writes a consistent snapshot — including everything still in
+/// the write-ahead log — to a new file, so the snapshot is what the database
+/// actually contained rather than what the main file happened to hold. The
+/// copy is named with the schema version it came from and the time it was
+/// taken; the newest [`MIGRATION_BACKUPS_KEPT`] are kept.
+fn snapshot_before_migration(
+    conn: &Connection,
+    db_path: &Path,
+    from_version: i64,
+) -> Result<PathBuf, String> {
+    let directory = db_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let stamp = now_ms();
+    let mut target = directory.join(format!("bard.db.bak-{from_version}-{stamp}"));
+    for attempt in 1..100 {
+        if !target.exists() {
+            break;
+        }
+        target = directory.join(format!("bard.db.bak-{from_version}-{stamp}-{attempt}"));
+    }
+    conn.execute(
+        "VACUUM INTO ?1",
+        params![target.to_string_lossy().to_string()],
+    )
+    .map_err(|error| format!("could not copy the database aside: {error}"))?;
+    prune_migration_backups(directory, MIGRATION_BACKUPS_KEPT);
+    Ok(target)
+}
+
+/// Keep the newest `keep` `bard.db.bak-*` snapshots. Best effort: a file that
+/// cannot be removed is left rather than failing the migration over it.
+fn prune_migration_backups(directory: &Path, keep: usize) -> usize {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return 0;
+    };
+    let mut backups: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_type()
+                .map(|kind| kind.is_file())
+                .unwrap_or(false)
+        })
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("bard.db.bak-")
+        })
+        .map(|entry| entry.path())
+        .collect();
+    backups.sort_by(|left, right| {
+        let left_modified = left
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        let right_modified = right
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        left_modified
+            .cmp(&right_modified)
+            .then_with(|| left.cmp(right))
+    });
+    if backups.len() <= keep {
+        return 0;
+    }
+    let mut removed = 0;
+    for path in &backups[..backups.len() - keep] {
+        if std::fs::remove_file(path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+fn configure(conn: &Connection, db_path: Option<&Path>) -> rusqlite::Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     // NORMAL is the documented durability companion to WAL, and the right
     // trade here. SQLite documents NORMAL in WAL mode as application-crash
@@ -167,6 +543,38 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
     // a local-first product whose pitch is that your data is yours, and the delete
     // path is not a hot loop.
     conn.pragma_update(None, "secure_delete", "ON")?;
+
+    // Detect a migration before the base schema is created: `CREATE TABLE IF
+    // NOT EXISTS` makes every later check pass, so "did this file already hold
+    // a database" has to be answered first. A file that already holds a
+    // person's history is snapshotted before any schema change touches it.
+    let preexisting_items = table_has_column(conn, "items", "id")?;
+    if preexisting_items {
+        if let Some(db_path) = db_path {
+            let version: i64 = conn
+                .query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap_or(0);
+            let missing_column = MIGRATIONS
+                .iter()
+                .any(|(table, column, _)| !table_has_column(conn, table, column).unwrap_or(true));
+            let missing_packs = !table_has_column(conn, "packs", "id")?;
+            if version < SCHEMA_VERSION || missing_column || missing_packs {
+                match snapshot_before_migration(conn, db_path, version) {
+                    Ok(path) => {
+                        crate::crash::record_event("db:migration-snapshot");
+                        log::info!("migration snapshot written to {}", path.display());
+                    }
+                    // A snapshot that could not be taken does not block the
+                    // migration: refusing to open the database is the worse
+                    // failure. It is recorded so the gap is visible.
+                    Err(error) => {
+                        crate::crash::record_event("db:migration-snapshot-failed");
+                        log::warn!("could not snapshot before a schema migration: {error}");
+                    }
+                }
+            }
+        }
+    }
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS items(
            id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -217,43 +625,9 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
     // All schema changes are one transaction. The old implementation ignored
     // every ALTER error, which could leave a half-migrated database that only
     // failed later through an unrelated unwrap.
-    let compatibility_existed = table_has_column(&conn, "custom_models", "compatibility")?;
+    let compatibility_existed = table_has_column(conn, "custom_models", "compatibility")?;
     let transaction = conn.unchecked_transaction()?;
-    let migrations: &[(&str, &str, &str)] = &[
-        (
-            "items",
-            "section_id",
-            "ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL",
-        ),
-        ("items", "done", "ALTER TABLE items ADD COLUMN done INTEGER NOT NULL DEFAULT 0"),
-        ("items", "pinned_at", "ALTER TABLE items ADD COLUMN pinned_at INTEGER"),
-        (
-            "items",
-            "origin",
-            "ALTER TABLE items ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'",
-        ),
-        (
-            "custom_models",
-            "size_bytes",
-            "ALTER TABLE custom_models ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0",
-        ),
-        (
-            "custom_models",
-            "sha256",
-            "ALTER TABLE custom_models ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''",
-        ),
-        (
-            "custom_models",
-            "ownership",
-            "ALTER TABLE custom_models ADD COLUMN ownership TEXT NOT NULL DEFAULT 'external'",
-        ),
-        (
-            "custom_models",
-            "compatibility",
-            "ALTER TABLE custom_models ADD COLUMN compatibility TEXT NOT NULL DEFAULT 'unverified'",
-        ),
-    ];
-    for (table, column, statement) in migrations {
+    for (table, column, statement) in MIGRATIONS {
         if !table_has_column(&transaction, table, column)? {
             transaction.execute(statement, [])?;
         }
@@ -265,7 +639,7 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
         )?;
     }
     // v4 adds packs: named groups of kept items for the shelf's Packs zone.
-    transaction.execute_batch(
+    transaction.execute_batch(&format!(
         "CREATE INDEX IF NOT EXISTS idx_items_origin_created
            ON items(origin, created_at);
          CREATE TABLE IF NOT EXISTS packs(
@@ -280,35 +654,35 @@ pub fn init(path: &std::path::Path) -> rusqlite::Result<Connection> {
            PRIMARY KEY (pack_id, item_id)
          );
          CREATE INDEX IF NOT EXISTS idx_pack_items_item ON pack_items(item_id);
-         PRAGMA user_version = 4;",
-    )?;
+         PRAGMA user_version = {SCHEMA_VERSION};",
+    ))?;
     transaction.commit()?;
-    Ok(conn)
+    Ok(())
 }
 
 /// Whether the database is open.
 ///
-/// Window events fire before `setup()` runs, so anything reading settings from
-/// that path has to ask first — `with_conn` unwraps, and a focus event arriving
-/// during window creation was enough to panic the whole app on launch.
+/// Window events fire before the builder's managed state exists, so anything
+/// reading settings from that path has to ask first. The connection itself is
+/// always present once [`Db`] is managed: [`open_or_recover`] never fails to
+/// yield one.
 pub fn is_ready(app: &AppHandle) -> bool {
-    app.try_state::<Db>()
-        .map(|db| db.0.lock().map(|g| g.is_some()).unwrap_or(false))
-        .unwrap_or(false)
+    app.try_state::<Db>().is_some()
 }
 
 fn with_conn<T>(app: &AppHandle, f: impl FnOnce(&Connection) -> T) -> T {
     let db = app.state::<Db>();
-    let guard = db.0.lock().unwrap();
-    let conn = guard.as_ref().unwrap();
-    f(conn)
+    // A poisoned lock means a reader panicked while holding it. Recovering the
+    // guard keeps the panic from taking a second thread down on the way out —
+    // under `panic = "abort"` there is no unwinding for a second chance.
+    let guard = db.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    f(&guard)
 }
 
 fn with_conn_mut<T>(app: &AppHandle, f: impl FnOnce(&mut Connection) -> T) -> T {
     let db = app.state::<Db>();
-    let mut guard = db.0.lock().unwrap();
-    let conn = guard.as_mut().unwrap();
-    f(conn)
+    let mut guard = db.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    f(&mut guard)
 }
 
 pub fn get_setting(app: &AppHandle, key: &str) -> Option<String> {
@@ -562,18 +936,27 @@ fn default_section(app: &AppHandle) -> i64 {
 
 pub fn list_sections(app: &AppHandle) -> Vec<Section> {
     with_conn(app, |c| {
-        let mut stmt = c
-            .prepare("SELECT id, name FROM sections ORDER BY id")
-            .unwrap();
-        stmt.query_map([], |r| {
+        // A statement that cannot be prepared or stepped is recorded and
+        // answered with nothing. It used to unwrap, which under `panic = "abort"`
+        // turned an unreadable database into a silent process death.
+        let Ok(mut stmt) = c.prepare("SELECT id, name FROM sections ORDER BY id") else {
+            crate::crash::record_event("db:sections-read-failed");
+            return Vec::new();
+        };
+        let sections = match stmt.query_map([], |r| {
             Ok(Section {
                 id: r.get(0)?,
                 name: r.get(1)?,
             })
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default()
+        }) {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(error) => {
+                crate::crash::record_event("db:sections-read-failed");
+                log::warn!("could not read sections: {error}");
+                Vec::new()
+            }
+        };
+        sections
     })
 }
 
@@ -626,42 +1009,49 @@ pub fn insert_attachment(app: &AppHandle, item_id: i64, path: &str) -> i64 {
 }
 
 pub fn list_attachments_for(app: &AppHandle, item_id: i64) -> Vec<Attachment> {
-    with_conn(app, |c| {
-        let mut stmt = c
-            .prepare(
-                "SELECT id, item_id, path, position FROM attachments WHERE item_id = ?1 ORDER BY position",
-            )
-            .unwrap();
-        stmt.query_map(params![item_id], |r| {
-            Ok(Attachment {
-                id: r.get(0)?,
-                item_id: r.get(1)?,
-                path: r.get(2)?,
-                position: r.get(3)?,
-            })
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default()
-    })
+    read_attachments(
+        app,
+        "SELECT id, item_id, path, position FROM attachments WHERE item_id = ?1 ORDER BY position",
+        params![item_id],
+    )
 }
 
 pub fn list_all_attachments(app: &AppHandle) -> Vec<Attachment> {
+    read_attachments(
+        app,
+        "SELECT id, item_id, path, position FROM attachments ORDER BY id",
+        [],
+    )
+}
+
+/// The attachment rows for one statement, or nothing when it cannot be read.
+/// The same shape `list_items` uses: a failure is recorded, never a panic.
+fn read_attachments(
+    app: &AppHandle,
+    sql: &str,
+    parameters: impl rusqlite::Params,
+) -> Vec<Attachment> {
     with_conn(app, |c| {
-        let mut stmt = c
-            .prepare("SELECT id, item_id, path, position FROM attachments ORDER BY id")
-            .unwrap();
-        stmt.query_map([], |r| {
+        let Ok(mut stmt) = c.prepare(sql) else {
+            crate::crash::record_event("db:attachments-read-failed");
+            return Vec::new();
+        };
+        let attachments = match stmt.query_map(parameters, |r| {
             Ok(Attachment {
                 id: r.get(0)?,
                 item_id: r.get(1)?,
                 path: r.get(2)?,
                 position: r.get(3)?,
             })
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default()
+        }) {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(error) => {
+                crate::crash::record_event("db:attachments-read-failed");
+                log::warn!("could not read attachments: {error}");
+                Vec::new()
+            }
+        };
+        attachments
     })
 }
 
@@ -830,15 +1220,21 @@ pub fn item_files(app: &AppHandle, id: i64) -> Vec<String> {
 
 pub fn list_items(app: &AppHandle) -> Vec<Item> {
     with_conn(app, |c| {
-        let mut stmt = c
-            .prepare(&format!(
-                "SELECT {ITEM_COLUMNS} FROM items ORDER BY id DESC"
-            ))
-            .unwrap();
-        stmt.query_map([], item_from_row)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap_or_default()
+        let Ok(mut stmt) = c.prepare(&format!(
+            "SELECT {ITEM_COLUMNS} FROM items ORDER BY id DESC"
+        )) else {
+            crate::crash::record_event("db:items-read-failed");
+            return Vec::new();
+        };
+        let items = match stmt.query_map([], item_from_row) {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(error) => {
+                crate::crash::record_event("db:items-read-failed");
+                log::warn!("could not read items: {error}");
+                Vec::new()
+            }
+        };
+        items
     })
 }
 
@@ -1557,15 +1953,21 @@ pub fn clear_history(app: &AppHandle) -> Result<(), String> {
 
 pub fn clear_captures(app: &AppHandle) -> Result<(), String> {
     let ids: Vec<i64> = with_conn(app, |c| {
-        let mut stmt = c
-            .prepare(
-                "SELECT id FROM items WHERE origin IN ('clipboard', 'dictation') AND favorite = 0",
-            )
-            .unwrap();
-        stmt.query_map([], |row| row.get(0))
-            .unwrap()
-            .filter_map(Result::ok)
-            .collect()
+        let Ok(mut stmt) = c.prepare(
+            "SELECT id FROM items WHERE origin IN ('clipboard', 'dictation') AND favorite = 0",
+        ) else {
+            crate::crash::record_event("db:clear-captures-read-failed");
+            return Vec::new();
+        };
+        let captures = match stmt.query_map([], |row| row.get(0)) {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(error) => {
+                crate::crash::record_event("db:clear-captures-read-failed");
+                log::warn!("could not read captures to clear: {error}");
+                Vec::new()
+            }
+        };
+        captures
     });
     delete_items_with_files(app, &ids)
 }
@@ -1676,15 +2078,21 @@ pub fn list_custom_models(app: &AppHandle) -> Vec<CustomModel> {
         return Vec::new();
     }
     with_conn(app, |c| {
-        let mut stmt = c
-            .prepare(&format!(
-                "SELECT {CUSTOM_MODEL_COLUMNS} FROM custom_models ORDER BY created_at"
-            ))
-            .unwrap();
-        stmt.query_map([], custom_model_from_row)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap_or_default()
+        let Ok(mut stmt) = c.prepare(&format!(
+            "SELECT {CUSTOM_MODEL_COLUMNS} FROM custom_models ORDER BY created_at"
+        )) else {
+            crate::crash::record_event("db:models-read-failed");
+            return Vec::new();
+        };
+        let models = match stmt.query_map([], custom_model_from_row) {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(error) => {
+                crate::crash::record_event("db:models-read-failed");
+                log::warn!("could not read custom models: {error}");
+                Vec::new()
+            }
+        };
+        models
     })
 }
 
@@ -1753,6 +2161,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
             background_color: String::new(),
             sort: SORT_ORDERS[0].into(),
             shelf_edge: "bottom".into(),
+            storage_notice: None,
         };
     }
     AppState {
@@ -1775,7 +2184,15 @@ pub fn get_state(app: &AppHandle) -> AppState {
         background_color: get_setting(app, "background_color").unwrap_or_default(),
         sort: sort_order(app),
         shelf_edge: crate::geometry::shelf_edge(app).as_str().into(),
+        storage_notice: storage_notice(app),
     }
+}
+
+/// What opening the database reported, if anything. Read by `get_state` and by
+/// the diagnostic report, so both surfaces say the same thing.
+pub fn storage_notice(app: &AppHandle) -> Option<String> {
+    app.try_state::<DbNotice>()
+        .and_then(|notice| notice.0.lock().ok().and_then(|guard| guard.clone()))
 }
 
 /// The orders the timeline can take. Newest first is the default and the
@@ -2321,6 +2738,151 @@ mod tests {
             .unwrap();
         assert_eq!(version, 4);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_old_schema_is_snapshotted_before_it_is_migrated() {
+        let dir = std::env::temp_dir().join(format!("bard-migration-backup-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bard.db");
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(
+            "CREATE TABLE items(
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 content TEXT NOT NULL,
+                 kind TEXT NOT NULL DEFAULT 'text',
+                 image_path TEXT,
+                 favorite INTEGER NOT NULL DEFAULT 0,
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );
+             INSERT INTO items(content, kind, favorite, created_at, updated_at)
+               VALUES('kept', 'text', 0, 1, 1);
+             PRAGMA user_version = 3;",
+        )
+        .unwrap();
+        drop(old);
+
+        let (migrated, notice) = open_or_recover(&path);
+        assert!(notice.is_none(), "a healthy file opens quietly: {notice:?}");
+
+        // The pre-migration copy is beside the database, named with the
+        // version it came from, and it holds the schema before the migration.
+        let backups: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("bard.db.bak-3-"))
+            .collect();
+        assert_eq!(
+            backups.len(),
+            1,
+            "expected one v3 snapshot, got {backups:?}"
+        );
+        let snapshot = Connection::open(dir.join(&backups[0])).unwrap();
+        let content: String = snapshot
+            .query_row("SELECT content FROM items", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(content, "kept");
+        let snapshot_version: i64 = snapshot
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(snapshot_version, 3);
+        let live_version: i64 = migrated
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(live_version, SCHEMA_VERSION);
+        drop(snapshot);
+        drop(migrated);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn migration_backups_rotate_and_keep_the_newest_two() {
+        let dir = std::env::temp_dir().join(format!("bard-backup-rotation-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for index in 1..=4 {
+            std::fs::write(dir.join(format!("bard.db.bak-3-{index}")), b"x").unwrap();
+            // Distinct modification times, so "newest two" is unambiguous.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let removed = prune_migration_backups(&dir, MIGRATION_BACKUPS_KEPT);
+        assert_eq!(removed, 2);
+        let mut kept: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        kept.sort();
+        assert_eq!(kept, ["bard.db.bak-3-3", "bard.db.bak-3-4"]);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_corrupt_database_is_quarantined_and_replaced() {
+        let dir = std::env::temp_dir().join(format!("bard-quarantine-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bard.db");
+        // A plausible-looking header followed by garbage is what a truncated
+        // write leaves: SQLite opens it and quick_check reports the damage.
+        let mut bytes = b"SQLite format 3\0".to_vec();
+        bytes.extend(std::iter::repeat_n(0xAB, 4096));
+        std::fs::write(&path, &bytes).unwrap();
+
+        let (connection, notice) = open_or_recover(&path);
+        let notice = notice.expect("a quarantined file has to be reported to a person");
+        assert!(notice.contains("damaged"), "{notice}");
+        assert!(recovered_this_launch());
+        // The fresh database works, and the damaged file was kept, not deleted.
+        connection.execute("SELECT 1 FROM items", []).unwrap();
+        let kept: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("bard.db.corrupt-"))
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(std::fs::read(dir.join(&kept[0])).unwrap(), bytes);
+        drop(connection);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_locked_database_is_reported_not_quarantined() {
+        let dir = std::env::temp_dir().join(format!("bard-locked-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bard.db");
+        // A rollback-journal EXCLUSIVE lock blocks readers, unlike WAL, and is
+        // the shape of "the file is being used by another process".
+        let holder = init(&path).unwrap();
+        holder
+            .execute_batch("PRAGMA journal_mode = DELETE;")
+            .unwrap();
+        holder.execute_batch("BEGIN EXCLUSIVE;").unwrap();
+
+        let (connection, notice) = open_or_recover(&path);
+        assert!(
+            notice.is_some(),
+            "a file that cannot be opened has to be said out loud"
+        );
+        // The locked file stays exactly where it is: a lock is not damage.
+        assert!(path.exists());
+        assert!(
+            !std::fs::read_dir(&dir).unwrap().flatten().any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("bard.db.corrupt-")
+            }),
+            "a locked database must never be quarantined"
+        );
+        // The fallback still answers queries for the time being.
+        connection.execute("SELECT 1 FROM items", []).unwrap();
+
+        let _ = holder.execute_batch("ROLLBACK;");
+        drop(holder);
+        drop(connection);
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

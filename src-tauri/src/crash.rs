@@ -232,6 +232,26 @@ fn numbered_lifecycle_path(directory: &Path, index: u32) -> PathBuf {
     directory.join(format!("lifecycle-{index}.log"))
 }
 
+/// The tail of the newest lifecycle log, for the diagnostic report: the last
+/// `max_lines` lines, oldest first. A missing file is an empty string; a file
+/// that cannot be read says so rather than looking like "nothing happened".
+pub fn lifecycle_tail(directory: &Path, max_lines: usize) -> String {
+    let path = directory.join("lifecycle.log");
+    match read_bounded(&path) {
+        Ok(contents) => {
+            let lines: Vec<&str> = contents.lines().collect();
+            let start = lines.len().saturating_sub(max_lines);
+            let mut tail = lines[start..].join("\n");
+            if !tail.is_empty() {
+                tail.push('\n');
+            }
+            tail
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => format!("[lifecycle log unreadable: {error}]\n"),
+    }
+}
+
 fn create_crash_directory(directory: &Path) -> io::Result<()> {
     fs::create_dir_all(directory)
 }
@@ -709,5 +729,22 @@ mod tests {
         assert!(latest.contents.len() <= MAX_LOG_BYTES);
         assert!(latest.contents.ends_with(REPORT_TRUNCATION_MARKER));
         assert!(latest_path.metadata().unwrap().len() <= MAX_LOG_BYTES as u64);
+    }
+
+    #[test]
+    fn lifecycle_tail_keeps_only_the_newest_lines() {
+        let root = TestDirectory::new("lifecycle-tail");
+        create_crash_directory(root.path()).unwrap();
+        let mut file = File::create(root.path().join("lifecycle.log")).unwrap();
+        for index in 0..10 {
+            writeln!(file, "line {index}").unwrap();
+        }
+        drop(file);
+
+        assert_eq!(lifecycle_tail(root.path(), 3), "line 7\nline 8\nline 9\n");
+        assert_eq!(lifecycle_tail(root.path(), 100).lines().count(), 10);
+        // A directory that never recorded anything answers with nothing
+        // rather than a fabricated line.
+        assert_eq!(lifecycle_tail(&root.path().join("missing"), 3), "");
     }
 }

@@ -132,6 +132,9 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
   // The order the shelf is in, for the one decision the capture handler makes
   // from the event listener's scope: whether a splice is the whole update.
   const sortRef = useRef<SortOrder>("newest");
+  // The storage notice is read once per distinct message. It is state, not an
+  // event, because the failure happens before any window exists to toast into.
+  const storageNoticeShown = useRef<string | null>(null);
 
   useEffect(() => {
     setActiveItemId(suppliedActiveItemId ?? null);
@@ -198,6 +201,14 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
           setState(next);
           if (next.activeItemId !== undefined) setActiveItemId(next.activeItemId);
           setLoadError(null);
+          // A damaged history file is handled before a window can exist, so
+          // the notice travels in the state every surface already reads. It is
+          // shown once per distinct message; a relaunch re-reports it because
+          // the file is still there.
+          if (next.storageNotice && next.storageNotice !== storageNoticeShown.current) {
+            storageNoticeShown.current = next.storageNotice;
+            toast({ text: next.storageNotice, tone: "error" });
+          }
         })
         .catch((error: unknown) => {
           if (alive) setLoadError(errorText(error, "Bard could not load its local state."));

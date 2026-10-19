@@ -287,6 +287,54 @@ pub fn get_crash_report() -> Result<Option<CrashReport>, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Everything support needs, in one copyable block: versions, storage state,
+/// the latest crash report and the tail of the lifecycle log. Local only —
+/// it reads files and writes the clipboard; nothing leaves the machine.
+#[tauri::command]
+pub async fn copy_diagnostic_report(app: AppHandle) -> Result<(), String> {
+    let report = diagnostic_report(&app);
+    crate::paste::set_text(&app, &report)
+}
+
+fn diagnostic_report(app: &AppHandle) -> String {
+    let logs = crate::paths::logs_dir();
+    let mut out = String::from("bard diagnostics\n");
+    out.push_str(&format!("app_version: {}\n", env!("CARGO_PKG_VERSION")));
+    out.push_str(&format!("channel: {}\n", crate::packaging::channel()));
+    out.push_str(&format!("os: {}\n", std::env::consts::OS));
+    out.push_str(&format!("arch: {}\n", std::env::consts::ARCH));
+    out.push_str(&format!("generated_unix_ms: {}\n", db::now_ms()));
+    if let Some(notice) = db::storage_notice(app) {
+        out.push_str(&format!("storage: {notice}\n"));
+    }
+    let status = crate::license::status(app);
+    out.push_str(&format!("licence_state: {}\n", status.state));
+    out.push_str(&format!(
+        "licence_revalidation_failing: {}\n",
+        status.revalidation_failing
+    ));
+    out.push_str("\n--- latest crash report ---\n");
+    match crate::crash::read_latest_log(&logs) {
+        Ok(Some(log)) => {
+            out.push_str(&format!("path: {}\n", log.path.to_string_lossy()));
+            out.push_str(&log.contents);
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        Ok(None) => out.push_str("(none recorded)\n"),
+        Err(error) => out.push_str(&format!("(unreadable: {error})\n")),
+    }
+    out.push_str("\n--- lifecycle (recent) ---\n");
+    let tail = crate::crash::lifecycle_tail(&logs, 60);
+    if tail.is_empty() {
+        out.push_str("(none recorded)\n");
+    } else {
+        out.push_str(&tail);
+    }
+    out
+}
+
 #[tauri::command]
 pub async fn check_for_update(
     app: AppHandle,
@@ -695,45 +743,13 @@ pub fn add_note_to_image(app: AppHandle, id: i64) {
 #[tauri::command]
 pub async fn export_markdown(app: AppHandle) -> Result<String, String> {
     let state = db::get_state(&app);
-    let mut out = String::from("# Bard export\n\n");
-    let mut unfiled: Vec<&db::Item> = vec![];
-    let mut by_section: Vec<(i64, &db::Item)> = vec![];
-    for item in state.items.iter() {
-        match item.section_id {
-            None => unfiled.push(item),
-            Some(s) => by_section.push((s, item)),
-        }
-    }
-    for item in &unfiled {
-        out.push_str(&format!("- {}\n", item.content.replace('\n', "\n  ")));
-    }
-    for section in state.sections {
-        if !unfiled.is_empty() {
-            out.push('\n');
-            unfiled.clear();
-        }
-        let items: Vec<_> = by_section
-            .iter()
-            .filter(|(s, _)| *s == section.id)
-            .map(|(_, i)| *i)
-            .collect();
-        if items.is_empty() {
-            continue;
-        }
-        out.push_str(&format!("\n## {}\n\n", section.name));
-        for item in items {
-            if item.kind == "image" {
-                let name = item
-                    .image_path
-                    .as_deref()
-                    .and_then(|p| std::path::Path::new(p).file_name())
-                    .and_then(|f| f.to_str())
-                    .unwrap_or("image");
-                out.push_str(&format!("- ![image](images/{})\n", name));
-            } else {
-                out.push_str(&format!("- {}\n", item.content.replace('\n', "\n  ")));
-            }
-        }
+    let mut attachments: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
+    for attachment in &state.attachments {
+        attachments
+            .entry(attachment.item_id)
+            .or_default()
+            .push(attachment.path.clone());
     }
     // The export directory is a folder the person chose through the native
     // picker, so it is written into as-is and never created. The old code called
@@ -749,9 +765,137 @@ pub async fn export_markdown(app: AppHandle) -> Result<String, String> {
     if !dir.is_dir() {
         return Err("Choose a folder to export to in Data › Export folder.".into());
     }
-    let path = dir.join("bard-export.md");
-    std::fs::write(&path, out).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
+    export_markdown_into(&dir, &state.sections, &state.items, &attachments)?;
+    Ok(dir.join("bard-export.md").to_string_lossy().to_string())
+}
+
+/// Write `bard-export.md` and every file it references into `dir`.
+///
+/// The previous export wrote one Markdown file whose image links pointed into
+/// an `images/` folder it never created and dropped attachments entirely, so an
+/// export made before a reinstall opened with dead links and missing files.
+/// The export is the product's only portability promise: it now carries the
+/// files it names, and says plainly when one cannot be read.
+fn export_markdown_into(
+    dir: &Path,
+    sections: &[db::Section],
+    items: &[db::Item],
+    attachments: &std::collections::HashMap<i64, Vec<String>>,
+) -> Result<(), String> {
+    let mut used = std::collections::HashSet::new();
+    let mut out = String::from(
+        "# Bard export\n\nImages are written into `images/` and attached files into `files/`, beside this file.\n",
+    );
+    let mut unfiled: Vec<&db::Item> = vec![];
+    let mut by_section: Vec<(i64, &db::Item)> = vec![];
+    for item in items {
+        match item.section_id {
+            None => unfiled.push(item),
+            Some(section) => by_section.push((section, item)),
+        }
+    }
+    for item in &unfiled {
+        out.push_str(&format!("- {}\n", item.content.replace('\n', "\n  ")));
+    }
+    for section in sections {
+        if !unfiled.is_empty() {
+            out.push('\n');
+            unfiled.clear();
+        }
+        let section_items: Vec<_> = by_section
+            .iter()
+            .filter(|(id, _)| *id == section.id)
+            .map(|(_, item)| *item)
+            .collect();
+        if section_items.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("\n## {}\n\n", section.name));
+        for item in section_items {
+            if item.kind == "image" {
+                match item
+                    .image_path
+                    .as_deref()
+                    .and_then(|path| export_asset(path, dir, "images", &mut used))
+                {
+                    Some(link) => out.push_str(&format!("- ![image]({link})\n")),
+                    None => out.push_str(&format!(
+                        "- (image could not be exported: {})\n",
+                        source_name(item.image_path.as_deref().unwrap_or_default())
+                    )),
+                }
+            } else {
+                out.push_str(&format!("- {}\n", item.content.replace('\n', "\n  ")));
+            }
+            for path in attachments.get(&item.id).into_iter().flatten() {
+                match export_asset(path, dir, "files", &mut used) {
+                    Some(link) => out.push_str(&format!(
+                        "  - attachment: [{}]({link})\n",
+                        source_name(path)
+                    )),
+                    None => out.push_str(&format!(
+                        "  - attachment could not be exported: {}\n",
+                        source_name(path)
+                    )),
+                }
+            }
+        }
+    }
+    std::fs::write(dir.join("bard-export.md"), out).map_err(|error| error.to_string())
+}
+
+/// Copy one referenced file into `dir/<folder>`, returning the relative link
+/// the Markdown carries. `None` means the source could not be read; the caller
+/// writes a truthful marker instead of a link that opens nothing.
+fn export_asset(
+    source: &str,
+    dir: &Path,
+    folder: &str,
+    used: &mut std::collections::HashSet<String>,
+) -> Option<String> {
+    let source = Path::new(source);
+    if !source.is_file() {
+        return None;
+    }
+    let name = unique_export_name(&source_name(&source.to_string_lossy()), used);
+    let target = dir.join(folder);
+    std::fs::create_dir_all(&target).ok()?;
+    std::fs::copy(source, target.join(&name)).ok()?;
+    Some(format!("{folder}/{name}"))
+}
+
+/// The name a stored path will be exported as: its file name, or a stand-in
+/// when the stored value has none.
+fn source_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "file".into())
+}
+
+/// Keep the stored file name where possible and make it unique when two
+/// different files share one. Windows compares names without case, so two
+/// files that differ only in case are one name here too.
+fn unique_export_name(name: &str, used: &mut std::collections::HashSet<String>) -> String {
+    if used.insert(name.to_lowercase()) {
+        return name.to_string();
+    }
+    let path = Path::new(name);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+    let extension = path.extension().and_then(|e| e.to_str());
+    for index in 2..1000 {
+        let candidate = match extension {
+            Some(extension) => format!("{stem}-{index}.{extension}"),
+            None => format!("{stem}-{index}"),
+        };
+        if used.insert(candidate.to_lowercase()) {
+            return candidate;
+        }
+    }
+    let fallback = format!("file-{}", used.len() + 1);
+    used.insert(fallback.to_lowercase());
+    fallback
 }
 
 #[tauri::command]
@@ -1982,6 +2126,95 @@ mod acl_tests {
             missing.is_empty(),
             "commands the ACL would refuse:\n{}",
             missing.join("\n")
+        );
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    fn test_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("bard-export-{label}-{}", db::now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn item(
+        id: i64,
+        section: Option<i64>,
+        content: &str,
+        kind: &str,
+        image: Option<&str>,
+    ) -> db::Item {
+        db::Item {
+            id,
+            section_id: section,
+            content: content.into(),
+            kind: kind.into(),
+            image_path: image.map(str::to_string),
+            origin: "manual".into(),
+            favorite: 0,
+            done: 0,
+            created_at: 0,
+            updated_at: 0,
+            pinned_at: None,
+        }
+    }
+
+    #[test]
+    fn an_export_carries_every_file_it_links_and_marks_the_missing() {
+        let root = test_dir("fidelity");
+        let source = root.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        let image = source.join("shot.png");
+        std::fs::write(&image, b"png").unwrap();
+        let attachment = source.join("clip.txt");
+        std::fs::write(&attachment, b"attached").unwrap();
+        let missing = source.join("gone.png").to_string_lossy().to_string();
+
+        let items = vec![
+            item(1, None, "keep this", "text", None),
+            item(2, Some(7), "", "image", Some(&image.to_string_lossy())),
+            item(3, Some(7), "", "image", Some(&missing)),
+            item(4, Some(7), "note", "text", None),
+        ];
+        let mut attachments = std::collections::HashMap::new();
+        attachments.insert(4, vec![attachment.to_string_lossy().to_string()]);
+        let sections = vec![db::Section {
+            id: 7,
+            name: "Work".into(),
+        }];
+        let dir = root.join("out");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        export_markdown_into(&dir, &sections, &items, &attachments).unwrap();
+
+        let markdown = std::fs::read_to_string(dir.join("bard-export.md")).unwrap();
+        assert!(markdown.contains("- keep this"));
+        assert!(markdown.contains("## Work"));
+        assert!(markdown.contains("![image](images/shot.png)"));
+        assert!(dir.join("images").join("shot.png").is_file());
+        assert!(markdown.contains("[clip.txt](files/clip.txt)"));
+        assert!(dir.join("files").join("clip.txt").is_file());
+        // A file that could not be read is named, never linked to nothing.
+        assert!(markdown.contains("image could not be exported: gone.png"));
+        assert!(!markdown.contains("![image](images/gone.png)"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn two_files_with_the_same_name_are_both_exported() {
+        let mut used = std::collections::HashSet::new();
+        assert_eq!(unique_export_name("shot.png", &mut used), "shot.png");
+        assert_eq!(unique_export_name("shot.png", &mut used), "shot-2.png");
+        // Windows compares names without case, so the third one cannot be
+        // "SHOT.PNG" either.
+        assert_eq!(unique_export_name("SHOT.PNG", &mut used), "SHOT-3.PNG");
+        assert_eq!(
+            unique_export_name("no-extension", &mut used),
+            "no-extension"
         );
     }
 }
