@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Appearance, BackgroundMode } from "./appearance";
 import type {
   AppState,
+  BackupSummary,
   CachedHfModel,
   DetectedModel,
   HfFile,
@@ -17,6 +18,7 @@ import type {
   PackSummary,
   PostprocessingSettings,
   PostprocessingTestResponse,
+  RestoreOutcome,
   SavePostprocessingInput,
   LicenseStatus,
   ShelfEdge,
@@ -178,6 +180,19 @@ export const api = {
     invoke<PostprocessingTestResponse>("test_postprocessing"),
   testPostprocessingCancel: () => invoke<void>("test_postprocessing_cancel"),
   getCrashReport: () => invoke<CrashReport | null>("get_crash_report"),
+  /** Versions, storage state, the latest crash report and the lifecycle tail,
+   * copied to the clipboard. Local only; nothing leaves the machine. */
+  copyDiagnosticReport: () => invoke<void>("copy_diagnostic_report"),
+  /** Write a backup folder under the chosen destination. */
+  backupNow: (destination: string) =>
+    invoke<BackupSummary>("backup_now", { destination }),
+  /**
+   * Replace the database and images from a backup folder. The first call
+   * answers `needsConfirmation` and changes nothing; call again with
+   * `confirmed` to proceed.
+   */
+  restoreFromBackup: (source: string, confirmed: boolean) =>
+    invoke<RestoreOutcome>("restore_from_backup", { source, confirmed }),
 
   getMicrophones: () => invoke<string[]>("get_microphones"),
   setMicrophone: (name: string) => invoke<void>("set_microphone", { name }),

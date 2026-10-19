@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod backup;
 mod capture;
 mod catalog;
 mod cloud;
@@ -97,15 +98,39 @@ fn migrate_roaming_data(destination: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(destination)
 }
 
-fn open_database() -> Option<rusqlite::Connection> {
-    let dir = paths::data_dir()?;
+fn open_database() -> (rusqlite::Connection, Option<String>) {
+    let Some(dir) = paths::data_dir() else {
+        // No resolvable data directory. Keep the app running and say plainly
+        // that this session's history is not being kept.
+        return (
+            db::in_memory(),
+            Some(
+                "Bard could not find its local application-data folder, so this session's \
+                 history will not be kept after Bard closes."
+                    .into(),
+            ),
+        );
+    };
+    let mut notices: Vec<String> = Vec::new();
     // A file the migration cannot move stays where it is and keeps working
-    // from there; it is never a reason to start without a database.
+    // from there; it is never a reason to start without a database. It is
+    // recorded for the diagnostic report rather than printed: a windowed
+    // release build has no stderr to print it to, and the report is where the
+    // evidence is actually read.
     if let Err(error) = migrate_roaming_data(&dir) {
-        eprintln!("Bard could not finish moving roaming data: {error}");
+        crate::crash::record_event(&format!("db:roaming-migration-failed:{:?}", error.kind()));
+        log::warn!("Bard could not finish moving roaming data: {error}");
+        notices.push(
+            "Bard could not finish moving data from its old folder; some files may still be \
+             in the old place. Copy a diagnostic report in Settings › Data to see more."
+                .into(),
+        );
     }
-    std::fs::create_dir_all(&dir).ok()?;
-    let connection = db::init(&dir.join("bard.db")).ok()?;
+    let _ = std::fs::create_dir_all(&dir);
+    let (connection, notice) = db::open_or_recover(&dir.join("bard.db"));
+    if let Some(notice) = notice {
+        notices.push(notice);
+    }
     if let Some(legacy) = legacy_roaming_dir() {
         db::rebase_legacy_paths(&connection, &legacy, &dir);
     }
@@ -114,7 +139,14 @@ fn open_database() -> Option<rusqlite::Connection> {
     // surface and dictation both say "no model chosen" rather than silently
     // disagreeing with a setting neither can resolve.
     db::clear_stale_model_selection(&connection);
-    Some(connection)
+    (
+        connection,
+        if notices.is_empty() {
+            None
+        } else {
+            Some(notices.join(" "))
+        },
+    )
 }
 
 fn usable_paths(args: &[String]) -> Vec<String> {
@@ -163,6 +195,15 @@ fn main() {
             }
         }
     }
+    // The database is opened here, before the builder runs, rather than in
+    // setup(). Windows declared in tauri.conf are created before setup(), so
+    // anything reacting to a window event — a focus change, the webview asking
+    // for state — could reach the database before setup had a chance to open
+    // it. `open_or_recover` always yields a working connection (a temporary
+    // one when the file on disk cannot be used), so no read has to unwrap an
+    // absent database, and under `panic = "abort"` a failed open used to be a
+    // silent exit with no window and no message.
+    let (connection, storage_notice) = open_database();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             guardian::mark_clean_exit();
@@ -185,19 +226,13 @@ fn main() {
         // asking for state — could reach the database while it was still None
         // and take the whole app down on an unwrap. Under `panic = "abort"`
         // that is a silent exit with no window and no message.
-        .manage(Db(Mutex::new(open_database())))
+        .manage(Db(Mutex::new(connection)))
+        .manage(db::DbNotice(Mutex::new(storage_notice)))
         .setup(|app| {
             let handle = app.handle().clone();
             let data_dir = paths::data_dir()
                 .ok_or("Bard could not resolve its local application-data directory.")?;
             std::fs::create_dir_all(&data_dir)?;
-            // Already opened before the builder ran; this only covers the case
-            // where that failed, so the app still has a working database
-            // rather than limping on with none.
-            if app.state::<Db>().0.lock().unwrap().is_none() {
-                let state = db::init(&data_dir.join("bard.db"))?;
-                *app.state::<Db>().0.lock().unwrap() = Some(state);
-            }
             let images_dir = data_dir.join("images");
             std::fs::create_dir_all(&images_dir)?;
             app.manage(commands::ImagesDir(images_dir));
@@ -236,10 +271,20 @@ fn main() {
                     log::warn!("startup retention pass failed for {origin}: {error}");
                 }
             }
-            match db::sweep_orphaned_images(&handle) {
-                Ok(0) => {}
-                Ok(count) => crate::crash::record_event(&format!("db:orphans-swept:{count}")),
-                Err(error) => log::warn!("orphaned image sweep failed: {error}"),
+            // A database that was just replaced or bypassed references none of
+            // the images beside it, and the sweep deletes files no row
+            // references — so after a recovery it would delete exactly the
+            // images the quarantined file was set aside to keep. Skip this
+            // launch's pass; a later launch with a working database sweeps
+            // normally.
+            if db::recovered_this_launch() {
+                crate::crash::record_event("db:orphan-sweep-skipped-after-recovery");
+            } else {
+                match db::sweep_orphaned_images(&handle) {
+                    Ok(0) => {}
+                    Ok(count) => crate::crash::record_event(&format!("db:orphans-swept:{count}")),
+                    Err(error) => log::warn!("orphaned image sweep failed: {error}"),
+                }
             }
 
             monitor::start(handle.clone());
@@ -413,6 +458,9 @@ fn main() {
             commands::test_postprocessing,
             commands::test_postprocessing_cancel,
             commands::get_crash_report,
+            commands::copy_diagnostic_report,
+            backup::backup_now,
+            backup::restore_from_backup,
             commands::get_license,
             commands::start_trial,
             commands::activate_license,

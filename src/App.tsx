@@ -133,6 +133,9 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
   const ackTimer = useRef<number | undefined>(undefined);
   const ackSent = useRef(false);
   const refreshTimer = useRef<number | undefined>(undefined);
+  // The storage notice is read once per distinct message. It is state, not an
+  // event, because the failure happens before any window exists to toast into.
+  const storageNoticeShown = useRef<string | null>(null);
 
   useEffect(() => {
     setActiveItemId(suppliedActiveItemId ?? null);
@@ -195,6 +198,14 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
           setState(next);
           if (next.activeItemId !== undefined) setActiveItemId(next.activeItemId);
           setLoadError(null);
+          // A damaged history file is handled before a window can exist, so
+          // the notice travels in the state every surface already reads. It is
+          // shown once per distinct message; a relaunch re-reports it because
+          // the file is still there.
+          if (next.storageNotice && next.storageNotice !== storageNoticeShown.current) {
+            storageNoticeShown.current = next.storageNotice;
+            toast({ text: next.storageNotice, tone: "error" });
+          }
         })
         .catch((error: unknown) => {
           if (alive) setLoadError(errorText(error, "Bard could not load its local state."));
