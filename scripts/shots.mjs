@@ -1,29 +1,155 @@
-// Store and site screenshots: every shot in src/dev/stage.html, rendered at 2×
-// (3200 × 1800) by headless Edge against a running `bunx vite` dev server.
+// Store and site screenshots: every shot in src/dev/stage.html, rendered by
+// headless Edge against a running `bunx vite` dev server.
 //
 //   bunx vite --port 1430 &
-//   node scripts/shots.mjs [out-dir] [base-url]
+//   node scripts/shots.mjs                       # Store set, defaults below
+//   node scripts/shots.mjs --gallery             # launch gallery preset
+//   node scripts/shots.mjs <out-dir> <base-url>  # positionals, as before
+//
+// The defaults are the Store submission's own values, so a bare run still
+// writes exactly what it always did. The gallery preset is separate and never
+// writes into the Store folder unless it is pointed there explicitly.
 import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-const out = resolve(process.argv[2] ?? "../.agents/files/Store submission/Screenshots");
-const base = process.argv[3] ?? "http://localhost:1430";
-const edge = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
-const shots = ["capture", "dictate", "draw", "models", "dark"];
+const STORE_OUT = "../.agents/files/Store submission/Screenshots";
+const STORE_NAME = "Screenshot {n} - {shot}.png";
+const STORE_ORDER = ["capture", "dictate", "draw", "models", "dark"];
+const GALLERY_OUT = "../.agents/files/launch/gallery";
+const GALLERY_NAME = "{n}-{shot}.png";
+const GALLERY_ORDER = ["dictate", "capture", "models", "draw", "dark"];
+const DEFAULT_SIZE = "1600x900";
+const DEFAULT_SCALE = "2";
+const DEFAULT_BASE = "http://localhost:1430";
+const EDGE = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 
-mkdirSync(out, { recursive: true });
+const HELP = `Render the screenshots in src/dev/stage.html with headless Edge.
+
+Usage
+  node scripts/shots.mjs [out-dir] [base-url] [options]
+
+  Run it with the dev server already up:  bunx vite --port 1430
+
+Options
+  --out <dir>        output directory (default "${STORE_OUT}")
+  --size <WxH>       layout size in CSS pixels (default ${DEFAULT_SIZE})
+  --scale <n>        device scale factor (default ${DEFAULT_SCALE})
+  --name <pattern>   file name; {n} is the 1-based position, {shot} the shot
+                     name (default "${STORE_NAME}")
+  --order <a,b,...>  shot names in render order
+                     (default ${STORE_ORDER.join(",")})
+  --base <url>       dev-server base URL (default ${DEFAULT_BASE})
+  --gallery          launch-gallery preset: 1270x760 at ${DEFAULT_SCALE}x, names
+                     "${GALLERY_NAME}", order ${GALLERY_ORDER.join(",")},
+                     writing to "${GALLERY_OUT}"
+  --dry-run          print what would render; launch nothing, write nothing
+  -h, --help         print this
+
+The Store set is ${STORE_OUT} at ${DEFAULT_SIZE} exported at ${DEFAULT_SCALE}x
+(3200 x 1800), the format the Store listing carries. The gallery preset is
+ProductHunt's 1270 x 760 exported at ${DEFAULT_SCALE}x (2540 x 1520), which
+clears the kit's 1920 x 1080 floor — see .agents/files/launch/gallery/README.md.
+
+Relative paths, the defaults included, resolve against the working directory:
+run it from the repository root, as the commands above do.`;
+
+function fail(message) {
+  console.error(`shots: ${message}`);
+  process.exit(1);
+}
+
+function parseSize(value) {
+  const match = /^(\d+)x(\d+)$/.exec(value);
+  if (!match) fail(`--size wants WxH, not "${value}".`);
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!width || !height) fail(`--size wants positive numbers, not "${value}".`);
+  return `${width},${height}`;
+}
+
+const argv = process.argv.slice(2);
+const options = {};
+const positional = [];
+for (let i = 0; i < argv.length; i += 1) {
+  const arg = argv[i];
+  if (arg === "--help" || arg === "-h") {
+    console.log(HELP);
+    process.exit(0);
+  }
+  if (arg === "--gallery") {
+    options.gallery = true;
+    continue;
+  }
+  if (arg === "--dry-run") {
+    options.dryRun = true;
+    continue;
+  }
+  if (arg.startsWith("--")) {
+    const name = arg.slice(2);
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith("--")) fail(`--${name} needs a value.`);
+    options[name] = value;
+    i += 1;
+    continue;
+  }
+  positional.push(arg);
+}
+
+for (const name of Object.keys(options)) {
+  if (!["gallery", "dryRun", "out", "size", "scale", "name", "order", "base"].includes(name)) {
+    fail(`unknown option --${name}. Run with --help.`);
+  }
+}
+
+const preset = options.gallery
+  ? { out: GALLERY_OUT, name: GALLERY_NAME, order: GALLERY_ORDER, size: "1270x760" }
+  : { out: STORE_OUT, name: STORE_NAME, order: STORE_ORDER, size: DEFAULT_SIZE };
+
+const out = resolve(options.out ?? positional[0] ?? preset.out);
+const base = options.base ?? positional[1] ?? DEFAULT_BASE;
+const windowSize = parseSize(options.size ?? preset.size);
+const scale = Number(options.scale ?? DEFAULT_SCALE);
+if (!Number.isFinite(scale) || scale <= 0) fail(`--scale wants a positive number, not "${options.scale}".`);
+const pattern = options.name ?? preset.name;
+if (!pattern.includes("{shot}")) fail(`--name wants a {shot} placeholder, not "${pattern}".`);
+const shots = (options.order ?? preset.order.join(","))
+  .split(",")
+  .map((shot) => shot.trim())
+  .filter(Boolean);
+if (shots.length === 0) fail("--order needs at least one shot name.");
+
+const [width, height] = windowSize.split(",").map(Number);
+if (!options.dryRun && !existsSync(EDGE)) {
+  fail(`headless Edge is not at ${EDGE}. Install Edge, or point EDGE at it in this script.`);
+}
+if (!options.dryRun) mkdirSync(out, { recursive: true });
+if (options.dryRun) {
+  console.log(
+    `shots: dry run — out=${out} size=${windowSize} scale=${scale} order=${shots.join(",")} name="${pattern}"`,
+  );
+}
 shots.forEach((shot, index) => {
-  const file = resolve(out, `Screenshot ${index + 1} - ${shot}.png`);
-  execFileSync(edge, [
+  const file = resolve(out, pattern.replaceAll("{n}", String(index + 1)).replaceAll("{shot}", shot));
+  const args = [
     "--headless=new",
     "--disable-gpu",
     "--hide-scrollbars",
-    "--window-size=1600,900",
-    "--force-device-scale-factor=2",
+    `--window-size=${windowSize}`,
+    `--force-device-scale-factor=${scale}`,
     "--virtual-time-budget=4000",
     `--screenshot=${file}`,
     `${base}/src/dev/stage.html?shot=${shot}`,
-  ], { stdio: "ignore" });
+  ];
+  if (options.dryRun) {
+    console.log(`"${EDGE}" ${args.map((arg) => (arg.includes(" ") ? `"${arg}"` : arg)).join(" ")}`);
+    return;
+  }
+  execFileSync(EDGE, args, { stdio: "ignore" });
   console.log(file);
 });
+if (options.dryRun) {
+  console.log(
+    `shots: ${shots.length} frames at ${width * scale} x ${height * scale} px; nothing rendered, nothing written.`,
+  );
+}

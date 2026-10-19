@@ -10,8 +10,10 @@
     release-provenance.json — schema string, product, version, git commit,
       generated_at, the artifact list (basename, bytes, sha256) and a signing
       block;
-    bard-sbom.json — CycloneDX 1.5: one library component per Cargo package
-      plus the npm application component.
+    bard-sbom.json — CycloneDX 1.5: the real dependency inventory, one library
+      component per crate in the platform's Cargo resolution (name, version,
+      purl, licence) and per production npm dependency (name, version, purl,
+      licence), plus the npm application component.
 
   Only the signing block differs, and it states the Linux truth: no
   Authenticode, no Microsoft Store package, and no Tauri updater artifact — a
@@ -21,12 +23,18 @@
   Run it from the repository root after the release build:
 
     bun scripts/generate-release-metadata.mjs --platform linux \
-      [--version <v>] [--bundle-dir <dir>] [--output-dir <dir>]
+      [--version <v>] [--bundle-dir <dir>] [--output-dir <dir>] [--target <triple>]
 
   --platform defaults to the host (windows on Windows, linux elsewhere).
   --bundle-dir defaults to the NSIS output folder on Windows and to the bundle
   root on Linux; --output-dir defaults to release-metadata, as the PowerShell
-  script's does.
+  script's does. --target defaults to the platform's release triple
+  (x86_64-pc-windows-msvc or x86_64-unknown-linux-gnu) and only scopes the
+  Cargo resolution — no build happens here, so the triple need not be
+  installed.
+
+  The dependency inventory needs a warm frontend install: run
+  `bun install --frozen-lockfile` first, as the release order does.
 */
 
 import { execFileSync } from "node:child_process";
@@ -63,7 +71,13 @@ function sha256(path) {
 /** Run a required tool from the repository root, failing with its own words. */
 function run(command, args) {
   try {
-    return execFileSync(command, args, { cwd: repoRoot, encoding: "utf8" });
+    // Cargo metadata for the resolved graph is tens of megabytes of JSON, and
+    // execFileSync's default maxBuffer is 1 MiB.
+    return execFileSync(command, args, {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+    });
   } catch (error) {
     if (error.code === "ENOENT") fail(`${command} is not on PATH.`);
     const detail = (error.stderr ?? "").trim() || error.message;
@@ -153,6 +167,53 @@ const provenance = {
   signing,
 };
 
+/**
+ * CycloneDX 1.5 takes either a licence object or an SPDX expression. Most
+ * crates carry an SPDX expression; the older "MIT/Apache-2.0" spelling is a
+ * cargo convention, not SPDX, so it travels as a named licence instead.
+ */
+function licenseChoice(text) {
+  const value = typeof text === "string" ? text.trim() : "";
+  if (value === "") return undefined;
+  const spdx = value
+    .split(/\s+/)
+    .every((token) => /^(?:\(*[A-Za-z0-9.+-]+\)*|OR|AND|WITH)$/.test(token));
+  return spdx ? { expression: value } : { license: { name: value } };
+}
+
+/** npm allows a string, a { type, url } object, or an array of either. */
+function licenseChoices(value) {
+  if (typeof value === "string") {
+    const choice = licenseChoice(value);
+    return choice ? [choice] : undefined;
+  }
+  if (Array.isArray(value)) {
+    const texts = value
+      .map((entry) => (typeof entry === "string" ? entry : entry?.type))
+      .filter((entry) => typeof entry === "string" && entry.trim() !== "");
+    if (texts.length === 0) return undefined;
+    const choice = licenseChoice(texts.join(" OR "));
+    return choice ? [choice] : undefined;
+  }
+  if (value && typeof value === "object" && typeof value.type === "string") {
+    const choice = licenseChoice(value.type);
+    return choice ? [choice] : undefined;
+  }
+  return undefined;
+}
+
+function withLicense(component, choices) {
+  return choices ? { ...component, licenses: choices } : component;
+}
+
+const target =
+  options.target ??
+  (platform === "windows" ? "x86_64-pc-windows-msvc" : "x86_64-unknown-linux-gnu");
+
+// The whole resolved graph for this platform — not --no-deps: an SBOM whose
+// component list is the product itself cannot answer what it exists to answer.
+// --filter-platform scopes it to the crates this platform actually compiles
+// (no GTK/WebKit on Windows), and resolves without building anything.
 const cargo = JSON.parse(
   run("cargo", [
     "metadata",
@@ -161,17 +222,52 @@ const cargo = JSON.parse(
     "--locked",
     "--format-version",
     "1",
-    "--no-deps",
+    "--filter-platform",
+    target,
   ]),
 );
+const crates = cargo.packages
+  .map((entry) =>
+    withLicense(
+      {
+        type: "library",
+        name: entry.name,
+        version: entry.version,
+        purl: `pkg:cargo/${entry.name}@${entry.version}`,
+      },
+      licenseChoices(entry.license),
+    ),
+  )
+  .sort((a, b) => a.purl.localeCompare(b.purl));
+
 const application = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+if (!existsSync(join(repoRoot, "node_modules"))) {
+  fail(
+    "node_modules is missing; the SBOM needs the installed frontend dependencies. Run bun install --frozen-lockfile first.",
+  );
+}
+const npm = Object.keys(application.dependencies ?? {})
+  .sort()
+  .map((name) => {
+    const installed = join(repoRoot, "node_modules", ...name.split("/"), "package.json");
+    if (!existsSync(installed)) {
+      fail(`node_modules/${name} is missing; run bun install --frozen-lockfile first.`);
+    }
+    const entry = JSON.parse(readFileSync(installed, "utf8"));
+    return withLicense(
+      {
+        type: "library",
+        name,
+        version: entry.version,
+        purl: `pkg:npm/${name}@${entry.version}`,
+      },
+      licenseChoices(entry.license ?? entry.licenses),
+    );
+  });
+
 const components = [
-  ...cargo.packages.map((entry) => ({
-    type: "library",
-    name: entry.name,
-    version: entry.version,
-    purl: `pkg:cargo/${entry.name}@${entry.version}`,
-  })),
+  ...crates,
+  ...npm,
   {
     type: "application",
     name: application.name,

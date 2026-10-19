@@ -604,10 +604,10 @@ export function PostprocessingPane(_: PaneProps) {
       <p className="pane-footnote">
         Did Refine return something wrong or inappropriate?{" "}
         <a
-          href="https://miiso.dev/tools/bard#support"
+          href="https://miiso.dev/bard#support"
           onClick={(event) => {
             event.preventDefault();
-            void api.openLink("https://miiso.dev/tools/bard#support");
+            void api.openLink("https://miiso.dev/bard#support");
           }}
         >
           Report it

@@ -143,7 +143,7 @@ export default function AboutPane({ state, refresh }: PaneProps) {
         <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/privacy")}>
           Privacy
         </button>
-        <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/tools/bard#support")}>
+        <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/bard#support")}>
           Support
         </button>
         <span className="about-copyright">© 2026 miiso.dev</span>
