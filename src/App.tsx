@@ -93,7 +93,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { failure: Error 
         <div className="onboarding">
           <AlertCircle width={28} height={28} aria-hidden="true" />
           <h1>Bard ran into a problem</h1>
-          <p role="alert">{errorText(failure, "The panel stopped unexpectedly.")}</p>
+          <p role="alert">{errorText(failure, "The shelf stopped unexpectedly.")}</p>
           <button className="btn primary" onClick={() => window.location.reload()}>
             <RotateCcw aria-hidden="true" />
             Reload Bard

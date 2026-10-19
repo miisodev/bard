@@ -272,6 +272,18 @@ export default function DrawWindow() {
     dirtyRef.current = dirty;
   }, [dirty]);
 
+  /**
+   * Anything that changes the page un-saves it. The id remembered from the last
+   * save no longer describes what is on the page, so a Send that reused it
+   * would paste the drawing as it was, not as it is — and a close would stop
+   * having to ask, throwing the change away. Every mutation calls this, and a
+   * save only marks the page clean once Bard has answered with an id.
+   */
+  const markEdited = () => {
+    savedIdRef.current = null;
+    setSavedOnce(false);
+  };
+
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
@@ -371,6 +383,9 @@ export default function DrawWindow() {
 
   /** Record a state, taken before the change it undoes. */
   const pushHistory = (before: Shape[]) => {
+    // Every caller is a change to the page, so the saved copy is stale from
+    // here until a save replaces it — see `markEdited`.
+    markEdited();
     historyRef.current = record(historyRef.current, before);
     syncHistory();
   };
@@ -699,6 +714,7 @@ export default function DrawWindow() {
   const undoOnce = () => {
     const step = undo(historyRef.current, shapesRef.current);
     if (!step) return;
+    markEdited();
     historyRef.current = step.history;
     shapesRef.current = step.shapes;
     setSelected(null);
@@ -710,6 +726,7 @@ export default function DrawWindow() {
   const redoOnce = () => {
     const step = redo(historyRef.current, shapesRef.current);
     if (!step) return;
+    markEdited();
     historyRef.current = step.history;
     shapesRef.current = step.shapes;
     setSelected(null);
@@ -881,10 +898,16 @@ export default function DrawWindow() {
       if (id == null) {
         const b64 = exportPng(shapesRef.current, canvas.clientWidth, canvas.clientHeight, 2, page, imagesRef.current);
         if (!b64) throw new Error("The page could not be rendered.");
-        id = await api.addImage(b64, "png");
+        const created = await api.addImage(b64, "png");
+        // Only an id means the drawing is really in Bard. A save that came back
+        // with nothing has put it nowhere, so the window keeps the page and
+        // closing still has to ask — the remembered id is set below, never
+        // before the answer.
+        if (!created) throw new Error("The drawing could not be saved to Bard.");
+        id = created;
+        savedIdRef.current = created;
         // The drawing is in Bard from here: it is no longer unsaved work, so
         // closing stops having to ask before throwing it away.
-        savedIdRef.current = id || null;
         setSavedOnce(true);
       }
       if ((action === "copy" || action === "send") && id) {
@@ -1176,6 +1199,11 @@ export default function DrawWindow() {
           onPointerCancel={onPointerUp}
           onPointerLeave={onPointerLeave}
         />
+        {empty && !textField ? (
+          <p className="draw-hint">
+            Draw with a tool, or drop a picture onto the page.
+          </p>
+        ) : null}
         {textField ? (
           <input
             ref={textInputRef}

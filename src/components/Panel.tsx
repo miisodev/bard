@@ -10,11 +10,12 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import type { DictationState } from "../App";
 import { playCue } from "../audio";
-import { DRAW_FRICTION_NOTE, DRAW_SHORTCUT_GROUPS } from "../draw/shortcuts";
+import { DRAW_SHORTCUT_GROUPS } from "../draw/shortcuts";
 import {
   clampPage,
   escapeOutcome,
   filterShelf,
+  itemPreview,
   nextIndex,
   PACK_NO_TEXT,
   packText,
@@ -59,6 +60,15 @@ function px(value: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/**
+ * What the delete confirmation asks. It names what is about to go, because a
+ * question that says "this" over a band of two hundred cards asks nothing.
+ */
+function deleteQuestion(items: Item[]): string {
+  if (items.length === 1) return `Delete “${itemPreview(items[0])}”? It cannot be recovered.`;
+  return `Delete these ${items.length} cards? They cannot be recovered.`;
+}
+
 /** Rust's refusals are written for a person; an invoke failure is not. */
 function reasonText(reason: unknown, fallback: string): string {
   const detail = reason instanceof Error ? reason.message : String(reason ?? "");
@@ -96,6 +106,8 @@ export default function Panel({
   const [showOverflow, setShowOverflow] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
+  const [confirmingClearCompleted, setConfirmingClearCompleted] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState<number[] | null>(null);
   const [preview, setPreview] = useState<Item | null>(null);
   const [composerMenu, setComposerMenu] = useState<{ x: number; y: number } | null>(null);
   const [toast, setToast] = useState<{ text: string; tone: ToastTone } | null>(null);
@@ -400,6 +412,23 @@ export default function Panel({
     focusCard(id);
   }, [pageCards, focusCard]);
 
+  /*
+    Every delete asks first, in the foot's own confirmation — the slab Clear
+    captures and Delete pack already used. A card that leaves the shelf cannot
+    be recovered, and the Key and the menu row are one gesture away from each
+    other and from a selection; a question with a Cancel is the only thing that
+    makes either safe to reach for. The question is asked once, by `askDelete`,
+    and the work itself stays in `deleteItems`.
+  */
+  const askDelete = useCallback(
+    (ids: number[]) => {
+      if (ids.length === 0) return;
+      setMenu(null);
+      setConfirmingDelete(ids);
+    },
+    [],
+  );
+
   useEffect(() => {
     // The panel is rendered only once `App` has a state to give it, so its own
     // mount has nothing to read: this used to be a second full `get_state` at
@@ -642,10 +671,18 @@ export default function Panel({
       // A confirmation is the first thing Escape answers, then any overlay.
       // Each overlay also owns its keys in the capture phase; this is the
       // belt for when focus has wandered outside it.
-      if (confirmingClear || confirmingPack) {
+      if (confirmingClear || confirmingPack || confirmingDelete || confirmingClearCompleted) {
         if (e.key === "Escape") {
           e.preventDefault();
           setConfirmingClear(false);
+          setConfirmingClearCompleted(false);
+          if (confirmingDelete) {
+            // Back to the card the question was about, rather than to the
+            // document: the person was pointing at it when they were asked.
+            const first = confirmingDelete[0];
+            setConfirmingDelete(null);
+            if (first !== undefined) focusCard(first);
+          }
           if (confirmingPack) {
             setConfirmingPack(null);
             focusPack(confirmingPack.id);
@@ -844,7 +881,7 @@ export default function Panel({
         case "delete":
           if (actionSel.length > 0) {
             e.preventDefault();
-            deleteItems(actionSel);
+            askDelete(actionSel);
           }
           break;
         case "toggleDone": {
@@ -885,12 +922,15 @@ export default function Panel({
     preview,
     confirmingClear,
     confirmingPack,
+    confirmingDelete,
+    confirmingClearCompleted,
     packs,
     packView,
     notify,
     markActive,
     refresh,
     deleteItems,
+    askDelete,
     moveCursor,
     goToPage,
     movePackCursor,
@@ -1103,7 +1143,7 @@ export default function Panel({
         if (menu.item?.kind === "image") void api.openDrawWithImage(menu.item.id);
         break;
       case "delete":
-        deleteItems(ids);
+        askDelete(ids);
         break;
     }
     setMenu(null);
@@ -1306,7 +1346,7 @@ export default function Panel({
                     refresh();
                   }}
                   onPreview={() => setPreview(item)}
-                  onDelete={() => deleteItems([item.id])}
+                  onDelete={() => askDelete([item.id])}
                   onEditDone={() => setEditingId(null)}
                 />
               ))
@@ -1406,6 +1446,46 @@ export default function Panel({
             onConfirm={() => deletePack(confirmingPack)}
           >
             Delete the pack “{confirmingPack.name}”? Its items stay in Bard.
+          </InlineConfirm>
+        ) : null}
+
+        {confirmingDelete ? (
+          <InlineConfirm
+            confirmLabel={confirmingDelete.length > 1 ? `Delete ${confirmingDelete.length}` : "Delete"}
+            onCancel={() => {
+              const first = confirmingDelete[0];
+              setConfirmingDelete(null);
+              if (first !== undefined) focusCard(first);
+            }}
+            onConfirm={() => {
+              const ids = confirmingDelete;
+              setConfirmingDelete(null);
+              deleteItems(ids);
+            }}
+          >
+            {deleteQuestion(
+              confirmingDelete
+                .map((id) => state.items.find((item) => item.id === id))
+                .filter((item): item is Item => item !== undefined),
+            )}
+          </InlineConfirm>
+        ) : null}
+
+        {confirmingClearCompleted ? (
+          <InlineConfirm
+            confirmLabel="Clear completed"
+            onCancel={() => setConfirmingClearCompleted(false)}
+            onConfirm={() => {
+              setConfirmingClearCompleted(false);
+              void api.clearCompleted().then(() => {
+                notify(`Cleared ${doneCount} completed`);
+                refresh();
+              });
+            }}
+          >
+            {doneCount === 1
+              ? "Clear the completed card? It cannot be recovered."
+              : `Clear all ${doneCount} completed cards? They cannot be recovered.`}
           </InlineConfirm>
         ) : null}
 
@@ -1509,8 +1589,11 @@ export default function Panel({
               disabled: doneCount === 0,
               trailing: doneCount > 0 ? String(doneCount) : undefined,
               onClick: () => {
-                void api.clearCompleted().then(refresh);
-                notify(`Cleared ${doneCount} completed`);
+                // The menu closes and the foot asks: clearing completed cards
+                // is permanent, and the Data pane's own rule is that a
+                // destructive action says what it removes before it does.
+                closeOverflow();
+                setConfirmingClearCompleted(true);
               },
             },
             {
@@ -1554,7 +1637,11 @@ export default function Panel({
       ) : null}
 
       {showShortcuts ? (
-        <ShortcutSheet title="Shortcuts" groups={SHORTCUT_GROUPS} onClose={closeShortcuts} />
+        <ShortcutSheet
+          title="Shortcuts"
+          groups={shortcutGroups(Math.max(1, Math.min(9, pageCards.length)))}
+          onClose={closeShortcuts}
+        />
       ) : null}
 
       {preview ? (
@@ -1631,45 +1718,50 @@ const SORT_ORDERS: [SortOrder, string][] = [
   dictates, Right Shift opens the shelf, Left Alt draws, Right Alt opens
   Settings. The sheet is the only place in the app that states all of them, so
   a row that names the wrong side teaches the wrong gesture.
+
+  The quick-paste row is built rather than written down, because the digits only
+  answer for cards that are really on the page: the sheet lists what a press
+  does, and a page of five cards has no Ctrl+9 to teach. `reach` is that page's
+  card count.
 */
-const SHORTCUT_GROUPS: ShortcutGroup[] = [
-  {
-    name: "Gestures",
-    rows: [
-      { keys: ["Left Shift", "Left Shift"], what: "Capture the selection" },
-      { keys: ["Ctrl", "Ctrl"], what: "Dictate — hold, or tap twice" },
-      { keys: ["Right Shift", "Right Shift"], what: "Show or hide the shelf" },
-      { keys: ["Right Shift", "Right Shift", "1 / 2 / 3"], what: "Paste one of the first three — pins first" },
-      { keys: ["Left Alt", "Left Alt"], what: "Draw" },
-      { keys: ["Right Alt", "Right Alt"], what: "Settings" },
-      { keys: ["F11"], what: "Fullscreen Draw" },
-    ],
-  },
-  {
-    name: "Keys",
-    rows: [
-      { keys: ["Enter"], what: "Paste into your app" },
-      { keys: ["Ctrl", "1–9"], what: "Paste that card" },
-      { keys: ["←", "→"], what: "Move between cards" },
-      { keys: ["Shift", "←/→"], what: "Extend the selection" },
-      { keys: ["PgUp", "PgDn"], what: "Change page" },
-      { keys: ["Ctrl", "C"], what: "Copy" },
-      { keys: ["Ctrl", "Shift", "M"], what: "Copy as Markdown" },
-      { keys: ["Ctrl", "P"], what: "Pin or unpin" },
-      { keys: ["Ctrl", "K"], what: "Filters and packs" },
-      { keys: ["Ctrl", "/"], what: "These shortcuts" },
-      { keys: ["Space"], what: "Done" },
-      { keys: ["Esc"], what: "Clear search, then selection, then close" },
-    ],
-  },
-  {
-    // Draw's own keys, listed here exactly as Draw's `?` sheet lists them, so
-    // the app teaches one map rather than two.
-    name: "Draw",
-    rows: DRAW_SHORTCUT_GROUPS.flatMap((group) => group.rows),
-    note: DRAW_FRICTION_NOTE,
-  },
-];
+function shortcutGroups(reach: number): ShortcutGroup[] {
+  return [
+    {
+      name: "Gestures",
+      rows: [
+        { keys: ["Left Shift", "Left Shift"], what: "Capture the selection" },
+        { keys: ["Ctrl", "Ctrl"], what: "Dictate — hold, or tap twice" },
+        { keys: ["Right Shift", "Right Shift"], what: "Show or hide the shelf" },
+        { keys: ["Right Shift", "Right Shift", "1 / 2 / 3"], what: "Paste one of the first three — pins first" },
+        { keys: ["Left Alt", "Left Alt"], what: "Draw" },
+        { keys: ["Right Alt", "Right Alt"], what: "Settings" },
+        { keys: ["F11"], what: "Fullscreen Draw" },
+      ],
+    },
+    {
+      name: "Keys",
+      rows: [
+        { keys: ["Enter"], what: "Paste into your app" },
+        { keys: ["Ctrl", `1–${reach}`], what: "Paste that card on the page" },
+        { keys: ["←", "→"], what: "Move between cards" },
+        { keys: ["Shift", "←/→"], what: "Extend the selection" },
+        { keys: ["PgUp", "PgDn"], what: "Change page" },
+        { keys: ["Ctrl", "C"], what: "Copy" },
+        { keys: ["Ctrl", "Shift", "M"], what: "Copy as Markdown" },
+        { keys: ["Ctrl", "P"], what: "Pin or unpin" },
+        { keys: ["Ctrl", "K"], what: "Filters and packs" },
+        { keys: ["Ctrl", "/"], what: "These shortcuts" },
+        { keys: ["Space"], what: "Done" },
+        { keys: ["Esc"], what: "Clear search, then selection, then close" },
+      ],
+    },
+    // Draw's own groups, under Draw's own names — the same rows Draw's `?`
+    // sheet lists, so the app teaches one map rather than two. They are kept
+    // apart rather than flattened into one "Draw" block because that block was
+    // 26 rows and the sheet's height is its tallest column.
+    ...DRAW_SHORTCUT_GROUPS.map((group) => ({ ...group, name: `Draw · ${group.name}` })),
+  ];
+}
 
 /**
  * The zone with nothing to show. It names the reason — nothing captured, no
@@ -1769,7 +1861,7 @@ function copySelection(state: AppState, ids: number[], notify: Notify, paste = f
   const reportFailure = (reason: unknown) => {
     playCue("error");
     const detail = reason instanceof Error ? reason.message : String(reason ?? "");
-    notify(detail || "Couldn't copy.", "error");
+    notify(copyFailureText(detail), "error");
   };
 
   if (items.length === 1) {
@@ -1796,6 +1888,17 @@ function copySelection(state: AppState, ids: number[], notify: Notify, paste = f
     .catch(reportFailure);
 }
 
+/*
+  What a failed copy says. Rust writes its refusals for a person, with the one
+  exception of `copy_item` answering "item not found" when the card's item was
+  removed from under the shelf — the retention sweep, another window — which
+  names the implementation rather than what happened to the person.
+*/
+function copyFailureText(detail: string): string {
+  if (/^item not found$/i.test(detail.trim())) return "That card is no longer in Bard.";
+  return detail || "Couldn't copy.";
+}
+
 function copyAsList(state: AppState, ids: number[], notify: Notify) {
   const markdown = ids
     .map((id) => state.items.find((item) => item.id === id))
@@ -1814,7 +1917,7 @@ function copyAsList(state: AppState, ids: number[], notify: Notify) {
     .catch((reason: unknown) => {
       playCue("error");
       const detail = reason instanceof Error ? reason.message : String(reason ?? "");
-      notify(detail || "Couldn't copy.", "error");
+      notify(copyFailureText(detail), "error");
     });
 }
 

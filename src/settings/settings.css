@@ -240,7 +240,6 @@ because the panel and the Draw window both render
    them and neither loads this file's siblings. */
 
 .btn svg,
-.tag svg,
 .loading-row svg,
 .error-empty > svg,
 .postprocessing-status svg,

@@ -27,10 +27,12 @@ html[data-preview="settings"] #root,
 html[data-preview="draw"] #root {
   --preview-w: 720px;
 }
-/* The shelf is an edge band: wide and short, like the window Rust anchors. */
+/* The shelf is an edge band: wide and short, like the window Rust anchors —
+   1280 × SHELF_THICKNESS_H (src-tauri/src/geometry.rs), so a band laid out
+   here measures what the real one does. */
 html[data-preview="main"] #root {
   --preview-w: 1280px;
-  --preview-h: 300px;
+  --preview-h: 292px;
 }
 /* Left and right docks are tall, narrow bands — size the frame to match. */
 html[data-preview="main"] #root:has(.app[data-edge="left"]),

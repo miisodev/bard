@@ -1,19 +1,21 @@
 /*
-  css-audit — three checks the TypeScript gate cannot make.
+  css-audit — four checks the TypeScript gate cannot make.
 
   CSS fails silently. A duplicated selector is not an error, it is a rule that
   quietly wins; an undefined custom property is not an error, it is a value
-  that resolves to nothing; a class nobody uses is not an error, it is dead
-  weight that makes the next edit harder to reason about. All three happened
-  here while rewriting the panel, and none of them showed up in a build, a
-  typecheck, or a screenshot — the stale rules were close enough visually to
-  pass a glance.
+  that resolves to nothing; a class nobody uses and a class nobody styles are
+  both not errors, and both make the next edit harder to reason about. All four
+  happened here while rewriting the panel, and none of them showed up in a
+  build, a typecheck, or a screenshot — the stale rules were close enough
+  visually to pass a glance.
 
     bun scripts/css-audit.mjs          # report
     bun scripts/css-audit.mjs --strict # report and fail the build
 
-  Unused-class reporting is advisory by default: classes can be composed at
-  runtime, so the list wants a human read rather than an automatic failure.
+  Unused-class and unstyled-class reporting are advisory by default: classes
+  can be composed at runtime, and a stylesheet this repository does not read
+  may dress one, so both lists want a human read rather than an automatic
+  failure.
 */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
@@ -82,8 +84,40 @@ const classes = new Set([...allCss.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m
 const unused = [...classes].filter((c) => !new RegExp(`\\b${c}\\b`).test(code)).sort();
 if (unused.length) notes.push(`unused classes (${unused.length}): ${unused.join(", ")}`);
 
+/* ── 4. classes referenced from .tsx with no rule anywhere ──────────────── */
+/*
+  The reverse of check 3, and the one that found the colour preview: seven
+  classes in a component, no rule for any of them, and nothing in the build,
+  the typecheck or a screenshot to say so. Only `className` strings are read,
+  and only tokens that look like class names — a name is a run of lowercase
+  letters, digits and hyphens, which leaves camelCase identifiers, `${…}`
+  expressions and half-built names like "h-" out. Advisory on purpose: a class
+  can legitimately be styled by a window this repository does not read, or
+  composed at runtime, and the list wants a human eye rather than a red gate.
+*/
+function classNameCandidates(text) {
+  const found = new Set();
+  for (const m of text.matchAll(/className\s*=\s*(?:"([^"]*)"|'([^']*)'|\{`([^`]*)`\})/g)) {
+    const source = m[1] ?? m[2] ?? m[3] ?? "";
+    for (const token of source.replace(/\$\{[^}]*\}/g, " ").split(/\s+/)) {
+      if (/^[a-z][a-z0-9-]*[a-z0-9]$/.test(token)) found.add(token);
+    }
+  }
+  return found;
+}
+
+const styledSomewhere = (name) => new RegExp(`\\.${name}(?![\\w-])`).test(allCss);
+const unstyled = new Map();
+for (const file of files.filter((f) => extname(f) === ".tsx")) {
+  for (const name of classNameCandidates(readFileSync(file, "utf8"))) {
+    if (!styledSomewhere(name) && !unstyled.has(name)) unstyled.set(name, file);
+  }
+}
+const unstyledNames = [...unstyled].sort((a, b) => a[0].localeCompare(b[0]));
+
 /* ── report ─────────────────────────────────────────────────────────────── */
 for (const n of notes) console.log(`note  ${n}`);
+for (const [name, file] of unstyledNames) console.log(`note  no CSS rule  .${name}  (${file})`);
 for (const p of problems) console.log(`FAIL  ${p}`);
 
 if (problems.length) {

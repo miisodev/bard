@@ -12,11 +12,11 @@ export default function ShortcutsPane() {
         </Row>
         <Row
           label="Paste item"
-          hint="Tap Right Shift twice, then quickly press 1, 2, or 3 to paste that timeline item into the focused app."
+          hint="Tap Right Shift twice, then quickly press 1, 2 or 3 to paste one of the first three items into the focused app."
         >
           <Keycaps keys={["Right Shift"]} twice then="1 2 3" />
         </Row>
-        <Row label="Panel" hint="Tap Right Shift twice to show or hide Bard.">
+        <Row label="Shelf" hint="Tap Right Shift twice to show or hide Bard.">
           <Keycaps keys={["Right Shift"]} twice />
         </Row>
         <Row label="Settings" hint="Tap Right Alt twice to open Settings as a single window.">
@@ -36,11 +36,14 @@ export default function ShortcutsPane() {
         </Row>
       </Group>
 
-      <Group title="Inside the panel">
+      <Group title="Inside the shelf">
         <Row label="Paste" hint="Paste the selected item into the app you opened Bard over.">
           <Keycaps keys={["Enter"]} />
         </Row>
-        <Row label="Paste by position" hint="Paste the first to ninth item in the list.">
+        <Row
+          label="Paste by position"
+          hint="Paste a card by where it sits on the page. The digits reach as many cards as the page holds."
+        >
           <Keycaps keys={["Ctrl", "1–9"]} />
         </Row>
         <Row label="Copy" hint="Copy the selected item without leaving Bard.">
@@ -52,13 +55,13 @@ export default function ShortcutsPane() {
         <Row label="Sections" hint="Open the section switcher.">
           <Keycaps keys={["Ctrl", "K"]} />
         </Row>
-        <Row label="Shortcut guide" hint="Show this list without leaving the panel.">
+        <Row label="Shortcut guide" hint="Show this list without leaving the shelf.">
           <Keycaps keys={["Ctrl", "/"]} />
         </Row>
         <Row label="Done" hint="Mark the selected item complete.">
           <Keycaps keys={["Space"]} />
         </Row>
-        <Row label="Close" hint="Clear search, then selection, then close the panel.">
+        <Row label="Close" hint="Clear search, then selection, then close the shelf.">
           <Keycaps keys={["Esc"]} />
         </Row>
       </Group>

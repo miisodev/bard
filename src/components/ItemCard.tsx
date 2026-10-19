@@ -23,7 +23,7 @@ import KindGlyph from "./KindGlyph";
   One shelf card: a checkbox, its content and one Copy.
 
   The head strip carries the kind — written, glyphed and tinted, in that order
-  of authority — with the quick-paste badge on the first five cards of a page.
+  of authority — with the quick-paste badge on every card whose digit is bound.
   The body is the content. The foot answers the one question the content
   cannot: where a link points, how long a note is, how large an image is. No
   timestamps and no chrome beyond the card's own commands.
@@ -37,6 +37,16 @@ import KindGlyph from "./KindGlyph";
 function countCharacters(text: string): string {
   const length = [...text].length;
   return length === 1 ? "1 character" : `${length.toLocaleString()} characters`;
+}
+
+/*
+  An edit that landed gets a receipt. The card commits on blur and on Enter, so
+  the only other thing that happens is the text quietly stopping being a field:
+  a note rewritten and then kept said nothing at all. The shelf's toast host is
+  the panel's, and answers this event however it was raised.
+*/
+function receipt(text: string, tone?: "info" | "error") {
+  window.dispatchEvent(new CustomEvent("bard-toast", { detail: { text, tone } }));
 }
 
 export default function ItemCard({
@@ -197,8 +207,19 @@ export default function ItemCard({
   const commitEdit = () => {
     const v = draft.trim();
     if (v !== item.content) {
-      if (v) void api.updateItem(item.id, v);
-      else void onDelete();
+      if (v) {
+        // Kept, and said so. A failed write says what failed rather than
+        // leaving the card looking saved: the editor has closed by then.
+        void api.updateItem(item.id, v).then(
+          () => receipt("Note saved"),
+          (reason: unknown) => {
+            const detail = reason instanceof Error ? reason.message : String(reason ?? "");
+            receipt(detail.trim() || "Couldn't save the note.", "error");
+          },
+        );
+      } else {
+        void onDelete();
+      }
     }
     onEditDone();
   };
@@ -259,7 +280,7 @@ export default function ItemCard({
         <span className="card-label">{label}</span>
         <span className="card-signs">
           <span className="card-glyph"><KindGlyph kind={kind} /></span>
-          {index < 5 ? (
+          {index < 9 ? (
             <kbd className="card-key" title={`Ctrl+${index + 1} pastes this card`} aria-hidden="true">
               {index + 1}
             </kbd>

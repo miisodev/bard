@@ -162,7 +162,7 @@ export default function LicenseCard({
           : trial
             ? `Try Bard free for ${daysLeft(status.trialExpiresAt)} more days. No card is required.`
             : restricted
-              ? "Your timeline remains readable. Buy another licence to capture, dictate, draw, and edit."
+              ? "Your shelf remains readable. Buy another licence to capture, dictate, draw, and edit."
               : "Bard is checking its local licence state."}
       </p>
       {/*
