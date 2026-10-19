@@ -3,7 +3,8 @@ import { Component, useCallback, useEffect, useRef, useState, type ReactNode } f
 import { AlertCircle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "./store";
 import { playCue } from "./audio";
-import type { AppState, ModelProgress, ShelfEdge } from "./types";
+import { insertCaptured } from "./shelf";
+import type { AppState, CapturedEvent, ModelProgress, ShelfEdge, SortOrder } from "./types";
 import Panel, { type ToastDetail } from "./components/Panel";
 import Onboarding from "./components/Onboarding";
 import { useTheme } from "./useTheme";
@@ -11,7 +12,6 @@ import { useTheme } from "./useTheme";
 export interface DictationState {
   listening: boolean;
   transcribing: boolean;
-  level: number;
 }
 
 /*
@@ -19,8 +19,13 @@ export interface DictationState {
   beat, a bulk action fires one per write — and each one used to cost a full
   state read. A short trailing debounce coalesces the burst into the last
   read, which is the only one whose answer is still current.
+
+  One frame, not four. The event a capture raises no longer asks for a read at
+  all (the item travels in `captured`), so this only has to coalesce genuine
+  bursts of writes — and 16 ms still coalesces everything a real burst
+  produces.
 */
-const REFRESH_DEBOUNCE_MS = 50;
+const REFRESH_DEBOUNCE_MS = 16;
 
 /*
   How long the slide-out may take before Rust is told to proceed anyway. The
@@ -38,16 +43,13 @@ function isShelfEdge(value: unknown): value is ShelfEdge {
 }
 
 /**
- * `mic-level` is the hottest path in the shell, and Rust emits it at 5 Hz and
- * not at all when the quantised level has not moved — so a silent take produces
- * one message rather than 24,000. Three guards remain here: the level is
- * quantised to 5% steps — finer than that is not visible in anything — the
- * comparison is on whole steps, so float noise cannot defeat it, and a value
- * is published at most every 120 ms. The setter also returns the *same* object
- * when nothing changed, which is the only way React can skip the re-render.
+ * `mic-level` is the hottest path in the shell, and it now has exactly one
+ * consumer: the pill's meter, in the overlay window, which Rust addresses by
+ * label. The panel used to listen as well and keep the level in its dictation
+ * state, where no component ever read it — so every meter tick re-rendered the
+ * whole shelf for a number nothing drew. Nothing here listens, and nothing here
+ * holds a level.
  */
-const LEVEL_STEP = 0.05;
-const LEVEL_MIN_INTERVAL_MS = 120;
 
 function errorText(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
@@ -116,23 +118,20 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
   const [dictation, setDictation] = useState<DictationState>({
     listening: false,
     transcribing: false,
-    level: 0,
   });
   const [activeItemId, setActiveItemId] = useState<number | null>(suppliedActiveItemId ?? null);
   // Which edge the window is docked to. Rust owns the geometry; this drives
   // the layout, the entry slide and which way it slides.
   const [edge, setEdge] = useState<ShelfEdge>(() => "bottom");
-  // The live input level, and when it was last handed to React. Keeping the
-  // rate down here is what stops a take from re-rendering every card 20 times a
-  // second — see LEVEL_MIN_INTERVAL_MS.
-  const publishedStep = useRef(0);
-  const publishedAt = useRef(0);
   // The slide-out handshake: Rust waits for `shelf_hidden`, so it is sent
   // exactly once per hide, from whichever signal arrives first.
   const rootRef = useRef<HTMLDivElement | null>(null);
   const ackTimer = useRef<number | undefined>(undefined);
   const ackSent = useRef(false);
   const refreshTimer = useRef<number | undefined>(undefined);
+  // The order the shelf is in, for the one decision the capture handler makes
+  // from the event listener's scope: whether a splice is the whole update.
+  const sortRef = useRef<SortOrder>("newest");
 
   useEffect(() => {
     setActiveItemId(suppliedActiveItemId ?? null);
@@ -141,6 +140,10 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
   useEffect(() => {
     if (state?.shelfEdge) setEdge(state.shelfEdge);
   }, [state?.shelfEdge]);
+
+  useEffect(() => {
+    if (state?.sort) sortRef.current = state.sort;
+  }, [state?.sort]);
 
   /** Rust may proceed: restore the foreground, hide and park the window. */
   const acknowledgeHide = useCallback(() => {
@@ -227,9 +230,26 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     }).catch(() => undefined);
     subscribe(listen("refresh", scheduleRefresh));
     subscribe(
-      listen("captured", (event) => {
-        const id = Number(event.payload);
+      listen<CapturedEvent>("captured", (event) => {
+        const payload = event.payload;
+        const id = typeof payload === "number" ? payload : Number(payload?.id);
         if (Number.isFinite(id)) setActiveItemId(id);
+        // The item travels with the event, so the common case needs no read at
+        // all: the row was written a moment ago and is spliced into the shelf
+        // where a full `get_state` would have put it. `removed` says whether the
+        // same capture's retention pass took older items away — Rust sends a
+        // `refresh` for that, and this is only the visible half of it.
+        const item = typeof payload === "object" && payload !== null ? payload.item : undefined;
+        if (item && sortRef.current === "newest") {
+          setState((current) =>
+            current ? { ...current, items: insertCaptured(current.items, item) } : current,
+          );
+        } else {
+          // Another order puts a new item where `sort_items` says, not where the
+          // top of the list is — the backend's rule, read rather than guessed.
+          // This is also the path a capture takes when its row is already gone.
+          scheduleRefresh();
+        }
         window.dispatchEvent(new CustomEvent("bard-captured", { detail: id }));
       }),
     );
@@ -318,21 +338,6 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
             transcribing: status === "transcribing" || status === "finishing",
           };
         });
-      }),
-    );
-    subscribe(
-      listen("mic-level", (event) => {
-        const raw = Number((event.payload as [number, number])[0]);
-        if (!Number.isFinite(raw)) return;
-        const step = Math.round(raw / LEVEL_STEP);
-        if (step === publishedStep.current) return;
-        const now = performance.now();
-        if (now - publishedAt.current < LEVEL_MIN_INTERVAL_MS) return;
-        publishedStep.current = step;
-        publishedAt.current = now;
-        const level = step * LEVEL_STEP;
-        // Returning `current` unchanged is what lets React bail out entirely.
-        setDictation((current) => (current.level === level ? current : { ...current, level }));
       }),
     );
     subscribe(

@@ -24,6 +24,53 @@ extern "system" {
     fn IsClipboardFormatAvailable(format: u32) -> i32;
     fn RegisterClipboardFormatW(name: *const u16) -> u16;
     fn GetClipboardData(format: u32) -> *mut std::ffi::c_void;
+    fn RegisterClassW(class: *const WndClassW) -> u16;
+    fn CreateWindowExW(
+        ex_style: u32,
+        class_name: *const u16,
+        window_name: *const u16,
+        style: u32,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        parent: *mut std::ffi::c_void,
+        menu: *mut std::ffi::c_void,
+        instance: *mut std::ffi::c_void,
+        param: *mut std::ffi::c_void,
+    ) -> *mut std::ffi::c_void;
+    fn DefWindowProcW(
+        window: *mut std::ffi::c_void,
+        message: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize;
+    fn AddClipboardFormatListener(window: *mut std::ffi::c_void) -> i32;
+    fn RemoveClipboardFormatListener(window: *mut std::ffi::c_void) -> i32;
+    fn MsgWaitForMultipleObjects(
+        count: u32,
+        handles: *const *mut std::ffi::c_void,
+        wait_all: i32,
+        milliseconds: u32,
+        wake_mask: u32,
+    ) -> u32;
+    fn PeekMessageW(
+        message: *mut Msg,
+        window: *mut std::ffi::c_void,
+        filter_min: u32,
+        filter_max: u32,
+        remove: u32,
+    ) -> i32;
+    fn TranslateMessage(message: *const Msg) -> i32;
+    fn DispatchMessageW(message: *const Msg) -> isize;
+    fn CreateEventW(
+        attributes: *mut std::ffi::c_void,
+        manual_reset: i32,
+        initial_state: i32,
+        name: *const u16,
+    ) -> *mut std::ffi::c_void;
+    fn SetEvent(event: *mut std::ffi::c_void) -> i32;
+    fn ResetEvent(event: *mut std::ffi::c_void) -> i32;
 }
 
 #[cfg(windows)]
@@ -32,6 +79,55 @@ extern "system" {
     fn GlobalSize(memory: *mut std::ffi::c_void) -> usize;
     fn GlobalLock(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     fn GlobalUnlock(memory: *mut std::ffi::c_void) -> i32;
+    fn GetModuleHandleW(name: *const u16) -> isize;
+    fn CloseHandle(handle: isize) -> i32;
+}
+
+/// A message-only window that exists to be told when the clipboard changes.
+#[cfg(windows)]
+const HWND_MESSAGE: *mut std::ffi::c_void = -3isize as *mut std::ffi::c_void;
+
+#[cfg(windows)]
+const WM_CLIPBOARDUPDATE: u32 = 0x031D;
+
+/// Wake on any input the thread's queue holds — the clipboard's notification
+/// among them — and on the timeout.
+#[cfg(windows)]
+const QS_ALLINPUT: u32 = 0x04FF;
+
+#[cfg(windows)]
+const PM_REMOVE: u32 = 0x0001;
+
+/// The window class the clipboard listener's hidden window is made from. Only
+/// the members the window procedure needs are spelled out, in the order the C
+/// struct declares them, because this is read by the operating system.
+#[cfg(windows)]
+#[repr(C)]
+struct WndClassW {
+    style: u32,
+    lpfn_wnd_proc:
+        Option<unsafe extern "system" fn(*mut std::ffi::c_void, u32, usize, isize) -> isize>,
+    cb_cls_extra: i32,
+    cb_wnd_extra: i32,
+    h_instance: *mut std::ffi::c_void,
+    h_icon: *mut std::ffi::c_void,
+    h_cursor: *mut std::ffi::c_void,
+    hbr_background: *mut std::ffi::c_void,
+    lpsz_menu_name: *const u16,
+    lpsz_class_name: *const u16,
+}
+
+/// The public shape of `MSG` on 64-bit Windows: handle, message, the two
+/// parameters, the tick and the point.
+#[cfg(windows)]
+#[repr(C)]
+struct Msg {
+    hwnd: *mut std::ffi::c_void,
+    message: u32,
+    w_param: usize,
+    l_param: isize,
+    time: u32,
+    point: [i32; 2],
 }
 
 pub fn note_own_write(app: &AppHandle) {
@@ -128,12 +224,48 @@ pub fn capture_text(app: &AppHandle, text: &str) {
     // Age-based retention is the only automatic deletion. The old call to
     // `prune_history` here deleted the oldest automatic items past 5,000 on
     // every single capture, including when the user had chosen Forever.
-    if let Err(error) = db::cleanup_origin(app, "clipboard") {
-        crate::crash::record_event("capture:retention-failed");
-        let _ = app.emit("capture-failed", error);
+    let mut removed = 0;
+    match db::cleanup_origin(app, "clipboard") {
+        Ok(count) => removed = count,
+        Err(error) => {
+            crate::crash::record_event("capture:retention-failed");
+            let _ = app.emit_to("main", "capture-failed", error);
+        }
     }
-    let _ = app.emit("captured", id);
-    let _ = app.emit("refresh", ());
+    announce_captured(app, id, removed);
+}
+
+/// Tell the panel about a capture, and only about the capture.
+///
+/// This used to be `emit("captured", id)` plus `emit("refresh")` broadcast to
+/// every window, and every window answered the refresh by re-reading the whole
+/// timeline — so the price of one copy grew with the size of the library, and
+/// four webviews paid it. The item itself now travels in the event: it is one
+/// row, it has just been written, and it is exactly what the panel would have
+/// read. `removed` is what the same capture's retention pass took away, which
+/// is the one case the splice cannot express; there the panel reads instead.
+fn announce_captured(app: &AppHandle, id: i64, removed: usize) {
+    let item = db::item_by_id(app, id);
+    if item.is_none() {
+        // The row is gone again already (a concurrent delete). Nothing to
+        // splice, so the panel has to read.
+        crate::commands::refresh(app);
+    }
+    if removed > 0 {
+        crate::commands::refresh(app);
+    }
+    let _ = app.emit_to("main", "captured", Captured { id, item, removed });
+}
+
+/// The payload the panel splices into its state. `id` alone is what the sound
+/// effect needs; `item` and `removed` are what make a read unnecessary.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Captured {
+    id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    item: Option<db::Item>,
+    removed: usize,
 }
 
 /// Poll the clipboard for new content.
@@ -144,17 +276,30 @@ pub fn capture_text(app: &AppHandle, text: &str) {
 /// raw-input listener had. Each iteration is now panic-contained so one bad poll
 /// cannot end capture for the session, and a periodic heartbeat records that the
 /// loop is alive.
+///
+/// On Windows the loop is woken by the clipboard itself: a hidden window holds
+/// an `AddClipboardFormatListener` registration, `WM_CLIPBOARDUPDATE` sets an
+/// event, and the wait returns on the spot. The poll stays as the net under it —
+/// [`SAFETY_POLL_MS`], long enough that it costs nothing and short enough that
+/// a listener that never fires is a slowdown rather than a dead product. When
+/// the listener cannot be installed at all (Linux, or a failed
+/// `CreateWindowExW`) the loop falls back to [`FALLBACK_POLL_MS`], which is the
+/// interval a build without any of this machinery would have.
 pub fn start(app: AppHandle) {
     thread::spawn(move || {
         let mut last_seq = clip_seq();
         let mut ticks: u64 = 0;
+        let listener = ClipboardListener::install();
+        let poll_ms = if listener.is_some() {
+            SAFETY_POLL_MS
+        } else {
+            FALLBACK_POLL_MS
+        };
         loop {
-            // 150 ms, not 300. The check the sleep gates is `clip_seq`, a
-            // single cheap API call with no allocation that runs before any
-            // clipboard read, so the poll is a heartbeat rather than work; and
-            // halving it halves the one delay the user can feel, between the
-            // copy and the item appearing.
-            thread::sleep(Duration::from_millis(150));
+            match &listener {
+                Some(listener) => listener.wait(poll_ms),
+                None => thread::sleep(Duration::from_millis(poll_ms)),
+            }
             ticks += 1;
             if ticks.is_multiple_of(HEARTBEAT_TICKS) {
                 crate::crash::record_event("monitor:alive");
@@ -196,7 +341,7 @@ pub fn start(app: AppHandle) {
                     }
                     capture_text(&app, &t);
                 } else if let Ok(img) = cb.get_image() {
-                    let _ = capture_image(&app, &img);
+                    let _ = capture_image(&app, img);
                 }
             }));
             if polled.is_err() {
@@ -206,11 +351,174 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// Roughly every two and a half minutes at the 150 ms poll interval. An idle
-/// install writes one line; this is a liveness marker, not a log of activity.
-const HEARTBEAT_TICKS: u64 = 1_000;
+/// How long the loop waits between safety polls when the clipboard listener is
+/// installed. The listener is what wakes it on a copy; this is the net that
+/// keeps a listener which silently stopped working from being a silent stop in
+/// capture, and 250 ms is well under the old 150 ms poll plus its 50 ms
+/// debounce, so the worst case is no worse than the best case used to be.
+const SAFETY_POLL_MS: u64 = 250;
 
-pub fn capture_image(app: &AppHandle, img: &arboard::ImageData<'_>) -> bool {
+/// The interval used when there is no listener to wait on. 75 ms, not 150: the
+/// check the sleep gates is `clip_seq`, a single cheap API call with no
+/// allocation that runs before any clipboard read, so the poll is a heartbeat
+/// rather than work; and halving it halves the one delay the user can feel,
+/// between the copy and the item appearing.
+const FALLBACK_POLL_MS: u64 = 75;
+
+/// Roughly every two and a half minutes at the safety-poll interval, and sooner
+/// under real use. An idle install writes one line; this is a liveness marker,
+/// not a log of activity.
+const HEARTBEAT_TICKS: u64 = 600;
+
+/// The clipboard's own notification, on Windows: a hidden window registered
+/// with `AddClipboardFormatListener`, an event it sets, and a wait the copy
+/// wakes immediately.
+///
+/// `None` from [`ClipboardListener::install`] is not a failure to report — the
+/// loop's poll covers it — and every step here is best-effort for that reason.
+#[cfg(windows)]
+struct ClipboardListener {
+    event: *mut std::ffi::c_void,
+    window: *mut std::ffi::c_void,
+}
+
+#[cfg(windows)]
+impl Drop for ClipboardListener {
+    /// The listener lives for the process's life, so this is the honest shape of
+    /// the ownership rather than a path anything takes: it exists so the window
+    /// and the event are released by whoever owns them if that ever changes.
+    fn drop(&mut self) {
+        unsafe {
+            CLIPBOARD_EVENT.store(0, std::sync::atomic::Ordering::SeqCst);
+            let _ = RemoveClipboardFormatListener(self.window);
+            let _ = CloseHandle(self.event as isize);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl ClipboardListener {
+    fn install() -> Option<ClipboardListener> {
+        unsafe {
+            let class_name: Vec<u16> = "BardClipboardListener\0".encode_utf16().collect();
+            let instance = GetModuleHandleW(std::ptr::null());
+            let class = WndClassW {
+                style: 0,
+                lpfn_wnd_proc: Some(clipboard_wnd_proc),
+                cb_cls_extra: 0,
+                cb_wnd_extra: 0,
+                h_instance: instance as *mut std::ffi::c_void,
+                h_icon: std::ptr::null_mut(),
+                h_cursor: std::ptr::null_mut(),
+                hbr_background: std::ptr::null_mut(),
+                lpsz_menu_name: std::ptr::null(),
+                lpsz_class_name: class_name.as_ptr(),
+            };
+            // A zero return means the class already exists, which is fine: the
+            // window below is what matters.
+            RegisterClassW(&class);
+            let event = CreateEventW(std::ptr::null_mut(), 1, 0, std::ptr::null());
+            if event.is_null() {
+                return None;
+            }
+            CLIPBOARD_EVENT.store(event as isize, std::sync::atomic::Ordering::SeqCst);
+            let window = CreateWindowExW(
+                0,
+                class_name.as_ptr(),
+                std::ptr::null(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                HWND_MESSAGE,
+                std::ptr::null_mut(),
+                instance as *mut std::ffi::c_void,
+                std::ptr::null_mut(),
+            );
+            if window.is_null() || AddClipboardFormatListener(window) == 0 {
+                CLIPBOARD_EVENT.store(0, std::sync::atomic::Ordering::SeqCst);
+                let _ = CloseHandle(event as isize);
+                return None;
+            }
+            Some(ClipboardListener { event, window })
+        }
+    }
+
+    /// Block until the clipboard changes or `timeout_ms` passes, then let the
+    /// caller decide what to do — which is the same check either way, so the
+    /// event's own state is not part of the answer.
+    fn wait(&self, timeout_ms: u64) {
+        unsafe {
+            let handles = [self.event];
+            let _ =
+                MsgWaitForMultipleObjects(1, handles.as_ptr(), 0, timeout_ms as u32, QS_ALLINPUT);
+            let _ = ResetEvent(self.event);
+            // Anything the window's queue holds is drained so the next wait can
+            // block; nothing here needs dispatching, since the one message that
+            // matters is sent to the window procedure directly.
+            let mut message = std::mem::zeroed::<Msg>();
+            while PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+struct ClipboardListener;
+
+/// No clipboard notification exists on this platform's build, so the poll is
+/// the whole loop and none of the listener's surface is called. The methods
+/// stay so the call site above is one shape on every platform.
+#[cfg(not(windows))]
+#[allow(dead_code)]
+impl ClipboardListener {
+    fn install() -> Option<ClipboardListener> {
+        None
+    }
+
+    fn wait(&self, _timeout_ms: u64) {}
+}
+
+/// The event `WM_CLIPBOARDUPDATE` sets. A static because the window procedure
+/// is a real callback with no context pointer to hand it: the listener lives on
+/// the monitor thread, and this is written once before the window exists.
+#[cfg(windows)]
+static CLIPBOARD_EVENT: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+#[cfg(windows)]
+unsafe extern "system" fn clipboard_wnd_proc(
+    window: *mut std::ffi::c_void,
+    message: u32,
+    wparam: usize,
+    lparam: isize,
+) -> isize {
+    if message == WM_CLIPBOARDUPDATE {
+        let event = CLIPBOARD_EVENT.load(std::sync::atomic::Ordering::SeqCst);
+        if event != 0 {
+            let _ = SetEvent(event as *mut std::ffi::c_void);
+        }
+        return 0;
+    }
+    DefWindowProcW(window, message, wparam, lparam)
+}
+
+/// Accept a clipboard image, or recognise one that is already in hand.
+///
+/// The cheap decisions stay here, on the thread that has to notice the next
+/// copy: the licence, the hash that suppresses a re-capture of the same
+/// picture. Everything that scales with the picture's size — the PNG encode,
+/// the file write, the row and the events — goes to [`image_jobs`], because a
+/// 4K screenshot is 100–250 ms of that thread's attention and the clipboard
+/// does not wait. Taking `img` by value is what makes the hand-off free: the
+/// DIB is already an owned buffer, so the worker holds it rather than a copy.
+///
+/// `true` now means "accepted for storage" rather than "written". The one
+/// caller that reads the value (the double-Shift gesture) uses it to decide
+/// whether to put the clipboard back, which is the same decision either way.
+pub fn capture_image(app: &AppHandle, img: arboard::ImageData<'static>) -> bool {
     if crate::license::require(app).is_err() {
         return false;
     }
@@ -226,12 +534,92 @@ pub fn capture_image(app: &AppHandle, img: &arboard::ImageData<'_>) -> bool {
         }
         *guard = Some(hash);
     }
-    let Some(encoded) = encode_png(img) else {
-        let mut guard = LAST_IMAGE_HASH
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let job = ImageJob {
+        app: app.clone(),
+        hash,
+        img,
+    };
+    match image_jobs().try_send(job) {
+        Ok(()) => true,
+        Err(std::sync::mpsc::TrySendError::Full(_)) => {
+            // Full: two images are already being encoded and a third arrived.
+            // Refusing is deliberate — the alternative is an unbounded queue of
+            // multi-megabyte buffers — and the hash is forgotten so copying the
+            // same picture again is not suppressed by a job that never ran.
+            crate::crash::record_event("capture:image-busy");
+            forget_image_hash(hash);
+            false
+        }
+        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+            // The worker is gone, which no path in this process produces. Same
+            // answer as a full queue: the hash goes back so the next copy of
+            // this picture is tried again.
+            crate::crash::record_event("capture:image-worker-gone");
+            forget_image_hash(hash);
+            false
+        }
+    }
+}
+
+/// One image on its way to disk.
+struct ImageJob {
+    app: AppHandle,
+    hash: u64,
+    img: arboard::ImageData<'static>,
+}
+
+/// The encoder worker: one thread, two slots.
+///
+/// One thread keeps the jobs in the order the clipboard produced them, which is
+/// what the hash comparison above assumes. Two slots bound the memory a burst
+/// can hold (each can be a 4K DIB), and they are enough for every real use: an
+/// image the person copied is written in a fraction of a second.
+fn image_jobs() -> &'static std::sync::mpsc::SyncSender<ImageJob> {
+    static JOBS: std::sync::OnceLock<std::sync::mpsc::SyncSender<ImageJob>> =
+        std::sync::OnceLock::new();
+    JOBS.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<ImageJob>(2);
+        thread::spawn(move || {
+            while let Ok(job) = receiver.recv() {
+                // Contained, exactly as the work was while it ran inside the
+                // monitor's own `catch_unwind`: under `panic = "abort"` a panic
+                // here would end the process, and a picture Bard cannot encode
+                // is not a reason to take capture down with it.
+                let stored = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                    store_image(job)
+                }));
+                if stored.is_err() {
+                    crate::crash::record_event("capture:image-store-failed");
+                }
+            }
+        });
+        sender
+    })
+}
+
+/// Forget the last captured image, so the next copy of it is not suppressed.
+///
+/// Only when the stored hash is still `hash`: a failure in the worker must not
+/// erase a *newer* capture's hash and let that picture be stored twice.
+fn forget_image_hash(hash: u64) {
+    let mut guard = LAST_IMAGE_HASH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if *guard == Some(hash) {
         *guard = None;
-        return false;
+    }
+}
+
+/// Encode, write, file and announce one clipboard image — off the monitor
+/// thread. The failure paths here are the same ones the old inline body had:
+/// a refused or failed write forgets the hash so the picture can be captured
+/// again, and a PNG with no row is removed rather than left for a sweep that
+/// would never find it.
+fn store_image(job: ImageJob) {
+    let ImageJob { app, hash, img } = job;
+    let Some(encoded) = encode_png(&img) else {
+        forget_image_hash(hash);
+        return;
     };
     let images = app.state::<ImagesDir>().0.clone();
     let path = images.join(format!(
@@ -240,28 +628,34 @@ pub fn capture_image(app: &AppHandle, img: &arboard::ImageData<'_>) -> bool {
         std::process::id() & 0xFFFF
     ));
     if std::fs::write(&path, encoded).is_err() {
-        let mut guard = LAST_IMAGE_HASH
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *guard = None;
-        return false;
+        forget_image_hash(hash);
+        return;
     }
-    let id =
-        db::insert_item_with_origin(app, "", "image", Some(&path.to_string_lossy()), "clipboard");
+    let id = db::insert_item_with_origin(
+        &app,
+        "",
+        "image",
+        Some(&path.to_string_lossy()),
+        "clipboard",
+    );
     if id == db::INSERT_FAILED {
         // The PNG is on disk with no row referencing it. Remove it rather than
         // leaving an orphan no sweep will ever collect.
         let _ = std::fs::remove_file(&path);
-        return false;
+        return;
     }
-    db::set_active_item(app, Some(id));
-    if let Err(error) = db::cleanup_origin(app, "clipboard") {
-        crate::crash::record_event("capture:retention-failed");
-        let _ = app.emit("capture-failed", error);
+    db::set_active_item(&app, Some(id));
+    let mut removed = 0;
+    match db::cleanup_origin(&app, "clipboard") {
+        Ok(count) => removed = count,
+        Err(error) => {
+            crate::crash::record_event("capture:retention-failed");
+            let _ = app.emit_to("main", "capture-failed", error);
+        }
     }
-    let _ = app.emit("captured", id);
-    let _ = app.emit("refresh", ());
-    true
+    // Stored: the dedupe keeps the job's hash, so the same picture copied
+    // again is recognised rather than written a second time.
+    announce_captured(&app, id, removed);
 }
 
 /// The largest image Bard will store, by pixel count and by encoded size.

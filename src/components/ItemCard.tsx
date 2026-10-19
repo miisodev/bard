@@ -90,6 +90,8 @@ export default function ItemCard({
   const [draft, setDraft] = useState(item.content);
   const [thumbUrls, setThumbUrls] = useState<Map<number, string>>(new Map());
   const [clamped, setClamped] = useState(false);
+  const [onScreen, setOnScreen] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const kind = itemKind(item);
@@ -109,13 +111,52 @@ export default function ItemCard({
           ? null
           : countCharacters(item.content);
 
+  /**
+   * A card asks for its picture only when the card can be seen.
+   *
+   * The panel renders one page at a time, so on a normal shelf this fires in
+   * the first frame and changes nothing. It is the off-screen cases that made
+   * the read worth deferring: a page wider than the zone, a card scrolled past,
+   * and — the one that matters — the panel mounting while its window is still
+   * hidden, which is every launch until the shelf is summoned. Nothing is
+   * fetched, decoded or held for pixels nobody is looking at.
+   */
   useEffect(() => {
-    if (item.kind !== "image") return;
-    void api.itemImageData(item.id).then((url) => {
+    const card = cardRef.current;
+    if (!card) return;
+    if (typeof IntersectionObserver !== "function") {
+      setOnScreen(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setOnScreen(true);
+        observer.disconnect();
+      },
+      // A card just off the edge is fetched before it is needed, so scrolling
+      // to it does not show a placeholder.
+      { rootMargin: "200px" },
+    );
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (item.kind !== "image" || !onScreen) return;
+    let alive = true;
+    // The asset URL, not the file: the card was asking for a base64 copy of a
+    // multi-megabyte screenshot per mount, decoded again by the compositor at
+    // full size. Rust has already answered whether the file is there.
+    void api.itemCoverUrl(item.id).then((url) => {
+      if (!alive) return;
       setImageUrl(url);
       setImageMissing(!url);
     });
-  }, [item.id, item.kind]);
+    return () => {
+      alive = false;
+    };
+  }, [item.id, item.kind, onScreen]);
 
   useEffect(() => {
     // Rebuilt, not accumulated. Detach an attachment and its file is unlinked, but
@@ -124,8 +165,9 @@ export default function ItemCard({
     // exists, across every card in the timeline.
     let alive = true;
     setThumbUrls(new Map());
+    if (!onScreen) return;
     for (const a of attachments) {
-      void api.attachmentImageData(a.id).then((url) => {
+      void api.attachmentCoverUrl(a.id).then((url) => {
         if (!alive || !url) return;
         setThumbUrls((m) => new Map(m).set(a.id, url));
       });
@@ -133,7 +175,7 @@ export default function ItemCard({
     return () => {
       alive = false;
     };
-  }, [attachments.map((a) => a.id).join(",")]);
+  }, [attachments.map((a) => a.id).join(","), onScreen]);
 
   useEffect(() => {
     setDraft(item.content);
@@ -163,6 +205,7 @@ export default function ItemCard({
 
   return (
     <div
+      ref={cardRef}
       className={`item-card${selected ? " selected" : ""}${active ? " active" : ""}${done ? " done" : ""}${
         fresh ? " fresh" : ""
       }`}

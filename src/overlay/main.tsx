@@ -98,16 +98,14 @@ function Overlay() {
       listen("mic-level", (e) => {
         const [level] = e.payload as [number, number];
         if (!alive) return;
-        // Mutated in place rather than rebuilt. A twelve-element array is cheap,
-        // but this fires for every meter tick and the overlay is the one window
-        // that must never drop a frame — it sits over whatever the person is
-        // doing, and a stutter there reads as the whole app stuttering.
+        // A new array, not a mutation of the old one. The in-place version
+        // returned the same reference, so React's `Object.is` comparison
+        // bailed out of the render and the bars only moved when something
+        // unrelated re-rendered the pill — a frozen meter on the one window
+        // that sits over whatever the person is doing, which reads as the app
+        // hanging. Twelve numbers per tick is not the cost that matters here.
         const next = Math.max(0.06, Math.min(1, level));
-        setLevels((levels) => {
-          levels.push(next);
-          if (levels.length > LEVEL_BARS) levels.splice(0, levels.length - LEVEL_BARS);
-          return levels;
-        });
+        setLevels((levels) => [...levels, next].slice(-LEVEL_BARS));
       }),
     );
     return () => {

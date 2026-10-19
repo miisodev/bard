@@ -31,6 +31,8 @@ import {
   constrain,
   duplicate,
   emptyHistory,
+  ERASE_SAMPLE_STEP,
+  eraseCrossed,
   eraseTargets,
   exportPng,
   exportSvg,
@@ -294,6 +296,32 @@ export default function DrawWindow() {
     });
   }, [selected, page, ink, accent]);
 
+  /*
+    One paint per frame, however many pointer events land in it.
+    A 120 Hz mouse or a drawing tablet produced an event per sample and every
+    one of them re-rendered the whole page — every shape, every pen point, from
+    scratch. The state the paint reads is already up to date when the frame
+    runs, so the frame shows the same picture the last of those events would
+    have drawn, and everything between the frames costs nothing.
+  */
+  const paintRef = useRef(paint);
+  paintRef.current = paint;
+  const frameRef = useRef<number | undefined>(undefined);
+  const schedulePaint = useCallback(() => {
+    if (frameRef.current !== undefined) return;
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = undefined;
+      paintRef.current();
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (frameRef.current !== undefined) window.cancelAnimationFrame(frameRef.current);
+    },
+    [],
+  );
+
   // Browser preview only: a seeded sketch, so screenshots show Draw in use.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -539,14 +567,28 @@ export default function DrawWindow() {
       // that is still choosing. Hovering ghosts the one shape under the
       // pointer — the shape a click would take.
       if (erasePathRef.current) {
-        erasePathRef.current = [...erasePathRef.current, p];
-        ghostRef.current = eraseTargets(shapesRef.current, erasePathRef.current);
+        const path = erasePathRef.current;
+        const last = path[path.length - 1] ?? p;
+        // A move shorter than the sweep's own sampling step cannot change what
+        // it crosses, so it does not grow the path. Then only the new segment
+        // is tested, against what the gesture has not already taken: the ghosts
+        // only ever grow, so their union is the answer the old full re-test
+        // produced, at a cost that does not grow with the gesture.
+        if (Math.hypot(p.x - last.x, p.y - last.y) >= ERASE_SAMPLE_STEP) {
+          erasePathRef.current = [...path, p];
+          const crossed = eraseCrossed(shapesRef.current, last, p);
+          if (crossed.length > 0) {
+            const ghost = new Set(ghostRef.current ?? []);
+            for (const id of crossed) ghost.add(id);
+            ghostRef.current = [...ghost];
+          }
+        }
       } else {
         const under = hitTest(shapesRef.current, p);
         ghostRef.current = under ? [under.id] : null;
       }
       eraserRef.current = { at: p, r: width + 4 };
-      paint();
+      schedulePaint();
       return;
     }
 
@@ -555,7 +597,7 @@ export default function DrawWindow() {
       if (s) {
         resize(s, resizeRef.current.handle, p, { shift: e.shiftKey, alt: e.altKey });
         resizeRef.current.changed = true;
-        paint();
+        schedulePaint();
       }
       return;
     }
@@ -566,7 +608,7 @@ export default function DrawWindow() {
         move(s, p.x - dragRef.current.last.x, p.y - dragRef.current.last.y);
         dragRef.current.last = p;
         dragRef.current.changed = true;
-        paint();
+        schedulePaint();
       }
       return;
     }
@@ -599,7 +641,7 @@ export default function DrawWindow() {
     ) {
       draft.b = e.shiftKey ? constrain(draft.kind, draft.a, p) : p;
     }
-    paint();
+    schedulePaint();
   };
 
   const onPointerUp = () => {

@@ -462,7 +462,9 @@ pub fn active_item(app: &AppHandle) -> Option<i64> {
     get_setting(app, "active_item_id")
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|id| item_exists(app, *id))
-        .or_else(|| list_items(app).first().map(|item| item.id))
+        // The fallback is the newest item, so one row is the whole answer —
+        // this used to read the entire timeline to take its first element.
+        .or_else(|| list_items_windowed(app, 1).first().map(|item| item.id))
 }
 
 const ITEM_COLUMNS: &str = "id, section_id, content, kind, image_path, origin, favorite, done, \
@@ -840,6 +842,47 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
     })
 }
 
+/// The timeline's own read: newest first, with the automatic items bounded by
+/// [`AUTOMATIC_ITEM_CEILING`] and everything a person made by hand exempt.
+///
+/// This is where the ceiling belongs. It is not a deletion — nothing here
+/// removes a row, and the age-based retention setting is still the only
+/// automatic deletion — it is a bound on how much history one refresh has to
+/// re-read and re-serialise into every webview. The panel paints eight cards
+/// from that read, so an unbounded read grows forever while the screen does
+/// not: it was three or four megabytes of JSON per capture at a few thousand
+/// items, and the felt capture latency grew with it.
+///
+/// Manual items, favourites and pins are outside the bound. They are the
+/// library a person built deliberately and they are small by construction,
+/// while a shelf that silently hides one of them — an old pin especially,
+/// which is also a Right Shift × 2 paste slot — would be worse than any
+/// amount of reading.
+fn list_items_windowed(app: &AppHandle, limit: i64) -> Vec<Item> {
+    with_conn(app, |c| {
+        let mut stmt = c
+            .prepare(&format!(
+                "SELECT {ITEM_COLUMNS} FROM items
+                 WHERE origin NOT IN ('clipboard', 'dictation')
+                    OR favorite = 1
+                    OR pinned_at IS NOT NULL
+                    OR id IN (
+                        SELECT id FROM items
+                        WHERE origin IN ('clipboard', 'dictation')
+                          AND favorite = 0
+                          AND pinned_at IS NULL
+                        ORDER BY id DESC LIMIT ?1
+                    )
+                 ORDER BY id DESC"
+            ))
+            .unwrap();
+        stmt.query_map(params![limit], item_from_row)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_default()
+    })
+}
+
 /// How many leading members a pack previews.
 const PACK_PREVIEW_LIMIT: i64 = 4;
 
@@ -1184,15 +1227,20 @@ pub fn pack_reorder(app: &AppHandle, id: i64, item_ids: &[i64]) -> Result<(), St
 /// Remove expired automatic items and every owned file attached to them.
 /// `None` means the user selected Forever. Favorites and manual work are never
 /// removed by age-based cleanup.
-pub fn cleanup_origin(app: &AppHandle, origin: &str) -> Result<(), String> {
+///
+/// Returns how many rows went, so a caller that has just told the panel about
+/// one new item can tell whether the same pass also took some away — the panel
+/// splices the new item in without re-reading, and only a non-zero count here
+/// makes that splice incomplete.
+pub fn cleanup_origin(app: &AppHandle, origin: &str) -> Result<usize, String> {
     if !matches!(origin, "clipboard" | "dictation") {
-        return Ok(());
+        return Ok(0);
     }
     let Some(days) = retention_days(app, origin) else {
         // Forever means Forever. Returning early is the whole contract: the old
         // code fell through to a count cap that deleted the user's data anyway,
         // which is the opposite of what they asked for.
-        return Ok(());
+        return Ok(0);
     };
     let cutoff = now_ms().saturating_sub(days.saturating_mul(24 * 60 * 60 * 1000));
     // `with_conn` takes a plain-value closure, so the fallible read is
@@ -1211,7 +1259,9 @@ pub fn cleanup_origin(app: &AppHandle, origin: &str) -> Result<(), String> {
             .map_err(|error| format!("Could not read expired items: {error}"))?;
         Ok(rows.filter_map(Result::ok).collect())
     })?;
-    delete_items_with_files(app, &ids)
+    let removed = ids.len();
+    delete_items_with_files(app, &ids)?;
+    Ok(removed)
 }
 
 /// A file written less than this long ago is never swept: a capture writes its
@@ -1312,32 +1362,10 @@ pub const DEFAULT_DICTATION_RETENTION_DAYS: i64 = 30;
 
 /// Remove one origin's expired items and report how many went.
 ///
-/// `cleanup_origin` is the same pass without the count, for the fire-and-forget
-/// startup and capture paths where nobody is waiting to be told.
+/// The count comes from the pass itself rather than a `COUNT(*)` taken just
+/// before it — two reads and a race to say the same number.
 pub fn prune_expired(app: &AppHandle, origin: &str) -> Result<usize, String> {
-    let removed = count_expired(app, origin);
-    cleanup_origin(app, origin)?;
-    Ok(removed)
-}
-
-fn count_expired(app: &AppHandle, origin: &str) -> usize {
-    if !matches!(origin, "clipboard" | "dictation") {
-        return 0;
-    }
-    let Some(days) = retention_days(app, origin) else {
-        return 0;
-    };
-    let cutoff = now_ms().saturating_sub(days.saturating_mul(24 * 60 * 60 * 1000));
-    with_conn(app, |c| {
-        c.query_row(
-            "SELECT COUNT(*) FROM items
-             WHERE origin = ?1 AND favorite = 0 AND created_at < ?2",
-            params![origin, cutoff],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|count| count.max(0) as usize)
-        .unwrap_or(0)
-    })
+    cleanup_origin(app, origin)
 }
 
 /// The configured age for one automatic origin. `None` is the explicit
@@ -1838,8 +1866,12 @@ pub fn set_pinned(app: &AppHandle, id: i64, pinned: bool) -> Result<(), PinError
 
 /// The items in the order the panel shows them. Right Shift × 2 + a number
 /// pastes by this order too, so "item 1" is always the one at the top.
+///
+/// Bounded by [`AUTOMATIC_ITEM_CEILING`] — see [`list_items_windowed`] — and
+/// that is the only reader that is: `clear_history` and the export path still
+/// walk every row, because "every row" is what they are for.
 pub fn timeline(app: &AppHandle) -> Vec<Item> {
-    let mut items = list_items(app);
+    let mut items = list_items_windowed(app, AUTOMATIC_ITEM_CEILING as i64);
     sort_items(&mut items, &sort_order(app));
     items
 }

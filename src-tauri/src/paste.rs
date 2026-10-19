@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use base64::Engine;
-use image::GenericImageView;
 use tauri::AppHandle;
 
 /// Send one native paste chord to the currently focused application. The
@@ -40,7 +39,7 @@ pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {
 /// future change that let a path reach `items.image_path` would turn it into an
 /// arbitrary-file-read-to-clipboard with no guard at all. One helper, so the two
 /// callers cannot drift apart again.
-fn owned_image_bytes(path: &str) -> Option<Vec<u8>> {
+fn owned_image_file(path: &str) -> Option<std::path::PathBuf> {
     let root = crate::db::images_root()?;
     let candidate = Path::new(path);
     if !crate::hf::path_is_within(&root, candidate) {
@@ -50,7 +49,83 @@ fn owned_image_bytes(path: &str) -> Option<Vec<u8>> {
     if !metadata.is_file() || metadata.len() > 25 * 1024 * 1024 {
         return None;
     }
+    Some(candidate.to_path_buf())
+}
+
+/// The checks a picture must pass before any window is allowed to draw it:
+/// a real file Bard owns, inside the size cap, with dimensions that are real
+/// numbers rather than a decode of every pixel in it.
+///
+/// Those dimensions come from the file's header. The card wants nothing else
+/// from the picture — it is 236 × 148 CSS pixels — and `load_from_memory` used
+/// to be called purely to obtain what `image_dimensions` answers after a few
+/// hundred bytes: a full RGBA decode of a 4K screenshot per card per mount,
+/// tens of megabytes of transient memory thrown away immediately.
+fn owned_image_dimensions(path: &Path) -> Option<(u32, u32)> {
+    let (width, height) = image::image_dimensions(path).ok()?;
+    if width == 0 || height == 0 || width as u64 * height as u64 > 100_000_000 {
+        return None;
+    }
+    Some((width, height))
+}
+
+fn owned_image_bytes(path: &str) -> Option<Vec<u8>> {
+    let candidate = owned_image_file(path)?;
     std::fs::read(candidate).ok()
+}
+
+/// The webview URL a shelf card loads its picture from: the `asset` protocol
+/// rather than a `data:` URL.
+///
+/// A data URL cost a base64 copy of the whole file per card (a 5 MB screenshot
+/// became a 6.7 MB string, decoded again by the compositor at full size). The
+/// asset protocol serves the file itself, so Chromium streams and caches it by
+/// URL. This is the same URL `convertFileSrc` builds in JavaScript — the scheme
+/// is reached at `http://asset.localhost/<path>` on Windows (`useHttpsScheme`
+/// stays at its default, `false`) and at `asset://localhost/<path>` elsewhere —
+/// built here so every window gets one implementation. The path is encoded the
+/// way `encodeURIComponent` writes it, one byte at a time and with no
+/// dependency, because a Windows path is nothing but characters the encoding
+/// has to escape (`\`, `:`, spaces).
+///
+/// Every caller has already checked containment and size: the scope registered
+/// in `main.rs` covers the images directory, and a path that never leaves
+/// `owned_image_file`/`owned_image_dimensions` is the only kind that gets here.
+fn asset_url(path: &Path) -> String {
+    let mut encoded = String::with_capacity(path.as_os_str().len() + 16);
+    for byte in path.to_string_lossy().bytes() {
+        match byte {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'!'
+            | b'~'
+            | b'*'
+            | b'\''
+            | b'('
+            | b')' => encoded.push(byte as char),
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    #[cfg(windows)]
+    {
+        format!("http://asset.localhost/{encoded}")
+    }
+    #[cfg(not(windows))]
+    {
+        format!("asset://localhost/{encoded}")
+    }
+}
+
+/// A card's cover: the file's own asset URL, or nothing when the picture is
+/// gone, outside Bard's images folder, or too large to be one Bard stored.
+pub fn image_url(path: &str) -> Option<String> {
+    let candidate = owned_image_file(path)?;
+    owned_image_dimensions(&candidate)?;
+    Some(asset_url(&candidate))
 }
 
 pub fn set_image(app: &AppHandle, path: &str) -> Result<(), String> {
@@ -82,11 +157,9 @@ pub fn image_data(app: &AppHandle, path: &str) -> Option<String> {
     let _ = app;
     let bytes = owned_image_bytes(path)?;
     let format = image::guess_format(&bytes).ok()?;
-    let decoded = image::load_from_memory_with_format(&bytes, format).ok()?;
-    let (width, height) = decoded.dimensions();
-    if width == 0 || height == 0 || width as u64 * height as u64 > 100_000_000 {
-        return None;
-    }
+    // Header-only: a full decode was walking every pixel of a 25 MB file to
+    // answer a question the header already holds.
+    owned_image_dimensions(Path::new(path))?;
     let mime = match format {
         image::ImageFormat::Jpeg => "image/jpeg",
         image::ImageFormat::WebP => "image/webp",

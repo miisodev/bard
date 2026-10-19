@@ -82,6 +82,64 @@ export function filterItems(
   });
 }
 
+/** What one pass over the list produces: the page's cards and every chip's count. */
+export interface ShelfView {
+  visible: Item[];
+  counts: Record<TypeFilter, number>;
+}
+
+/**
+ * [`filterItems`] and every chip's count, in one pass over the list.
+ *
+ * The shelf ran `filterItems` six times per change — once for the visible list
+ * and once per chip — and each pass re-classified every item (`itemKind` runs
+ * two regular expressions) and re-lowercased its content when a query was
+ * present. That is six classifications and six lowercases per item per
+ * keystroke, and the content can be 256 kB: the work grew with the library
+ * while the screen showed eight cards.
+ *
+ * One pass classifies and lowercases once per item, and both answers fall out
+ * of it: an item is counted under every chip it matches and collected only
+ * under the active one.
+ */
+export function filterShelf(
+  items: Item[],
+  query: string,
+  filter: TypeFilter,
+  favoritesOnly: boolean,
+): ShelfView {
+  const q = query.trim().toLowerCase();
+  const counts: Record<TypeFilter, number> = { all: 0, text: 0, image: 0, link: 0, color: 0 };
+  const visible: Item[] = [];
+  for (const item of items) {
+    if (favoritesOnly && item.favorite === 0) continue;
+    if (q && !item.content.toLowerCase().includes(q)) continue;
+    const kind = itemKind(item);
+    for (const chip of TYPE_FILTERS) {
+      if (matchesFilter(kind, chip.id)) counts[chip.id] += 1;
+    }
+    if (matchesFilter(kind, filter)) visible.push(item);
+  }
+  return { visible, counts };
+}
+
+/**
+ * The shelf's list with one just-captured item in it, exactly where a backend
+ * read would have put it.
+ *
+ * Only correct for the newest-first order, which is what the caller checks
+ * before using it: in the other three the item's place comes from `sort_items`
+ * in Rust, and a guess there would put a card somewhere the next read moves it.
+ * Pins lead every order, so a capture — never pinned — goes after the last of
+ * them, and the rest of the list is already newest-first.
+ */
+export function insertCaptured(items: Item[], item: Item): Item[] {
+  const rest = items.filter((existing) => existing.id !== item.id);
+  const firstUnpinned = rest.findIndex((existing) => existing.pinnedAt === null);
+  const at = firstUnpinned < 0 ? rest.length : firstUnpinned;
+  return [...rest.slice(0, at), item, ...rest.slice(at)];
+}
+
 /** Long enough to identify an item, short enough to be read out loud. */
 const PREVIEW_CHARS = 48;
 

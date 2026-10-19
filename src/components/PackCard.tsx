@@ -106,7 +106,7 @@ export default function PackCard({
     let alive = true;
     setImages(new Map());
     for (const id of imageIds) {
-      void api.itemImageData(id).then((url) => {
+      void api.itemCoverUrl(id).then((url) => {
         if (alive && url) setImages((current) => new Map(current).set(id, url));
       });
     }

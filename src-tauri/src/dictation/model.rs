@@ -518,17 +518,18 @@ fn transcribe_inner(app: &AppHandle, samples: &[f32]) -> Result<String, String> 
     // Verified once per *session*, not once per capture.
     //
     // `verify_model_file` resolves the file and re-checks it against the
-    // catalogue, and `verify_pinned_file` memoises on
-    // `(size, last_write_time, creation_time)`. That memo is the problem: on this
-    // filesystem an in-place same-size rewrite leaves both timestamps bit-for-bit
-    // unchanged — measured, not assumed — so the memo effectively verifies a file
-    // once per process and then trusts it forever, which is the one guarantee the
-    // whole checksum path exists to provide.
+    // catalogue, and `verify_pinned_file` answers from the durable marker when
+    // the file's `(size, last write, creation)` stamp and the catalogue's
+    // checksum are both unchanged since the last successful hash — see that
+    // function for exactly what that trusts. A stat is not free either:  this
+    // runs before every take, and a take should not wait on a file read it does
+    // not need. The session check is the cheap one, and the marker is what makes
+    // the first check in a new process cheap as well.
     //
-    // Verifying on session entry rather than per capture removes the dependence on
-    // the memo while keeping the cost off the dictation hot path: a session that
-    // dictates forty times hashes once, not forty times, and any change to the
-    // file between sessions is caught.
+    // Verifying on session entry rather than per capture also keeps any change
+    // to the file between sessions caught even when the stamp cannot see it:
+    // a fresh process has no in-memory verdict, so it asks the marker, and the
+    // marker's answer is the file's stamp against what was hashed.
     ensure_session_verified(app, &id, &path)?;
 
     if !INIT_BACKENDS.load(Ordering::SeqCst) {

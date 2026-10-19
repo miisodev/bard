@@ -220,6 +220,9 @@ export function hitTest(shapes: Shape[], p: Point): Shape | null {
   return null;
 }
 
+/** How far apart the eraser's samples along its sweep are, in px. */
+export const ERASE_SAMPLE_STEP = 3;
+
 /**
  * Every shape the eraser's sweep crosses, topmost first — the whole gesture is
  * one delete, so the result is the set of ids that go together. A click is a
@@ -230,9 +233,30 @@ export function hitTest(shapes: Shape[], p: Point): Shape | null {
  */
 export function eraseTargets(shapes: Shape[], path: Point[]): number[] {
   if (path.length === 0) return [];
-  const samples = samplePath(path, 3);
+  const samples = samplePath(path, ERASE_SAMPLE_STEP);
   const ids: number[] = [];
   for (let i = shapes.length - 1; i >= 0; i--) {
+    if (samples.some((p) => nearShape(shapes[i], p))) ids.push(shapes[i].id);
+  }
+  return ids;
+}
+
+/**
+ * The shapes one straight segment of a sweep crosses.
+ *
+ * A sweep's ghosts only ever grow, and the segment between two pointer samples
+ * is the only part of the path the last move has not already tested — so
+ * appending this to the ids already found is the same answer as re-testing the
+ * whole path, at the cost of one segment per move instead of the entire
+ * gesture. That is what makes a long sweep with the eraser flat: the old code
+ * re-sampled every point since the pointer went down and tested all of them
+ * against every shape, on every move.
+ */
+export function eraseCrossed(shapes: Shape[], from: Point, to: Point): number[] {
+  const samples = samplePath([from, to], ERASE_SAMPLE_STEP);
+  const ids: number[] = [];
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    if (ids.includes(shapes[i].id)) continue;
     if (samples.some((p) => nearShape(shapes[i], p))) ids.push(shapes[i].id);
   }
   return ids;

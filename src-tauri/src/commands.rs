@@ -12,8 +12,31 @@ use zeroize::Zeroize;
 
 use crate::db;
 
+/// Shell state changed: tell the windows that read it.
+///
+/// `emit_to`, not `emit`. The panel is the window that reads `get_state`, and
+/// settings is the only other one that does — its panes read the theme, the
+/// background and the data settings out of that payload. The dictation overlay
+/// and the drawing canvas never have, and every refresh used to be delivered to
+/// all four webviews, each of which answered it with an appearance read of its
+/// own: one copy cost five invokes across the process, four of them for the
+/// eight appearance strings.
 pub fn refresh(app: &AppHandle) {
-    let _ = app.emit("refresh", ());
+    let _ = app.emit_to("main", "refresh", ());
+    // The settings window is created on first use, so it may not exist yet.
+    if app.get_webview_window("settings").is_some() {
+        let _ = app.emit_to("settings", "refresh", ());
+    }
+}
+
+/// The appearance changed somewhere every window can see it.
+///
+/// The theme, the background and Draw's own colours are one small record that
+/// every window needs and only changes when someone changes it, so the change
+/// is announced once with the record attached — no read per window, no read per
+/// refresh, and nothing for a clipboard capture to wake up.
+pub fn announce_appearance(app: &AppHandle) {
+    let _ = app.emit("appearance", read_appearance(app));
 }
 
 fn license_blocked(app: &AppHandle, error: String) -> bool {
@@ -844,12 +867,109 @@ pub fn open_settings(app: AppHandle) {
     show_secondary(&app, "settings", false);
 }
 
+/// The Draw or Settings window, created the first time it is asked for.
+///
+/// Both used to be declared in `tauri.conf.json`, so every launch built two
+/// extra WebView2 renderers — each with its own bundle, its own process and its
+/// own working set — that nothing could reach before a click. That is most of
+/// the fixed cost of a launch, and it is paid even by an autostart-at-login run
+/// whose whole point is to be invisible and cheap. The panel and the dictation
+/// overlay stay declared: the panel is what a launch shows, and the overlay has
+/// to be ready within a frame of the first Ctrl+Ctrl.
+///
+/// The two created here keep the label, size, decorations and behaviour the
+/// config gave them — the label is what keeps their capabilities
+/// (`capabilities/draw.json`, `capabilities/settings.json`) and the
+/// `on_window_event` handling in `main.rs` working unchanged.
+fn companion(app: &AppHandle, label: &str) -> Option<tauri::WebviewWindow> {
+    if let Some(window) = app.get_webview_window(label) {
+        return Some(window);
+    }
+    let (url, title, min) = match label {
+        "draw" => ("draw.html", "Draw", (480.0, 400.0)),
+        "settings" => ("settings.html", "Settings", (600.0, 440.0)),
+        _ => return None,
+    };
+    let built = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
+        .title(title)
+        .inner_size(
+            crate::panel::COMPANION_WIDTH,
+            crate::panel::COMPANION_HEIGHT,
+        )
+        .min_inner_size(min.0, min.1)
+        .resizable(true)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(false)
+        .skip_taskbar(false)
+        .visible(false)
+        .on_page_load(|window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                mark_companion_loaded(window.app_handle(), window.label());
+            }
+        })
+        .build()
+        .ok()?;
+    Some(built)
+}
+
+/// Whether the drawing window has finished loading its bundle in this process.
+///
+/// The seed below arrives as an event, and an event delivered before the page's
+/// listeners exist is an event nobody hears. While the window was created at
+/// launch this could not happen — it had been loading since startup — so the
+/// seed now waits for the load, which is the only thing that changed.
+static DRAW_LOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn mark_companion_loaded(app: &AppHandle, label: &str) {
+    if label != "draw" {
+        return;
+    }
+    DRAW_LOADED.store(true, Ordering::SeqCst);
+    flush_draw_seed(app);
+}
+
+/// The item the drawing window has been asked to annotate but has not been told
+/// about yet. Set when the request is made, cleared when the window hears it.
+static PENDING_DRAW_SEED: std::sync::Mutex<Option<i64>> = std::sync::Mutex::new(None);
+
+/// Open Draw seeded with one image, from the panel's card menu.
+fn seed_draw(app: &AppHandle, item_id: i64) {
+    {
+        let mut guard = PENDING_DRAW_SEED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(item_id);
+    }
+    // Already loaded: the listener is there, so it can be told now.
+    if DRAW_LOADED.load(Ordering::SeqCst) {
+        flush_draw_seed(app);
+    }
+}
+
+fn flush_draw_seed(app: &AppHandle) {
+    let item_id = {
+        let mut guard = PENDING_DRAW_SEED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.take()
+    };
+    let Some(item_id) = item_id else {
+        return;
+    };
+    let _ = app.emit_to(
+        "draw",
+        "draw-seed",
+        serde_json::json!({ "itemId": item_id }),
+    );
+}
+
 /// Show Settings or Draw where it was last left (centred the first time).
 /// Both are ordinary windows now: movable, resizable, on the taskbar, and
 /// independent of the panel and of each other.
 pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
-    use tauri::Manager;
-    let Some(win) = app.get_webview_window(label) else {
+    let Some(win) = companion(app, label) else {
         return;
     };
     if label == "draw" {
@@ -885,13 +1005,15 @@ pub fn toggle_companion(app: AppHandle, label: String) -> Result<(), String> {
     if !matches!(label.as_str(), "draw" | "settings") {
         return Err("Bard has no such window.".into());
     }
-    let Some(win) = app.get_webview_window(&label) else {
-        return Ok(());
-    };
-    if win.is_visible().unwrap_or(false) && !win.is_minimized().unwrap_or(false) {
-        crate::panel::hide_companion(&app, &win);
-        crate::panel::focus_panel(&app);
-        return Ok(());
+    // An open companion just goes away, and putting a window away never needs a
+    // licence. Only opening one does, and until then nothing is created: a
+    // restricted click must not leave a hidden window behind it.
+    if let Some(win) = app.get_webview_window(&label) {
+        if win.is_visible().unwrap_or(false) && !win.is_minimized().unwrap_or(false) {
+            crate::panel::hide_companion(&app, &win);
+            crate::panel::focus_panel(&app);
+            return Ok(());
+        }
     }
     if label == "draw" {
         if let Err(error) = crate::license::require(&app) {
@@ -921,8 +1043,7 @@ fn hide_panel_for_secondary(app: &AppHandle) {
 }
 
 fn toggle_secondary_alone(app: &AppHandle, label: &str) {
-    use tauri::Manager;
-    let Some(win) = app.get_webview_window(label) else {
+    let Some(win) = companion(app, label) else {
         return;
     };
     if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
@@ -1113,11 +1234,10 @@ pub fn open_draw_with_image(app: AppHandle, item_id: i64) -> Result<(), String> 
         return Err(error);
     }
     show_secondary(&app, "draw", false);
-    let _ = app.emit_to(
-        "draw",
-        "draw-seed",
-        serde_json::json!({ "itemId": item_id }),
-    );
+    // The window may have just been created, in which case its bundle is still
+    // loading and its listener does not exist yet: the seed is held until the
+    // page says it is loaded.
+    seed_draw(&app, item_id);
     Ok(())
 }
 
@@ -1414,10 +1534,40 @@ pub async fn attachment_image_data(app: AppHandle, id: i64) -> Option<String> {
     crate::paste::image_data(&app, &path)
 }
 
+/// An image card's picture: the file's asset URL, not its bytes.
+///
+/// The card is 236 × 148 CSS pixels. It used to receive the whole file as a
+/// `data:` URL — base64 in Rust, a fresh copy over the IPC per card per mount,
+/// then a full-size bitmap in the compositor, which is most of what paging a
+/// shelf of screenshots cost. The URL is a few dozen bytes, the webview streams
+/// the file itself, and Chromium caches it by URL across page flips.
+///
+/// `item_image_data` above stays exactly as it was: Draw seeds a picture into a
+/// canvas and exports it with `toDataURL`, which an asset URL would taint.
+#[tauri::command]
+pub async fn item_cover_url(app: AppHandle, id: i64) -> Option<String> {
+    let item = db::item_by_id(&app, id)?;
+    if item.kind != "image" {
+        return None;
+    }
+    crate::paste::image_url(&item.image_path?)
+}
+
+/// An attachment thumbnail's picture, on the same terms as [`item_cover_url`].
+#[tauri::command]
+pub async fn attachment_cover_url(app: AppHandle, id: i64) -> Option<String> {
+    let path = db::attachment_path(&app, id)?;
+    crate::paste::image_url(&path)
+}
+
 /// What every window needs to paint itself: the theme and the background.
 /// Deliberately narrow — the overlay reads it too, and has no business seeing
 /// the clipboard history that `get_state` carries.
-#[derive(serde::Serialize)]
+///
+/// It travels two ways: read once per window on mount, and pushed to every
+/// window as the `appearance` event when one of them changes it. `Clone` is for
+/// the second; the read is a handful of settings and a couple of stat calls.
+#[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Appearance {
     theme: String,
@@ -1432,7 +1582,11 @@ pub struct Appearance {
 
 #[tauri::command]
 pub async fn get_appearance(app: AppHandle) -> Appearance {
-    if !db::is_ready(&app) {
+    read_appearance(&app)
+}
+
+fn read_appearance(app: &AppHandle) -> Appearance {
+    if !db::is_ready(app) {
         return Appearance {
             theme: "system".into(),
             background: "theme".into(),
@@ -1445,15 +1599,15 @@ pub async fn get_appearance(app: AppHandle) -> Appearance {
         };
     }
     Appearance {
-        theme: db::get_setting(&app, "theme").unwrap_or_else(|| "system".into()),
-        background: db::get_setting(&app, "background").unwrap_or_else(|| "theme".into()),
-        background_color: db::get_setting(&app, "background_color").unwrap_or_default(),
-        draw_background: db::get_setting(&app, "draw_background").unwrap_or_else(|| "theme".into()),
-        draw_background_color: db::get_setting(&app, "draw_background_color").unwrap_or_default(),
-        draw_tool: draw_tool_or_default(db::get_setting(&app, "draw_tool")),
-        draw_color: draw_color_or_default(db::get_setting(&app, "draw_color")),
+        theme: db::get_setting(app, "theme").unwrap_or_else(|| "system".into()),
+        background: db::get_setting(app, "background").unwrap_or_else(|| "theme".into()),
+        background_color: db::get_setting(app, "background_color").unwrap_or_default(),
+        draw_background: db::get_setting(app, "draw_background").unwrap_or_else(|| "theme".into()),
+        draw_background_color: db::get_setting(app, "draw_background_color").unwrap_or_default(),
+        draw_tool: draw_tool_or_default(db::get_setting(app, "draw_tool")),
+        draw_color: draw_color_or_default(db::get_setting(app, "draw_color")),
         draw_width: draw_width_or_default(
-            db::get_setting(&app, "draw_width").and_then(|value| value.parse().ok()),
+            db::get_setting(app, "draw_width").and_then(|value| value.parse().ok()),
         ),
     }
 }
@@ -1488,6 +1642,7 @@ pub fn set_draw_background(
     }
     db::set_setting(&app, "draw_background", &mode);
     refresh(&app);
+    announce_appearance(&app);
     Ok(())
 }
 
@@ -1516,15 +1671,20 @@ pub fn set_background(app: AppHandle, mode: String, color: Option<String>) -> Re
     }
     db::set_setting(&app, "background", &mode);
     refresh(&app);
+    announce_appearance(&app);
     Ok(())
 }
 
 #[tauri::command]
 pub fn set_theme(app: AppHandle, theme: String) {
     db::set_setting(&app, "theme", &theme);
-    // Every window reads the theme out of app state, so without this only the
-    // window that made the change would repaint — which is exactly how the
-    // panel stayed light while settings went dark.
+    // Every window paints from the theme, so the change is pushed with the
+    // record attached — without it only the window that made the change would
+    // repaint, which is exactly how the panel stayed light while settings went
+    // dark. `refresh` still follows because the settings pane's own controls
+    // read `state.theme`, and a stale radio button is the same defect wearing a
+    // different hat.
+    announce_appearance(&app);
     refresh(&app);
 }
 
