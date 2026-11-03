@@ -1,9 +1,9 @@
-name: Bard release
+name: Bard release checks
 
-# Manual only. Releases are built and updater-signed locally
-# (scripts/build-release.ps1), where the updater key lives; a tag push used to
-# start this workflow, which cannot Authenticode-sign without a cloud signer,
-# so every release left a cancelled run.
+# Manual validation of an existing source tag only. Installer builds,
+# updater signing and release publication are local owner operations
+# through scripts/build-release.ps1; no signing keys or release tokens
+# are exposed to this GitHub Actions workflow. Tag pushes trigger nothing.
 on:
   workflow_dispatch:
     inputs:
@@ -20,11 +20,7 @@ jobs:
     if: github.repository == 'miisodev/bard'
     runs-on: windows-latest
     timeout-minutes: 60
-    # This workflow is manual-dispatch only; a tag push starts nothing. The
-    # `release` environment in the repository settings must still carry
-    # required reviewers — the only control left between a manual dispatch and
-    # a job that holds the updater signing key and a release token.
-    environment: release
+    # No protected release environment: this job has no signer or publisher access.
     permissions:
       contents: read
       # rustsec/audit-check publishes its findings as a commit Check.
@@ -36,11 +32,7 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
-          # Nothing in this job pushes with the checkout token: publishing goes
-          # through gh with BARD_RELEASES_TOKEN. Leaving a credential in
-          # .git/config for the whole job gives every later step — including the
-          # npm lifecycle scripts bun runs — a way to authenticate as the
-          # repository.
+          # Keep checkout credentials out of dependency and build scripts.
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
@@ -81,128 +73,3 @@ jobs:
           # repository root, and the step fails for the wrong reason.
           working-directory: src-tauri
 
-      - name: Require release secrets
-        shell: pwsh
-        env:
-          UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          UPDATER_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
-          RELEASE_TOKEN: ${{ secrets.BARD_RELEASES_TOKEN }}
-        run: |
-          # Code-signing keys are hardware-bound (CA/B Forum, June 2023): CI can
-          # sign only through a cloud signer's command. A certificate held on a
-          # USB token signs on its own machine with scripts/build-release.ps1.
-          if ([string]::IsNullOrWhiteSpace($env:UPDATER_KEY) -or
-              [string]::IsNullOrWhiteSpace($env:UPDATER_PASSWORD) -or
-              [string]::IsNullOrWhiteSpace($env:SIGN_COMMAND) -or
-              [string]::IsNullOrWhiteSpace($env:RELEASE_TOKEN)) {
-            throw 'A release needs the updater key, a cloud signing command (WINDOWS_SIGN_COMMAND) and the release-repository token.'
-          }
-
-      - name: Prepare the bundle config
-        shell: pwsh
-        env:
-          SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
-        # Written to a file rather than passed inline so that the build step
-        # below has no environment of its own. The build is the step that runs
-        # bun, cargo and every build.rs in the graph; nothing secret belongs in
-        # it.
-        run: |
-          $config = [ordered]@{
-            bundle = [ordered]@{
-              # The build must not sign for the updater. Left true, the bundler
-              # reads the updater private key on its way past and fails with
-              # "A public key has been found, but no private key" the moment the
-              # key is not in its environment — which, after this change, it
-              # never is. scripts/tauri-sign.mjs writes the signature instead.
-              createUpdaterArtifacts = $false
-              windows = [ordered]@{ signCommand = $env:SIGN_COMMAND }
-            }
-          }
-          $path = 'src-tauri\target\bundle-config.json'
-          New-Item -ItemType Directory -Force (Split-Path -Parent $path) | Out-Null
-          # No BOM: the config is parsed as JSON and a byte-order mark is not.
-          [System.IO.File]::WriteAllText(
-            $path, ($config | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
-
-      - name: Build the signed-updater NSIS candidate
-        shell: pwsh
-        # Tauri signs bard.exe, the installer and its uninstaller here, in that
-        # order, and stops. The updater signature is made over the finished
-        # installer in the next step, so this build's environment contains no
-        # signing key at all.
-        run: bun run tauri build --bundles nsis --config src-tauri/target/bundle-config.json
-
-      - name: Sign the updater artefact
-        shell: pwsh
-        env:
-          UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          UPDATER_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        # The one step that uses the updater private key, and the only one that
-        # could lose it. It runs no build, no cargo and no JavaScript from
-        # node_modules — tauri-sign.mjs dlopens the native Tauri CLI directly —
-        # and the key is a file on disk rather than an argument. A signature
-        # forged with this key would be genuinely valid, so tauri-plugin-updater
-        # would accept its installer on every installed client and nothing would
-        # ever report it. ("Require release secrets" above also reads it, to fail
-        # before a fifteen-minute build; that step runs nothing but PowerShell.)
-        run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $installer = "src-tauri\target\release\bundle\nsis\Bard_${version}_x64-setup.exe"
-          # A signature from an earlier run must never pass for this one's.
-          Remove-Item -LiteralPath "$installer.sig" -Force -ErrorAction SilentlyContinue
-          $keyFile = Join-Path $env:RUNNER_TEMP 'bard-updater.key'
-          [System.IO.File]::WriteAllText(
-            $keyFile, ($env:UPDATER_KEY.Trim() + "`n"), (New-Object System.Text.UTF8Encoding($false)))
-          node scripts/tauri-sign.mjs `
-            --target $installer `
-            --key $keyFile `
-            --password-env UPDATER_PASSWORD
-          if ($LASTEXITCODE -ne 0) { throw 'The updater signature failed.' }
-          Remove-Item -LiteralPath $keyFile -Force
-
-      - name: Verify the release candidate
-        shell: pwsh
-        run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          .\scripts\verify-release.ps1 -Version $version -RequireSignature
-
-      - name: Stage immutable release assets
-        shell: pwsh
-        env:
-          RELEASE_TOKEN: ${{ secrets.BARD_RELEASES_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          $stage = Join-Path $env:RUNNER_TEMP 'bard-release-assets'
-          New-Item -ItemType Directory -Force $stage | Out-Null
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $tagVersion = $env:TAG.TrimStart('v')
-          if ($tagVersion -ne $version) { throw "Tag $env:TAG does not match package version $version" }
-          $installer = "src-tauri\target\release\bundle\nsis\Bard_${version}_x64-setup.exe"
-          $sig = "$installer.sig"
-          Copy-Item $installer, $sig, 'src-tauri\target\release\bard.exe' -Destination $stage
-          .\scripts\generate-release-metadata.ps1 -Version $version -OutputDir (Join-Path $stage 'metadata')
-          # No source archive: miisodev/bard-releases is public and the source is not.
-          Copy-Item (Join-Path $stage 'metadata\*') $stage -Force
-          $hashes = Get-FileHash (Join-Path $stage '*') -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" }
-          $hashes | Set-Content (Join-Path $stage 'SHA256SUMS') -Encoding ascii
-          $releaseUrl = "https://github.com/miisodev/bard-releases/releases/download/$($env:TAG)"
-          $manifest = [ordered]@{
-            version = $version
-            notes = "Bard $version for Windows x64."
-            pub_date = [DateTime]::UtcNow.ToString('o')
-            platforms = [ordered]@{
-              'windows-x86_64' = [ordered]@{
-                signature = (Get-Content $sig -Raw).Trim()
-                url = "$releaseUrl/Bard_${version}_x64-setup.exe"
-              }
-            }
-          }
-          $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $stage 'latest.json') -Encoding utf8
-          $env:GH_TOKEN = $env:RELEASE_TOKEN
-          gh release create $env:TAG --repo miisodev/bard-releases --title "Bard $version" --notes "Bard $version for Windows x64. See https://miiso.dev/bard." --target $env:TAG 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release upload $env:TAG --repo miisodev/bard-releases --clobber (Join-Path $stage '*')
-          } else {
-            gh release upload $env:TAG --repo miisodev/bard-releases --clobber (Join-Path $stage '*')
-          }
