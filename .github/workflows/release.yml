@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  verify:
     if: github.repository == 'miisodev/bard'
     runs-on: windows-latest
     timeout-minutes: 60
