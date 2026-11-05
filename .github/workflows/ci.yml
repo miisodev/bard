@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +18,9 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bunx playwright install chromium --with-deps
+      # The runner image includes Chrome and its OS libraries. Reuse it rather
+      # than downloading a second browser and running another apt transaction.
+      - run: google-chrome --version
       - run: bun run test:ui
       - uses: actions/upload-artifact@v4
         if: always()
@@ -93,10 +95,20 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
+    # Packages link against glibc from the oldest supported Ubuntu baseline.
+    # The host image may advance without raising the delivered binary's ABI.
+    container: ubuntu:22.04
     timeout-minutes: 60
     permissions:
       contents: read
     steps:
+      - name: Install baseline build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates git curl wget file build-essential cmake pkg-config libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libx11-dev libxtst-dev libxi-dev zstd rpm
+
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -109,14 +121,6 @@ jobs:
         with:
           toolchain: 1.98.1
           components: rustfmt, clippy
-
-      # Tauri's documented Linux prerequisites, minus libxdo-dev: the Linux
-      # copy builds enigo with its x11rb backend, not the libxdo one, so the
-      # linker dependency is deliberately absent.
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential curl wget file cmake pkg-config libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev
 
       # Scoped to this job: the two jobs share a repository but never a target
       # directory, so each gets a key of its own.
@@ -159,3 +163,18 @@ jobs:
       # holds none. Signing belongs to the release machine, not to this gate.
       - name: Linux bundle
         run: bun run tauri build --bundles deb,rpm --no-sign
+
+      - name: Inspect Linux package dependencies
+        run: |
+          dpkg-deb -I src-tauri/target/release/bundle/deb/*.deb
+          rpm -qpR src-tauri/target/release/bundle/rpm/*.rpm
+          readelf --version-info src-tauri/target/release/bard | grep GLIBC_ | sort -u
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-candidate
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
+          retention-days: 3

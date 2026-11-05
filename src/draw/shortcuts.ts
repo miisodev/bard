@@ -10,7 +10,7 @@ import type { ShortcutGroup } from "../components/ShortcutSheet";
  * rather than implying Draw has taken the keyboard for itself.
  */
 export const DRAW_FRICTION_NOTE =
-  "While Draw is focused, Ctrl ×2 still starts a take and Left Shift ×2 still captures the selection — those gestures are the app's, not Draw's.";
+  "Global dictation and capture shortcuts also work while Draw is focused. See Settings › Shortcuts for your desktop’s gestures and permissions.";
 
 export const DRAW_SHORTCUT_GROUPS: ShortcutGroup[] = [
   {

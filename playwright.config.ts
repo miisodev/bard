@@ -10,7 +10,7 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:1420",
-    channel: process.env.CI ? "chromium" : "chrome",
+    channel: "chrome",
     headless: true,
     viewport: { width: 1280, height: 320 },
     reducedMotion: "reduce",

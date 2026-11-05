@@ -623,7 +623,7 @@ export default function ModelsPane({
                         onClick={() => void downloadFirstParty(model, true)}
                         disabled={busy || Boolean(activeProgress)}
                         ariaBusy={busyAction === `${model.id}:use`}
-                        ariaLabel={`Download ${model.name}, ${modelSize(model)}`}
+                        ariaLabel={`Get ${model.name}, ${modelSize(model)}`}
                       >
                         <Download aria-hidden="true" />
                         Get

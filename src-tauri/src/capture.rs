@@ -16,7 +16,6 @@ use tauri::{AppHandle, Emitter};
 use crate::gesture::{GestureAction, GestureKey, GestureState};
 
 pub const SENTINEL: &str = "\u{200B}bard::capturing\u{200B}";
-static SYNTHETIC_INPUT: AtomicBool = AtomicBool::new(false);
 /// How many synthetic-input guards are live. See [`SyntheticInputGuard`].
 static SYNTHETIC_DEPTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 /// How many of the current burst's synthetic keys the hook has dropped. Zeroed
@@ -93,14 +92,15 @@ fn restore_snapshot(app: &AppHandle, snapshot: &ClipboardSnapshot) {
 /// became visible to the coordinator and could be read as a Ctrl tap. In the
 /// other direction, while the flag was set the hook discarded *every* event, so
 /// genuine user input during a paste was lost outright for up to 180ms.
-pub struct SyntheticInputGuard {
-    outermost: bool,
+pub struct SyntheticInputGuard;
+
+fn synthetic_input_active() -> bool {
+    SYNTHETIC_DEPTH.load(Ordering::SeqCst) > 0
 }
 
 impl SyntheticInputGuard {
     pub fn enter() -> Self {
         let outermost = SYNTHETIC_DEPTH.fetch_add(1, Ordering::SeqCst) == 0;
-        SYNTHETIC_INPUT.store(true, Ordering::SeqCst);
         // Only reset the gesture machine on the outermost entry: a nested burst
         // is part of the same synthetic event, and clearing mid-sequence would
         // drop the pending state the outer one established.
@@ -108,15 +108,16 @@ impl SyntheticInputGuard {
             SYNTHETIC_DROPPED.store(0, Ordering::SeqCst);
             GESTURE_RESET.store(true, Ordering::SeqCst);
         }
-        Self { outermost }
+        Self
     }
 }
 
 impl Drop for SyntheticInputGuard {
     fn drop(&mut self) {
-        if SYNTHETIC_DEPTH.fetch_sub(1, Ordering::SeqCst) == 1 && self.outermost {
-            SYNTHETIC_INPUT.store(false, Ordering::SeqCst);
-        }
+        // Bursts overlap rather than nest: the first owner may finish first.
+        // The count is the state, avoiding both a stranded flag and a race
+        // between the last release and another burst starting.
+        SYNTHETIC_DEPTH.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -256,7 +257,7 @@ fn spawn_listener(sender: mpsc::Sender<Event>) {
         LISTENER_ALIVE.store(true, Ordering::Release);
         let end = crate::hook::listen(move |event| {
             EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
-            let burst = SYNTHETIC_INPUT.load(Ordering::SeqCst);
+            let burst = synthetic_input_active();
             if drops_synthetic(burst, &event.event_type) {
                 // Counted where the drop happens, so a caller holding the guard
                 // can tell a tap that has passed from one still in flight.
@@ -664,9 +665,16 @@ mod tests {
         let first = SyntheticInputGuard::enter();
         let second = SyntheticInputGuard::enter();
         drop(first);
-        assert!(SYNTHETIC_INPUT.load(Ordering::SeqCst));
+        assert!(synthetic_input_active());
         drop(second);
-        assert!(!SYNTHETIC_INPUT.load(Ordering::SeqCst));
+        assert!(!synthetic_input_active());
+
+        let first = SyntheticInputGuard::enter();
+        let second = SyntheticInputGuard::enter();
+        drop(second);
+        assert!(synthetic_input_active());
+        drop(first);
+        assert!(!synthetic_input_active());
     }
 
     #[test]
