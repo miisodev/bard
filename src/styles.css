@@ -3224,7 +3224,8 @@ mark {
   position: absolute;
   top: var(--sp-5);
   right: var(--sp-5);
-  z-index: 5;
+  /* The drag strip is at 40; it must not cover the close control. */
+  z-index: 41;
   display: grid;
   place-items: center;
   width: 28px;

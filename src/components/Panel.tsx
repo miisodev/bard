@@ -697,7 +697,8 @@ export default function Panel({
       }
       if (menu || showShortcuts || showOverflow || showFilters || preview || packView || editingItem) return;
 
-      if (typing) {
+      const command = shelfCommand(e);
+      if (typing && command?.type !== "shortcuts" && command?.type !== "filters") {
         if (e.key !== "Escape") return;
         // Escape reads the fixed order even while a field has focus. A
         // non-empty search you cannot clear while the caret is in it is the
@@ -726,7 +727,6 @@ export default function Panel({
         return;
       }
 
-      const command = shelfCommand(e);
       if (!command) {
         // Start typing anywhere and the search begins, as Paste's shelf does.
         // Space is not a letter: it is the Done key.

@@ -35,6 +35,11 @@
 
 .settings-nav-title {
   padding: var(--sp-1) var(--sp-5) var(--sp-5);
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  letter-spacing: var(--tr-tight);
+  text-transform: none;
+  color: var(--on-canvas);
 }
 
 /*
@@ -115,12 +120,11 @@
 
 .group > h2 {
   margin: 0 0 var(--sp-4);
-  font-family: var(--font-small);
-  font-size: var(--fs-caption);
+  font-family: var(--font-text);
+  font-size: var(--fs-base);
   font-weight: var(--fw-semibold);
-  letter-spacing: var(--tr-caption);
-  text-transform: uppercase;
-  color: var(--on-canvas-3);
+  letter-spacing: var(--tr-normal);
+  color: var(--on-canvas);
 }
 
 .group-note {

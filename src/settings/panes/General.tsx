@@ -21,7 +21,7 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
     catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
       // A rejected colour save must also undo its live preview.
-      applyAppearance(state);
+      applyAppearance({ ...state, drawBackground: "theme", drawBackgroundColor: "" });
       refresh();
     } finally { busy.current = false; setSaving(false); }
   }, [refresh, state]);

@@ -232,7 +232,7 @@ export default function ContextMenu({
             ) : (
               <Pin size={14} strokeWidth={1.8} />
             ),
-          hint: "Up to three pins; Right Shift twice, then 1, 2 or 3 pastes them",
+          hint: "Up to three pins stay at the front of your shelf",
         },
         {
           label: "Edit",

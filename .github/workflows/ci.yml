@@ -54,6 +54,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          cache-on-failure: true
 
       - name: Add native build tools to PATH
         shell: pwsh
@@ -123,6 +124,7 @@ jobs:
         with:
           workspaces: src-tauri
           key: linux
+          cache-on-failure: true
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
