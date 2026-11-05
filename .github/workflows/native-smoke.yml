@@ -1,0 +1,89 @@
+name: Packaged desktop smoke
+
+on:
+  pull_request:
+    paths: [scripts/native-smoke.mjs, .github/workflows/native-smoke.yml]
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Successful Bard CI run containing the candidate packages
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      BARD_DISPOSABLE_TEST_ACCOUNT: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch a verified candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          if [ -z "$CANDIDATE_RUN" ]; then
+            CANDIDATE_RUN=$(gh run list --workflow ci.yml --branch "$HEAD_BRANCH" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          test -n "$CANDIDATE_RUN"
+          test "$(gh run view "$CANDIDATE_RUN" --json conclusion --jq .conclusion)" = success
+          SOURCE_COMMIT=$(gh run view "$CANDIDATE_RUN" --json headSha --jq .headSha)
+          # Never test an older binary against changed product sources.
+          git diff --exit-code "$SOURCE_COMMIT" HEAD -- src src-tauri package.json bun.lock index.html settings.html draw.html overlay.html
+          if [ "$RUNNER_OS" = Windows ]; then ARTIFACT=windows-candidate; else ARTIFACT=linux-candidate; fi
+          gh run download "$CANDIDATE_RUN" --name "$ARTIFACT" --dir candidate
+          printf 'Candidate run %s, source %s\n' "$CANDIDATE_RUN" "$SOURCE_COMMIT"
+      - name: Install native automation tools
+        run: cargo install tauri-driver --locked
+      - name: Prepare Linux desktop
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y webkit2gtk-driver xvfb dbus-x11 gnome-keyring
+          sudo apt-get install -y ./candidate/deb/*.deb
+      - name: Prepare Windows desktop
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo install --git https://github.com/chippers/msedgedriver-tool
+          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
+          $PWD.Path >> $env:GITHUB_PATH
+          $installer = Get-ChildItem candidate -Recurse -Filter '*setup.exe' | Select-Object -First 1
+          if (!$installer) { throw 'Missing installer' }
+          $process = Start-Process $installer.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exit $($process.ExitCode)" }
+      - name: Test installed Linux app
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -euc 'printf "%s" ci-disposable-keyring | gnome-keyring-daemon --unlock --components=secrets; xvfb-run -a node scripts/native-smoke.mjs /usr/bin/bard'
+      - name: Test installed Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $app = Join-Path $env:LOCALAPPDATA 'Bard/bard.exe'
+          if (!(Test-Path $app)) { throw "Installed executable missing: $app" }
+          node scripts/native-smoke.mjs $app
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-review-${{ runner.os }}
+          path: native-review/
+          retention-days: 3
