@@ -1687,7 +1687,7 @@ export default function Panel({
       {showShortcuts ? (
         <ShortcutSheet
           title="Shortcuts"
-          groups={shortcutGroups(Math.max(1, Math.min(9, pageCards.length)))}
+          groups={shortcutGroups(Math.max(1, Math.min(9, pageCards.length)), state.desktop?.session === "wayland")}
           onClose={closeShortcuts}
         />
       ) : null}
@@ -1780,11 +1780,12 @@ const SORT_ORDERS: [SortOrder, string][] = [
   does, and a page of five cards has no Ctrl+9 to teach. `reach` is that page's
   card count.
 */
-function shortcutGroups(reach: number): ShortcutGroup[] {
+function shortcutGroups(reach: number, wayland: boolean): ShortcutGroup[] {
   return [
     {
-      name: "Gestures",
-      rows: [
+      name: wayland ? "Desktop shortcuts" : "Gestures",
+      note: wayland ? "Your desktop assigns the global shortcuts. Connect them in Settings › Shortcuts, and enable keyboard access for capture and paste-back." : undefined,
+      rows: wayland ? [{ keys: ["F11"], what: "Fullscreen Draw" }] : [
         { keys: ["Left Shift", "Left Shift"], what: "Capture the selection" },
         { keys: ["Ctrl", "Ctrl"], what: "Dictate — hold, or tap twice" },
         { keys: ["Right Shift", "Right Shift"], what: "Show or hide the shelf" },

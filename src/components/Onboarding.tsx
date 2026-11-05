@@ -224,7 +224,7 @@ export default function Onboarding({
         ) : step === 2 ? (
           <>
             <h1>Make it yours</h1>
-            <p>Two taps of a modifier do the everyday work, in any app. These gestures are fixed and always available.</p>
+            <p>{state.desktop?.session === "wayland" ? "Connect Bard to your desktop for shortcuts, capture and paste-back. You control each permission." : "Two taps of a modifier do the everyday work, in any app. These gestures are fixed and always available."}</p>
           </>
         ) : (
           <>

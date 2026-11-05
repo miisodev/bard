@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+test.afterEach(async ({ page }, info) => {
+  await page.screenshot({ path: info.outputPath("window.png") });
+});
+
 test("Wayland shortcut help describes desktop permissions", async ({ page }) => {
   await page.goto("/?platform=linux");
   await page.getByRole("listbox", { name: "Cards" }).waitFor();
@@ -27,6 +31,17 @@ for (const theme of ["light", "dark"]) {
     await page.setViewportSize({ width: 600, height: 440 });
     await page.goto(`/settings.html?theme=${theme}`);
     await page.getByRole("heading", { name: "General" }).waitFor();
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious")).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+for (const pane of ["capture", "dictation", "models", "postprocessing", "shortcuts", "data", "about"]) {
+  test(`${pane} settings are accessible on Linux at minimum size`, async ({ page }) => {
+    await page.setViewportSize({ width: 600, height: 440 });
+    await page.goto(`/settings.html?pane=${pane}&platform=linux`);
+    await page.getByRole("tabpanel").waitFor();
     const { violations } = await new AxeBuilder({ page }).analyze();
     expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious")).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
