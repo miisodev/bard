@@ -70,7 +70,7 @@
 
 .settings-nav button.on {
   background: var(--surface);
-  color: var(--on-canvas);
+  color: var(--text);
   box-shadow: var(--el-card);
   font-weight: var(--fw-semibold);
 }

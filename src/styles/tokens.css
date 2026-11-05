@@ -22,11 +22,11 @@
   /* Segoe UI Variable is the Windows 11 system face and the native counterpart
      to Copper's SF Pro. Text/Display are separate optical sizes, not weights —
      Display is drawn tighter and is correct above ~16px only. */
-  --font-text: "Segoe UI Variable Text", "Segoe UI", "Ubuntu Sans", system-ui, sans-serif;
+  --font-text: "Segoe UI Variable Text", "Segoe UI", "Adwaita Sans", "Ubuntu Sans", "Cantarell", system-ui, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI Variable Text",
-    "Segoe UI", system-ui, sans-serif;
+    "Segoe UI", "Adwaita Sans", "Ubuntu Sans", "Cantarell", system-ui, sans-serif;
   --font-small: "Segoe UI Variable Small", "Segoe UI Variable Text", "Segoe UI",
-    system-ui, sans-serif;
+    "Adwaita Sans", "Ubuntu Sans", "Cantarell", system-ui, sans-serif;
   --font-mono: "Cascadia Code", "Cascadia Mono", ui-monospace, "Consolas", monospace;
 
   --fs-caption: 11px;   /* section labels, meta */

@@ -656,6 +656,18 @@ fn send_copy() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    static BURST_TEST: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn overlapping_bursts_can_finish_in_either_order() {
+        let _serial = BURST_TEST.lock().unwrap();
+        let first = SyntheticInputGuard::enter();
+        let second = SyntheticInputGuard::enter();
+        drop(first);
+        assert!(SYNTHETIC_INPUT.load(Ordering::SeqCst));
+        drop(second);
+        assert!(!SYNTHETIC_INPUT.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn every_key_bard_synthesises_is_dropped_during_a_burst() {
@@ -712,6 +724,7 @@ mod tests {
     /// sheet's own presentation unfinished.
     #[test]
     fn waiting_for_a_burst_ends_on_the_keys_or_on_the_bound() {
+        let _serial = BURST_TEST.lock().unwrap();
         let _guard = SyntheticInputGuard::enter();
         // Nothing to wait for is answered at once, without spending the bound.
         let started = Instant::now();
