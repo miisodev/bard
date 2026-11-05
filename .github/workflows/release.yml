@@ -1,7 +1,7 @@
 name: Bard release checks
 
-# Manual validation of an existing source tag only. Installer builds,
-# updater signing and release publication are local owner operations
+# Manual validation of an existing source tag only. Release signing
+# and publication are local owner operations
 # through scripts/build-release.ps1; no signing keys or release tokens
 # are exposed to this GitHub Actions workflow. Tag pushes trigger nothing.
 on:

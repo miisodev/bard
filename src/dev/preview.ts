@@ -15,6 +15,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { Shape } from "../draw/shapes";
 import catalog from "../../src-tauri/src/catalog/catalog.json";
+import { version as appVersion } from "../../package.json";
 import type { AppState, Item, ModelInfo, PackSummary } from "../types";
 import "./preview.css";
 
@@ -142,7 +143,7 @@ const state: AppState = {
   attachments: [],
   activeSectionId: null,
   theme,
-  appVersion: "2.0.0",
+  appVersion,
   onboardingCompleted: scene !== "onboarding",
   autostartEnabled: true,
   captureDoubleShift: true,

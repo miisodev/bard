@@ -93,6 +93,20 @@ jobs:
       - name: Rust dependency audit
         run: cargo audit --file src-tauri/Cargo.lock
 
+      # Unsigned validation artifacts only. Updater keys and publication stay
+      # on the release operator's machine and are never present in this job.
+      - name: Windows installer candidate
+        run: bun run tauri build --bundles nsis --no-sign
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-candidate
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bard.exe
+          if-no-files-found: error
+          retention-days: 3
+
   linux:
     runs-on: ubuntu-latest
     # Packages link against glibc from the oldest supported Ubuntu baseline.
@@ -107,7 +121,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y ca-certificates git curl wget file build-essential cmake pkg-config libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libx11-dev libxtst-dev libxi-dev zstd rpm
+          apt-get install -y ca-certificates git curl wget unzip file build-essential cmake pkg-config libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libx11-dev libxtst-dev libxi-dev zstd rpm
 
       - uses: actions/checkout@v4
         with:
