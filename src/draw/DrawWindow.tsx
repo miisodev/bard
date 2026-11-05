@@ -339,7 +339,8 @@ export default function DrawWindow() {
     if (!import.meta.env.DEV) return;
     const seed = (window as { __bardPreviewShapes?: Shape[] }).__bardPreviewShapes;
     if (seed && shapesRef.current.length === 0) {
-      shapesRef.current = seed.map((shape) => ({ ...shape }));
+      shapesRef.current = snapshot(seed);
+      setEmpty(seed.length === 0);
       paint();
     }
   }, [paint]);

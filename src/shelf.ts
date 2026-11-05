@@ -274,6 +274,7 @@ export type ShelfCommand =
   | { type: "move"; delta: -1 | 1; extend: boolean }
   | { type: "page"; delta: -1 | 1 }
   | { type: "paste" }
+  | { type: "preview" }
   | { type: "pasteNth"; index: number }
   | { type: "copy" }
   | { type: "copyMarkdown" }
@@ -322,7 +323,7 @@ export function shelfCommand(event: KeyShape): ShelfCommand | null {
     case "PageDown":
       return { type: "page", delta: 1 };
     case "Enter":
-      return { type: "paste" };
+      return { type: event.altKey ? "preview" : "paste" };
     case "Delete":
     case "Backspace":
       return { type: "delete" };

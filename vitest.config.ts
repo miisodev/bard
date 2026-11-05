@@ -7,8 +7,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   server: { watch: null },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
     environment: "node",
+    maxWorkers: 2,
     watch: false,
   },
 });

@@ -5,12 +5,16 @@ use tauri::AppHandle;
 
 /// Send one native paste chord to the currently focused application. The
 /// caller has already written and verified the clipboard payload.
-pub fn send_paste(_app: &AppHandle) {
+pub fn send_paste(_app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if crate::desktop::is_wayland() {
+        return crate::linux_portal::send_chord('v');
+    }
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     let _synthetic_input = crate::capture::SyntheticInputGuard::enter();
-    let Ok(mut enigo) = Enigo::new(&Settings::default()) else {
-        return;
-    };
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|_| {
+        "Bard could not reach the focused app. Your content is on the clipboard.".to_string()
+    })?;
     let _ = enigo.key(Key::Control, Direction::Press);
     std::thread::sleep(std::time::Duration::from_millis(20));
     let _ = enigo.key(Key::Unicode('v'), Direction::Click);
@@ -19,6 +23,7 @@ pub fn send_paste(_app: &AppHandle) {
     // Let the low-level hook drain Bard's synthetic events before the guard
     // re-enables gesture recognition.
     std::thread::sleep(std::time::Duration::from_millis(40));
+    Ok(())
 }
 
 pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {

@@ -16,6 +16,7 @@ import {
   escapeOutcome,
   filterShelf,
   itemPreview,
+  itemKind,
   nextIndex,
   PACK_NO_TEXT,
   packText,
@@ -25,13 +26,14 @@ import {
   pageSize,
   rovingPack,
   shelfCommand,
-  TYPE_FILTERS,
   type TypeFilter,
 } from "../shelf";
 import { api } from "../store";
 import type { AppState, Attachment, Item, PackSummary, ShelfEdge, SortOrder } from "../types";
 import { InlineConfirm } from "../settings/ui";
 import ColorPreview from "./ColorPreview";
+import ItemPreview from "./ItemPreview";
+import NoteEditor from "./NoteEditor";
 import ContextMenu, { type MenuAction } from "./ContextMenu";
 import FilterSwitcher from "./FilterSwitcher";
 import ItemCard from "./ItemCard";
@@ -41,6 +43,7 @@ import PackView from "./PackView";
 import Pager from "./Pager";
 import ShortcutSheet, { type ShortcutGroup } from "./ShortcutSheet";
 import TypeChips from "./TypeChips";
+import ShelfEmptyState from "./ShelfEmptyState";
 
 /** A confirmation is a receipt. An error is the app reporting a failure. */
 export type ToastTone = "info" | "error";
@@ -101,6 +104,8 @@ export default function Panel({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [anchorId, setAnchorId] = useState<number | null>(null);
   const [composer, setComposer] = useState("");
+  const [addingNote, setAddingNote] = useState(false);
+  const addingNoteRef = useRef(false);
   const [searchOpen, setSearchOpen] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
@@ -118,7 +123,7 @@ export default function Panel({
     item?: Item;
   } | null>(null);
   const [soundOnCapture, setSoundOnCapture] = useState(true);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
   // Packs: the summaries the zone paints, the page it is on, and which pack
   // the view, the card menu and the delete confirmation are about.
   const [packs, setPacks] = useState<PackSummary[]>([]);
@@ -690,7 +695,7 @@ export default function Panel({
         }
         return;
       }
-      if (menu || showShortcuts || showOverflow || showFilters || preview || packView) return;
+      if (menu || showShortcuts || showOverflow || showFilters || preview || packView || editingItem) return;
 
       if (typing) {
         if (e.key !== "Escape") return;
@@ -845,6 +850,11 @@ export default function Panel({
           e.preventDefault();
           goToPage(currentPage + command.delta);
           break;
+        case "preview": {
+          const item = state.items.find((entry) => entry.id === lead);
+          if (item) { e.preventDefault(); setPreview(item); }
+          break;
+        }
         case "paste":
           if (actionSel.length > 0) {
             e.preventDefault();
@@ -920,6 +930,7 @@ export default function Panel({
     anchorId,
     menu,
     preview,
+    editingItem,
     confirmingClear,
     confirmingPack,
     confirmingDelete,
@@ -1051,16 +1062,28 @@ export default function Panel({
     };
   }, [notify, refresh]);
 
-  const submitComposer = () => {
+  const submitComposer = async () => {
+    if (addingNoteRef.current) return;
     if (!state.license.canUse) {
       notify(state.license.message || "Activate Bard to add captures.", "error");
       return;
     }
-    const v = composer.trim();
-    if (!v) return;
-    void api.addItem(v);
-    setComposer("");
-    refresh();
+    const text = composer.trim();
+    if (!text) return;
+    addingNoteRef.current = true;
+    setAddingNote(true);
+    try {
+      await api.addItem(text);
+      setComposer((current) => current.trim() === text ? "" : current);
+      refresh();
+      notify("Note added");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error || "Couldn’t add the note. Your text is still here."), "error");
+    } finally {
+      addingNoteRef.current = false;
+      setAddingNote(false);
+      composerRef.current?.focus();
+    }
   };
 
   /** What a plain click on a card does: paste it and leave. */
@@ -1114,6 +1137,9 @@ export default function Panel({
     if (!menu) return;
     const ids = menu.ids;
     switch (action) {
+      case "preview":
+        if (menu.item) setPreview(menu.item);
+        break;
       case "copy":
         copySelection(state, ids, notify);
         if (ids.length === 1) markActive(ids[0]);
@@ -1132,7 +1158,7 @@ export default function Panel({
         void setPins(ids, menu.item?.pinnedAt === null, notify, refresh);
         break;
       case "edit":
-        if (menu.item && menu.item.kind === "text") setEditingId(menu.item.id);
+        if (menu.item && menu.item.kind === "text") setEditingItem(menu.item);
         break;
       case "caption":
         if (menu.item?.kind === "image") void api.addNoteToImage(menu.item.id).then(refresh);
@@ -1163,6 +1189,14 @@ export default function Panel({
         const detail = reason instanceof Error ? reason.message : String(reason ?? "");
         notify(detail || "Couldn't clear captures.", "error");
       });
+  };
+
+  const resetFilters = () => {
+    setQuery("");
+    setFilter("all");
+    setFavoritesOnly(false);
+    setPage(0);
+    searchRef.current?.focus();
   };
 
   const openSearch = () => {
@@ -1218,9 +1252,10 @@ export default function Panel({
             <input
               ref={searchRef}
               className="search"
-              placeholder="Search"
+              placeholder="Search your shelf"
               value={query}
               aria-label="Search"
+              aria-describedby="shelf-result-count"
               onChange={(e) => {
                 setQuery(e.target.value);
                 setPage(0);
@@ -1231,6 +1266,7 @@ export default function Panel({
               onKeyDown={(e) => {
                 // Enter in the field pastes the card the arrows last pointed
                 // at, or the first one; ArrowDown drops into the row.
+                if (e.nativeEvent.isComposing) return;
                 const target =
                   activeItemId !== null && order.has(activeItemId)
                     ? state.items.find((i) => i.id === activeItemId)
@@ -1248,6 +1284,12 @@ export default function Panel({
                 }
               }}
             />
+            {query ? (
+              <button type="button" className="search-clear" aria-label="Clear search" title="Clear search"
+                onClick={() => { setQuery(""); setPage(0); searchRef.current?.focus(); }}>
+                <X size={14} aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -1299,6 +1341,9 @@ export default function Panel({
       </div>
 
       <div className="shelf-body">
+        <span id="shelf-result-count" className="sr-only" role="status" aria-atomic="true">
+          {visible.length} {visible.length === 1 ? "item" : "items"}{query.trim() ? ` matching ${query.trim()}` : " on your shelf"}
+        </span>
         {/* The All zone: the current page of cards, and the pager. Its one tab
             stop is the roving card; the pager is its own group of buttons. */}
         <section className="shelf-zone all" aria-label="Cards">
@@ -1315,9 +1360,9 @@ export default function Panel({
             tabIndex={rovingId === null ? 0 : -1}
           >
             {state.items.length === 0 ? (
-              <EmptyState query={query} filter={filter} favoritesOnly={favoritesOnly} empty />
+              <ShelfEmptyState onReset={resetFilters} query={query} filter={filter} favoritesOnly={favoritesOnly} empty />
             ) : pageCards.length === 0 ? (
-              <EmptyState query={query} filter={filter} favoritesOnly={favoritesOnly} empty={false} />
+              <ShelfEmptyState onReset={resetFilters} query={query} filter={filter} favoritesOnly={favoritesOnly} empty={false} />
             ) : (
               pageCards.map((item, index) => (
                 <ItemCard
@@ -1328,7 +1373,6 @@ export default function Panel({
                   selected={selectedIds.has(item.id)}
                   active={rovingId === item.id}
                   fresh={freshId === item.id}
-                  editing={editingId === item.id}
                   search={query}
                   onClick={(e) => onItemClick(item, e)}
                   onFocus={() => markActive(item.id)}
@@ -1346,8 +1390,6 @@ export default function Panel({
                     refresh();
                   }}
                   onPreview={() => setPreview(item)}
-                  onDelete={() => askDelete([item.id])}
-                  onEditDone={() => setEditingId(null)}
                 />
               ))
             )}
@@ -1531,15 +1573,21 @@ export default function Panel({
               type="text"
               disabled={!state.license.canUse}
               placeholder="Add a note"
+              aria-label="New note"
+              readOnly={addingNote}
               value={composer}
               onChange={(e) => setComposer(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
-                  submitComposer();
+                  void submitComposer();
                 }
               }}
             />
+            {composer.trim() ? (
+              <button type="button" className="composer-submit" disabled={addingNote} aria-busy={addingNote}
+                onClick={() => void submitComposer()}>{addingNote ? "Adding…" : "Add note"}</button>
+            ) : <span className="composer-hint" aria-hidden="true">Enter to keep</span>}
           </div>
         </div>
 
@@ -1644,8 +1692,16 @@ export default function Panel({
         />
       ) : null}
 
+      {editingItem ? (
+        <NoteEditor item={editingItem}
+          onSaved={() => { notify("Note saved"); refresh(); }}
+          onClose={() => { const id = editingItem.id; setEditingItem(null); requestAnimationFrame(() => focusCard(id)); }} />
+      ) : null}
+
       {preview ? (
-        <ColorPreview item={preview} onClose={() => setPreview(null)} notify={notify} />
+        itemKind(preview) === "color"
+          ? <ColorPreview item={preview} onClose={() => setPreview(null)} notify={notify} />
+          : <ItemPreview item={preview} onClose={() => setPreview(null)} />
       ) : null}
 
       {packView ? (
@@ -1742,6 +1798,7 @@ function shortcutGroups(reach: number): ShortcutGroup[] {
       name: "Keys",
       rows: [
         { keys: ["Enter"], what: "Paste into your app" },
+        { keys: ["Alt", "Enter"], what: "Preview the full capture" },
         { keys: ["Ctrl", `1–${reach}`], what: "Paste that card on the page" },
         { keys: ["←", "→"], what: "Move between cards" },
         { keys: ["Shift", "←/→"], what: "Extend the selection" },
@@ -1768,64 +1825,6 @@ function shortcutGroups(reach: number): ShortcutGroup[] {
  * matches, the favourite view, the active chip — because "nothing here" on a
  * shelf holding two hundred items is a lie.
  */
-function EmptyState({
-  query,
-  filter,
-  favoritesOnly,
-  empty,
-}: {
-  query: string;
-  filter: TypeFilter;
-  favoritesOnly: boolean;
-  empty: boolean;
-}) {
-  if (empty) {
-    return (
-      <div className="empty-state">
-        <EmptyGlyph />
-        <div className="title">What should we build?</div>
-        <div className="hint">
-          Select text anywhere, then tap <kbd>Left Shift</kbd> twice.
-        </div>
-      </div>
-    );
-  }
-  if (query.trim()) {
-    return (
-      <div className="empty-state">
-        <div className="title">No matches</div>
-        <div className="hint">Nothing here matches “{query.trim()}”.</div>
-      </div>
-    );
-  }
-  if (favoritesOnly) {
-    return (
-      <div className="empty-state">
-        <div className="title">No favorites yet</div>
-        <div className="hint">Star an item and it stays within reach.</div>
-      </div>
-    );
-  }
-  const chip = TYPE_FILTERS.find((entry) => entry.id === filter);
-  return (
-    <div className="empty-state">
-      <div className="title">No {chip ? chip.label.toLowerCase() : "cards"} yet</div>
-      <div className="hint">Capture something and it lands here.</div>
-    </div>
-  );
-}
-
-function EmptyGlyph() {
-  return (
-    <svg className="empty-glyph" viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="9.25" fill="none" strokeWidth="1.5" />
-      <path d="M8.6 14.2a4.2 4.2 0 0 0 6.8 0" fill="none" strokeWidth="1.5"
-            strokeLinecap="round" />
-      <circle cx="9.2" cy="10" r="1" stroke="none" />
-      <circle cx="14.8" cy="10" r="1" stroke="none" />
-    </svg>
-  );
-}
 
 /**
  * Pin or unpin in order, stopping at the first refusal: a fourth pin is

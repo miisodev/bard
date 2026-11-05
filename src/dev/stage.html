@@ -165,7 +165,11 @@
       const name = new URLSearchParams(location.search).get("shot") ?? "capture";
       const shot = shots[name];
       if (shot.dark) document.body.classList.add("dark");
-      if (shot.copyTop) document.querySelector(".copy").style.top = "22%";
+      if (shot.copyTop) {
+        Object.assign(document.querySelector(".copy").style, { top: "64px", transform: "none", width: "1180px" });
+        document.querySelector("h1").style.maxWidth = "1100px";
+        document.querySelector(".copy p").style.maxWidth = "760px";
+      }
       document.getElementById("headline").textContent = shot.headline;
       document.getElementById("subline").textContent = shot.subline;
       const keys = document.getElementById("keys");

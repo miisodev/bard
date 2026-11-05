@@ -602,7 +602,11 @@ fn do_capture(app: &AppHandle) {
         return;
     }
     thread::sleep(Duration::from_millis(60));
-    send_copy();
+    if let Err(error) = send_copy() {
+        restore_snapshot(app, &old);
+        let _ = app.emit("capture-failed", error);
+        return;
+    }
     for _ in 0..14 {
         thread::sleep(Duration::from_millis(50));
         if let Ok(text) = cb.get_text() {
@@ -630,18 +634,23 @@ fn do_capture(app: &AppHandle) {
     );
 }
 
-fn send_copy() {
+fn send_copy() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if crate::desktop::is_wayland() {
+        return crate::linux_portal::send_chord('c');
+    }
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     let _guard = SyntheticInputGuard::enter();
-    let Ok(mut enigo) = Enigo::new(&Settings::default()) else {
-        return;
-    };
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|_| {
+        "Bard could not reach the selection. Copy it first, then capture the clipboard.".to_string()
+    })?;
     let _ = enigo.key(Key::Control, Direction::Press);
     let _ = enigo.key(Key::Unicode('c'), Direction::Click);
     let _ = enigo.key(Key::Control, Direction::Release);
     // Let the low-level hook drain Bard's synthetic events before the guard
     // re-enables gesture recognition.
     thread::sleep(Duration::from_millis(40));
+    Ok(())
 }
 
 #[cfg(test)]

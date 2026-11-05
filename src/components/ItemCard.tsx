@@ -39,23 +39,12 @@ function countCharacters(text: string): string {
   return length === 1 ? "1 character" : `${length.toLocaleString()} characters`;
 }
 
-/*
-  An edit that landed gets a receipt. The card commits on blur and on Enter, so
-  the only other thing that happens is the text quietly stopping being a field:
-  a note rewritten and then kept said nothing at all. The shelf's toast host is
-  the panel's, and answers this event however it was raised.
-*/
-function receipt(text: string, tone?: "info" | "error") {
-  window.dispatchEvent(new CustomEvent("bard-toast", { detail: { text, tone } }));
-}
-
 export default function ItemCard({
   item,
   attachments,
   selected,
   active = false,
   fresh = false,
-  editing,
   search,
   index,
   onClick,
@@ -66,8 +55,6 @@ export default function ItemCard({
   onCopy,
   onFavorite,
   onPreview,
-  onDelete,
-  onEditDone,
 }: {
   item: Item;
   attachments: Attachment[];
@@ -76,7 +63,6 @@ export default function ItemCard({
   active?: boolean;
   /** A capture that has not been on screen before; it alone animates in. */
   fresh?: boolean;
-  editing: boolean;
   search: string;
   /** The card's position on its page, for the quick-paste badge. */
   index: number;
@@ -90,14 +76,10 @@ export default function ItemCard({
   onCopy: () => void;
   onFavorite: () => void;
   onPreview: () => void;
-  onDelete: () => void;
-  /** The inline edit finished — committed, cancelled or blurred away. */
-  onEditDone: () => void;
 }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageMissing, setImageMissing] = useState(false);
   const [dimensions, setDimensions] = useState<string | null>(null);
-  const [draft, setDraft] = useState(item.content);
   const [thumbUrls, setThumbUrls] = useState<Map<number, string>>(new Map());
   const [clamped, setClamped] = useState(false);
   const [onScreen, setOnScreen] = useState(false);
@@ -187,10 +169,6 @@ export default function ItemCard({
     };
   }, [attachments.map((a) => a.id).join(","), onScreen]);
 
-  useEffect(() => {
-    setDraft(item.content);
-  }, [item.content]);
-
   // The clamp hides the rest of a note with nothing to say so. CSS cannot tell
   // a clamped box from a short one, so the fade is measured: once per content
   // change, and again only when the box itself changes size.
@@ -203,26 +181,6 @@ export default function ItemCard({
     observer.observe(body);
     return () => observer.disconnect();
   }, [item.content, search]);
-
-  const commitEdit = () => {
-    const v = draft.trim();
-    if (v !== item.content) {
-      if (v) {
-        // Kept, and said so. A failed write says what failed rather than
-        // leaving the card looking saved: the editor has closed by then.
-        void api.updateItem(item.id, v).then(
-          () => receipt("Note saved"),
-          (reason: unknown) => {
-            const detail = reason instanceof Error ? reason.message : String(reason ?? "");
-            receipt(detail.trim() || "Couldn't save the note.", "error");
-          },
-        );
-      } else {
-        void onDelete();
-      }
-    }
-    onEditDone();
-  };
 
   return (
     <div
@@ -306,31 +264,6 @@ export default function ItemCard({
                 setDimensions(`${image.naturalWidth} × ${image.naturalHeight}`);
               }
             }}
-          />
-        ) : editing && item.kind === "text" ? (
-          <textarea
-            className="inline-edit"
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              // The editor owns Escape and Enter while it is open. Without
-              // this, Escape would fall through to the shelf's own order and
-              // could clear the selection or retract the window under the
-              // edit being cancelled.
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                commitEdit();
-              }
-              if (e.key === "Escape") {
-                e.preventDefault();
-                e.stopPropagation();
-                onEditDone();
-              }
-            }}
-            onBlur={commitEdit}
           />
         ) : color ? (
           <div className="card-color">

@@ -27,7 +27,7 @@ export interface Appearance {
 }
 
 /** The canvases of the two themes, measured off the Copper captures. */
-export const CANVAS = { light: "#e6e7ea", dark: "#1c1c1f" } as const;
+export const CANVAS = { light: "#eff0f2", dark: "#1c1c1f" } as const;
 
 /**
  * Draw's page in each theme. The dark page is the dark card surface rather

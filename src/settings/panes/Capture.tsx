@@ -12,7 +12,7 @@ export default function CapturePane({ state, refresh }: PaneProps) {
 
   return (
     <Pane title="Capture" description="Grabbing text and images from anywhere on the machine.">
-      <Group title="Shortcut">
+      {state.desktop?.session === "wayland" ? <Group title="Shortcut"><Row label="Desktop shortcuts" hint="Set up global capture and keyboard access in Settings › Shortcuts. Your desktop manages these permissions." /></Group> : <Group title="Shortcut">
         <Row
           label="Double-Shift capture"
           hint="Tap Shift twice to grab the current selection without disturbing your clipboard."
@@ -26,7 +26,7 @@ export default function CapturePane({ state, refresh }: PaneProps) {
             }}
           />
         </Row>
-      </Group>
+      </Group>}
 
       <Group title="Feedback">
         <Row label="Capture sound" hint="A soft pop when something is captured.">

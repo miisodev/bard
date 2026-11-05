@@ -2,7 +2,6 @@ use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-use tauri_plugin_autostart::ManagerExt;
 
 pub fn create(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
     let show = MenuItem::with_id(app, "show", "Show Bard", true, None::<&str>)?;
@@ -44,7 +43,11 @@ pub fn create(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
 
     let builder = TrayIconBuilder::with_id("bard-tray")
         .icon(icon)
-        .tooltip("Bard — double-tap Right Shift to open")
+        .tooltip(if crate::desktop::is_wayland() {
+            "Bard — clipboard, draw and dictate"
+        } else {
+            "Bard — double-tap Right Shift to open"
+        })
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -68,12 +71,14 @@ pub fn create(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
             }
             "autostart" => {
                 let next = !db_autostart_handle(app);
-                let _ = if next {
-                    app.autolaunch().enable()
-                } else {
-                    app.autolaunch().disable()
-                };
-                crate::db::set_setting(app, "autostart_enabled", if next { "1" } else { "0" });
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = crate::commands::set_autostart(app.clone(), next).await {
+                        use tauri::Emitter;
+                        let _ = app.emit_to("main", "capture-failed", error);
+                        crate::panel::show_now(&app);
+                    }
+                });
             }
             "quit" => {
                 crate::crash::record_event("app:quit");

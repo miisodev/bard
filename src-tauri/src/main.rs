@@ -8,6 +8,7 @@ mod commands;
 mod crash;
 mod credential;
 mod db;
+mod desktop;
 mod dictation;
 mod fg;
 mod geometry;
@@ -16,6 +17,8 @@ mod guardian;
 mod hf;
 mod hook;
 mod license;
+#[cfg(target_os = "linux")]
+mod linux_portal;
 mod monitor;
 mod packaging;
 mod panel;
@@ -267,6 +270,7 @@ fn main() {
             // would only land in the package's private registry.
             if !cfg!(debug_assertions)
                 && !packaging::is_packaged()
+                && packaging::channel() != "flatpak"
                 && db::get_setting(&handle, "autostart_enabled") == Some("1".into())
             {
                 let _ = handle.autolaunch().enable();
@@ -299,8 +303,23 @@ fn main() {
             }
 
             monitor::start(handle.clone());
-            capture::start(handle.clone());
+            if !desktop::is_wayland() {
+                capture::start(handle.clone());
+            }
             dictation::init(handle.clone());
+            #[cfg(target_os = "linux")]
+            if desktop::is_wayland()
+                && db::get_setting(&handle, "desktop_shortcuts_enabled").as_deref() == Some("1")
+            {
+                let portal_app = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = linux_portal::configure_shortcuts(portal_app.clone()).await
+                    {
+                        log::warn!("desktop shortcuts unavailable: {error}");
+                        commands::refresh(&portal_app);
+                    }
+                });
+            }
 
             tray::create(app)?;
             // The panel is a docked shelf now: it anchors itself to its edge —
@@ -401,6 +420,7 @@ fn main() {
             commands::set_theme,
             commands::set_onboarding_completed,
             commands::set_autostart,
+            commands::configure_desktop,
             commands::open_startup_settings,
             commands::open_link,
             commands::get_appearance,

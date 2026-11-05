@@ -28,6 +28,7 @@ import type {
 
 export const api = {
   getState: () => invoke<AppState>("get_state"),
+  configureDesktop: (feature: "shortcuts" | "input") => invoke<void>("configure_desktop", { feature }),
   getSettingStr: (key: string) => invoke<string>("get_setting_str", { key }),
   addItem: (content: string) => invoke<void>("add_item", { content }),
   openDraw: () => invoke<void>("open_draw"),

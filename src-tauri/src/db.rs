@@ -127,6 +127,8 @@ pub struct AppState {
     pub active_section_id: Option<i64>,
     pub theme: String,
     pub app_version: String,
+    pub platform: String,
+    pub desktop: crate::desktop::DesktopStatus,
     pub onboarding_completed: bool,
     pub autostart_enabled: bool,
     pub capture_double_shift: bool,
@@ -1083,13 +1085,21 @@ pub fn delete_attachment(app: &AppHandle, id: i64) -> Result<Option<String>, Str
     Ok(path)
 }
 
-pub fn update_item(app: &AppHandle, id: i64, content: &str) {
-    with_conn_mut(app, |c| {
-        let _ = c.execute(
-            "UPDATE items SET content = ?1, updated_at = ?2 WHERE id = ?3",
-            params![content, now_ms(), id],
-        );
-    });
+pub fn update_item(app: &AppHandle, id: i64, content: &str) -> Result<(), String> {
+    with_conn(app, |connection| {
+        update_item_checked(connection, id, content)
+    })
+}
+
+fn update_item_checked(connection: &Connection, id: i64, content: &str) -> Result<(), String> {
+    let changed = connection.execute(
+        "UPDATE items SET content = ?1, updated_at = ?2 WHERE id = ?3",
+        params![content, now_ms(), id],
+    ).map_err(|_| "Bard could not save the note. Your changes are still here; check that the drive has free space and try again.".to_string())?;
+    if changed != 1 {
+        return Err("That note is no longer available. Copy your changes before closing.".into());
+    }
+    Ok(())
 }
 
 pub fn set_favorite(app: &AppHandle, id: i64, favorite: bool) {
@@ -2148,6 +2158,8 @@ pub fn get_state(app: &AppHandle) -> AppState {
             active_section_id: None,
             theme: "system".into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
+            platform: std::env::consts::OS.into(),
+            desktop: crate::desktop::status(),
             onboarding_completed: false,
             autostart_enabled: false,
             capture_double_shift: true,
@@ -2171,6 +2183,8 @@ pub fn get_state(app: &AppHandle) -> AppState {
         active_section_id: get_active_section(app),
         theme: get_setting(app, "theme").unwrap_or_else(|| "system".into()),
         app_version: env!("CARGO_PKG_VERSION").into(),
+        platform: std::env::consts::OS.into(),
+        desktop: crate::desktop::status(),
         onboarding_completed: get_setting(app, "onboarding_completed") == Some("1".into()),
         autostart_enabled: get_setting(app, "autostart_enabled") == Some("1".into()),
         capture_double_shift: get_setting(app, "capture_double_shift") != Some("0".into()),
@@ -2380,6 +2394,26 @@ pub fn clear_stale_model_selection(conn: &Connection) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_missing_note_is_not_reported_as_saved() {
+        let connection = super::in_memory();
+        assert!(super::update_item_checked(&connection, 999, "Draft").is_err());
+    }
+
+    #[test]
+    fn a_refused_note_write_keeps_the_original() {
+        let connection = super::in_memory();
+        connection.execute("INSERT INTO items(content, kind, origin, created_at, updated_at) VALUES('Original', 'text', 'manual', 1, 1)", []).unwrap();
+        let id = connection.last_insert_rowid();
+        connection.execute_batch("PRAGMA query_only = ON").unwrap();
+        assert!(super::update_item_checked(&connection, id, "Revised").is_err());
+        let text: String = connection
+            .query_row("SELECT content FROM items WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(text, "Original");
+    }
 
     #[test]
     fn orphan_sweep_keeps_referenced_and_fresh_files() {

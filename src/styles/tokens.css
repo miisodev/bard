@@ -22,7 +22,7 @@
   /* Segoe UI Variable is the Windows 11 system face and the native counterpart
      to Copper's SF Pro. Text/Display are separate optical sizes, not weights —
      Display is drawn tighter and is correct above ~16px only. */
-  --font-text: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-text: "Segoe UI Variable Text", "Segoe UI", "Ubuntu Sans", system-ui, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI Variable Text",
     "Segoe UI", system-ui, sans-serif;
   --font-small: "Segoe UI Variable Small", "Segoe UI Variable Text", "Segoe UI",
@@ -65,7 +65,7 @@
 
   /* ─── Shape ───────────────────────────────────────────────────────────── */
 
-  --r-panel: 16px;
+  --r-panel: 18px;
   --r-card: 12px;
   --r-control: 10px;
   --r-sm: 8px;
@@ -99,6 +99,8 @@
      The build had seven control sizes from 16px to 34px, all as literals.
      This is the canonical pair. */
   --icon-control: 32px;
+  --composer-action-h: 26px;
+  --preview-width: 560px;
 
   /* ─── Shelf ───────────────────────────────────────────────────────────── */
   /*
@@ -110,7 +112,7 @@
      which is the constant that has to move with `--shelf-card-h`.
   */
   --shelf-rail-h: 48px;
-  --shelf-card-w: 236px;      /* horizontal bands: one card's width */
+  --shelf-card-w: 224px;      /* horizontal bands: one card's width */
   --shelf-card-h: 148px;      /* vertical bands: one card's height */
   --shelf-card-gap: 12px;
   --shelf-card-head: 32px;
@@ -128,10 +130,10 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --canvas: #e6e7ea;        /* the panel chrome itself */
-  --surface: #f9f9fb;       /* content cards floating on it */
+  --canvas: #eff0f2;        /* the panel chrome itself */
+  --surface: #ffffff;       /* content cards floating on it */
   --surface-hover: #ffffff;
-  --surface-2: #f3f4f7;     /* fields: search, composer */
+  --surface-2: #f5f5f7;     /* fields: search, composer */
   --surface-3: #ffffff;     /* popovers, sheets, menus */
 
   --text: #1d1d1f;

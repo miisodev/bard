@@ -17,6 +17,7 @@
     "allow-get-setting-str",
     "allow-set-theme",
     "allow-set-autostart",
+    "allow-configure-desktop",
     "allow-open-startup-settings",
     "allow-open-link",
     "allow-set-capture-double-shift",

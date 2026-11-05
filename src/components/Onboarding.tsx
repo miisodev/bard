@@ -296,7 +296,13 @@ export default function Onboarding({
           </div>
         ) : null}
 
-        {step === 2 ? (
+        {step === 2 && state.desktop?.session === "wayland" ? (
+          <div className="shortcut-list">
+            <p>Your desktop manages global shortcuts. Set them up in Settings › Shortcuts, then enable keyboard access for capture and paste-back.</p>
+            <button className="btn" onClick={() => void api.openSettings()}>Open Settings</button>
+            <p>You can keep using Bard without these permissions: copy an item, then paste it into your app.</p>
+          </div>
+        ) : step === 2 ? (
           <div className="shortcut-list" aria-label="Bard keyboard shortcuts">
             <div><kbd>Left Shift</kbd><kbd>Left Shift</kbd><span>Capture</span></div>
             <div><kbd>Right Shift</kbd><kbd>Right Shift</kbd><kbd>1 / 2 / 3</kbd><span>Paste item</span></div>

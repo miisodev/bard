@@ -31,6 +31,7 @@ const COMMANDS: &[&str] = &[
     "set_theme",
     "set_onboarding_completed",
     "set_autostart",
+    "configure_desktop",
     "open_startup_settings",
     "open_link",
     "get_appearance",

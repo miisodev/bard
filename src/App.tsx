@@ -309,10 +309,11 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     // something that is neither text nor an image. Both are answered the same
     // way, so both get the same sentence.
     subscribe(
-      listen("capture-failed", () => {
+      listen("capture-failed", (event) => {
         playCue("error");
         toast({
-          text: "Nothing to capture. Select text or an image, then tap Left Shift twice.",
+          text: typeof event.payload === "string" && event.payload.trim()
+            ? event.payload : "Nothing to capture. Select text or an image, then try again.",
           tone: "error",
         });
       }),

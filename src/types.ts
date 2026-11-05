@@ -193,6 +193,7 @@ export interface AppState {
   activeSectionId: number | null;
   theme: string;
   appVersion: string;
+  platform?: string;
   onboardingCompleted: boolean;
   autostartEnabled: boolean;
   captureDoubleShift: boolean;
@@ -202,7 +203,8 @@ export interface AppState {
   activeItemId: number | null;
   license: LicenseStatus;
   /** "direct" for the miiso.dev download, "store" for the Microsoft Store copy. */
-  channel: "direct" | "store";
+  channel: "direct" | "store" | "flatpak";
+  desktop?: { session: "windows" | "x11" | "wayland"; shortcutsReady: boolean; inputReady: boolean };
   /** "theme" follows Light/Dark; "light", "dark" and "custom" are chosen. */
   background: "theme" | "light" | "dark" | "custom";
   backgroundColor: string;
@@ -334,6 +336,7 @@ export interface BackupManifest {
   format: string;
   formatVersion: number;
   appVersion: string;
+  platform?: string;
   channel: string;
   createdAt: number;
   counts: BackupCounts;

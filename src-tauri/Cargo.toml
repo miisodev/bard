@@ -76,6 +76,7 @@ keyring = { version = "4.2", default-features = false, features = ["v1", "window
 enigo = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast", "background"] }
 keyring = { version = "4.2", default-features = false, features = ["v1", "zbus-secret-service-keyring-store"] }
 enigo = { version = "0.2", default-features = false, features = ["x11rb"] }
 

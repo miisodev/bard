@@ -7,7 +7,7 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AlertCircle, LoaderCircle, RotateCcw, X } from "lucide-react";
+import { AlertCircle, LoaderCircle, RotateCcw, X, SlidersHorizontal, Clipboard, Mic, Cpu, Wand2, Keyboard, HardDrive, Info } from "lucide-react";
 import ResizeHandles from "../components/ResizeHandles";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
@@ -33,14 +33,14 @@ import AboutPane from "./panes/About";
 */
 
 const SECTIONS = [
-  { id: "general", label: "General" },
-  { id: "capture", label: "Capture" },
-  { id: "dictation", label: "Dictation" },
-  { id: "models", label: "Models" },
-  { id: "postprocessing", label: "Refine" },
-  { id: "shortcuts", label: "Shortcuts" },
-  { id: "data", label: "Data" },
-  { id: "about", label: "About" },
+  { id: "general", icon: SlidersHorizontal, label: "General" },
+  { id: "capture", icon: Clipboard, label: "Capture" },
+  { id: "dictation", icon: Mic, label: "Dictation" },
+  { id: "models", icon: Cpu, label: "Models" },
+  { id: "postprocessing", icon: Wand2, label: "Refine" },
+  { id: "shortcuts", icon: Keyboard, label: "Shortcuts" },
+  { id: "data", icon: HardDrive, label: "Data" },
+  { id: "about", icon: Info, label: "About" },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
@@ -250,7 +250,7 @@ export default function SettingsWindow() {
       />
     ),
     postprocessing: <PostprocessingPane state={state} refresh={refresh} />,
-    shortcuts: <ShortcutsPane />,
+    shortcuts: <ShortcutsPane state={state} refresh={refresh} />,
     data: <DataPane state={state} refresh={refresh} />,
     about: <AboutPane state={state} refresh={refresh} />,
   };
@@ -278,6 +278,7 @@ export default function SettingsWindow() {
               onClick={() => setSection(item.id)}
               onKeyDown={(event) => onSectionKeyDown(event, index)}
             >
+              <item.icon size={16} strokeWidth={1.8} aria-hidden="true" />
               {item.label}
             </button>
           ))}

@@ -3,6 +3,7 @@ import { RefreshCw, Download } from "lucide-react";
 import type { PaneProps } from "../SettingsWindow";
 import LicenseCard from "../../components/LicenseCard";
 import { api } from "../../store";
+import { updateDelivery } from "../../distribution";
 import appIcon from "../../../src-tauri/icons/128x128.png";
 import { Button, Group, Pane, Row } from "../ui";
 
@@ -11,7 +12,7 @@ export default function AboutPane({ state, refresh }: PaneProps) {
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<{ version: string; notes: string | null; publishedAt: string | null } | null>(null);
   const [installing, setInstalling] = useState(false);
-  const store = state.channel === "store";
+  const delivery = updateDelivery(state);
   const confirm = useRef<HTMLDivElement>(null);
 
   const checkForUpdate = async () => {
@@ -61,7 +62,7 @@ export default function AboutPane({ state, refresh }: PaneProps) {
           <p className="about-line">Clipboard, Draw and Dictate</p>
           <p className="about-version">
             Version {state.appVersion}
-            {store ? " · Microsoft Store" : ""}
+            {` · ${delivery.label}`}
           </p>
         </div>
       </header>
@@ -69,8 +70,8 @@ export default function AboutPane({ state, refresh }: PaneProps) {
       <LicenseCard status={state.license} onStatus={refresh} />
 
       <Group title="Updates">
-        {store ? (
-          <Row label="Updates" hint="The Microsoft Store keeps Bard up to date." />
+        {!delivery.inApp ? (
+          <Row label="Updates" hint={delivery.hint} />
         ) : (
           <Row label="Updates" hint="Checked only when you ask. Nothing installs silently.">
             <Button onClick={() => void checkForUpdate()} disabled={checking} ariaBusy={checking}>

@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Eye,
   FileText,
   Package,
   PackagePlus,
@@ -17,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Item, PackSummary } from "../types";
 
 export type MenuAction =
+  | "preview"
   | "copy"
   | "copyList"
   | "favorite"
@@ -196,6 +198,13 @@ export default function ContextMenu({
 
   const actions: RowAction[] = item
     ? [
+        {
+          label: "Preview",
+          onClick: () => onAction("preview"),
+          icon: <Eye size={14} strokeWidth={1.8} />,
+          disabled: multi,
+          hint: multi ? "Select one item" : "Read the full capture · Alt+Enter",
+        },
         {
           label: multi ? "Copy selection" : "Copy",
           onClick: () => onAction("copy"),

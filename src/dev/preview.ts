@@ -151,7 +151,9 @@ const state: AppState = {
   micReady: true,
   activeItemId: null,
   license,
-  channel: "direct",
+  channel: params.get("channel") === "flatpak" ? "flatpak" : params.get("channel") === "store" ? "store" : "direct",
+  platform: params.get("platform") ?? "windows",
+  desktop: { session: params.get("platform") === "linux" ? "wayland" : "windows", shortcutsReady: false, inputReady: false },
   background: "theme",
   backgroundColor: "#e6e7ea",
   sort: "newest",
@@ -270,6 +272,7 @@ function writeClipboard(text: string) {
 }
 
 function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
+  if (params.get("fail") === cmd) throw "Couldn’t save. Your changes are still here. Try again.";
   switch (cmd) {
     case "get_state":
       return structuredClone(state);
@@ -413,6 +416,13 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "get_crash_report":
     case "check_for_update":
       return null;
+    case "update_item": {
+      const item = state.items.find((entry) => entry.id === Number(args.id));
+      if (!item) throw "That note is no longer available.";
+      item.content = String(args.content);
+      void emit("refresh");
+      return null;
+    }
     case "add_item": {
       state.items.unshift(text(nextId++, String(args.content), "manual", 0));
       return null;

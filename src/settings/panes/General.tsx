@@ -23,9 +23,9 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
   }, [refresh]);
 
   return (
-    <Pane title="General" description="How Bard behaves when you are not looking at it.">
+    <Pane title="General" description="Appearance and how Bard fits into your day.">
       <Group title="Appearance">
-        <Row label="Theme" hint="System follows your Windows appearance setting.">
+        <Row label="Theme" hint="System follows your desktop appearance.">
           <Segmented
             label="Theme"
             value={state.theme}
@@ -70,7 +70,7 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
       <Group title="Shelf">
         <Row
           label="Dock edge"
-          hint="Where the shelf sits. Bottom keeps it under your app; the window follows the edge you pick."
+          hint="Where the shelf appears on your screen."
         >
           <Segmented
             label="Dock edge"

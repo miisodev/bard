@@ -559,13 +559,14 @@ pub fn pack_reorder(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn update_item(app: AppHandle, id: i64, content: String) {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
-        return;
+pub fn update_item(app: AppHandle, id: i64, content: String) -> Result<(), String> {
+    crate::license::require(&app)?;
+    if content.trim().is_empty() {
+        return Err("Add some text, or cancel to keep the original note.".into());
     }
-    db::update_item(&app, id, &content);
+    db::update_item(&app, id, &content)?;
     refresh(&app);
+    Ok(())
 }
 
 /// Native-only file intake used by the Windows Explorer verb and first launch.
@@ -974,18 +975,20 @@ pub async fn get_state(app: AppHandle) -> db::AppState {
 }
 
 #[tauri::command]
-pub fn add_item(app: AppHandle, content: String) {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
-        return;
+pub fn add_item(app: AppHandle, content: String) -> Result<(), String> {
+    crate::license::require(&app)?;
+    if content.trim().is_empty() {
+        return Err("Add some text before saving a note.".into());
     }
     let id = db::insert_item(&app, &content, "text", None);
     // Setting the active item to the sentinel would clear it, so a failed write
     // would also silently deselect whatever the person had been working on.
-    if id != db::INSERT_FAILED {
-        db::set_active_item(&app, Some(id));
+    if id == db::INSERT_FAILED {
+        return Err("Bard could not save the note. Your text is still here; check that the drive has free space and try again.".into());
     }
+    db::set_active_item(&app, Some(id));
     refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1310,7 +1313,7 @@ pub fn send_drawing(app: AppHandle) -> Result<(), String> {
         crate::crash::record_event("draw:send-focus-stolen");
         return Err(DRAW_HANDOFF_FALLBACK.into());
     }
-    crate::paste::send_paste(&app);
+    crate::paste::send_paste(&app)?;
     crate::crash::record_event("draw:send-pasted");
     Ok(())
 }
@@ -1545,7 +1548,10 @@ pub fn paste_back(app: AppHandle) {
         // and paste anyway when it never comes, because not pasting is the one
         // outcome the chord cannot have.
         crate::panel::wait_hidden(PASTE_BACK_WAIT);
-        crate::paste::send_paste(&app);
+        if let Err(error) = crate::paste::send_paste(&app) {
+            let _ = app.emit_to("main", "capture-failed", error);
+            crate::panel::show_now(&app);
+        }
     });
 }
 
@@ -1595,7 +1601,7 @@ pub fn paste_item(app: &AppHandle, slot: u8) -> Result<(), String> {
         crate::paste::set_text(app, &item.content)?;
     }
     db::set_active_item(app, Some(item.id));
-    crate::paste::send_paste(app);
+    crate::paste::send_paste(app)?;
     refresh(app);
     Ok(())
 }
@@ -1841,9 +1847,35 @@ pub fn set_onboarding_completed(app: AppHandle, done: bool) {
 }
 
 #[tauri::command]
-pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub async fn configure_desktop(app: AppHandle, feature: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        if !crate::desktop::is_wayland() {
+            return Err("Desktop integration is already available in this session.".into());
+        }
+        match feature.as_str() {
+            "shortcuts" => crate::linux_portal::configure_shortcuts(app).await,
+            "input" => crate::linux_portal::configure_input(app).await,
+            _ => Err("That desktop integration is not available.".into()),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, feature);
+        Err("Desktop integration is already available on Windows.".into())
+    }
+}
+
+#[tauri::command]
+pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     if crate::packaging::is_packaged() {
         return Err("Windows manages how the Store copy of Bard starts.".into());
+    }
+    #[cfg(target_os = "linux")]
+    if crate::packaging::channel() == "flatpak" {
+        crate::linux_portal::set_autostart(enabled).await?;
+        db::set_setting(&app, "autostart_enabled", if enabled { "1" } else { "0" });
+        return Ok(());
     }
     if enabled {
         app.autolaunch().enable().map_err(|e| e.to_string())?;

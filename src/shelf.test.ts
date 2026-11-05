@@ -320,6 +320,10 @@ describe("escapeOutcome", () => {
 });
 
 describe("shelfCommand", () => {
+  it("lets a person inspect a card without pasting it", () => {
+    expect(shelfCommand({ key: "Enter", ctrlKey: false, metaKey: false, shiftKey: false, altKey: true })).toEqual({ type: "preview" });
+    expect(shelfCommand({ key: "Enter", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false })).toEqual({ type: "paste" });
+  });
   const key = (k: string, mods: Partial<Parameters<typeof shelfCommand>[0]> = {}) =>
     shelfCommand({ key: k, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...mods });
 

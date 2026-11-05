@@ -29,7 +29,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  padding: var(--sp-7) var(--sp-5);
+  padding: var(--sp-9) var(--sp-6);
   border-right: 1px solid var(--canvas-rule);
 }
 
@@ -49,6 +49,10 @@
 }
 
 .settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  min-height: var(--sp-11);
   text-align: left;
   border: none;
   background: none;
@@ -65,9 +69,10 @@
 .settings-nav button:hover { background: var(--canvas-hover); color: var(--on-canvas); }
 
 .settings-nav button.on {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-weight: var(--fw-medium);
+  background: var(--surface);
+  color: var(--on-canvas);
+  box-shadow: var(--el-card);
+  font-weight: var(--fw-semibold);
 }
 
 .settings-nav button:focus-visible {

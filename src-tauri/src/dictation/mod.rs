@@ -981,24 +981,14 @@ fn put_clipboard_back(app: &AppHandle, previous: Option<String>) {
 }
 
 fn paste_chord(app: &AppHandle) {
-    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-    let _synthetic_input = crate::capture::SyntheticInputGuard::enter();
     let previous = arboard::Clipboard::new()
         .ok()
         .and_then(|mut c| c.get_text().ok());
     std::thread::sleep(Duration::from_millis(60));
-    // The clipboard is put back however this ends. Bailing out with the
-    // transcript still on it would leave a copy of what the user just said in
-    // the one place every other application can read without asking.
-    let Ok(mut enigo) = Enigo::new(&Settings::default()) else {
-        put_clipboard_back(app, previous);
+    if let Err(error) = crate::paste::send_paste(app) {
+        let _ = app.emit("dictation-cloud-warning", error);
         return;
-    };
-    let _ = enigo.key(Key::Control, Direction::Press);
-    std::thread::sleep(Duration::from_millis(30));
-    let _ = enigo.key(Key::Unicode('v'), Direction::Click);
-    std::thread::sleep(Duration::from_millis(30));
-    let _ = enigo.key(Key::Control, Direction::Release);
+    }
     std::thread::sleep(Duration::from_millis(60));
     put_clipboard_back(app, previous);
 }
