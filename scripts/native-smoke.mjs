@@ -70,8 +70,8 @@ async function screenshot(name) {
   const png = await command("/screenshot");
   await writeFile(`${output}/${name}.png`, Buffer.from(png, "base64"));
 }
-async function waitForSelector(selector) {
-  const deadline = Date.now() + 15_000;
+async function waitForSelector(selector, timeout = 15_000) {
+  const deadline = Date.now() + timeout;
   while (!(await script("return Boolean(document.querySelector(arguments[0]))", [selector]))) {
     if (Date.now() > deadline) throw new Error(`The native window did not render ${selector}`);
     await new Promise((done) => setTimeout(done, 100));
@@ -136,7 +136,22 @@ try {
   await waitForSelector(".license-card");
   await screenshot("onboarding-license");
   await clickSetupAction("Start using Bard");
-  await waitForSelector('[role="listbox"][aria-label="Cards"]');
+  try {
+    // Finishing writes the trial to the OS credential store and registers
+    // autostart before the shelf appears, so it gets longer than a render.
+    await waitForSelector('[role="listbox"][aria-label="Cards"]', 45_000);
+  } catch (error) {
+    // Record what the setup window says and what the backend reports, so a
+    // stall is distinguishable from a refused trial or autostart write.
+    evidence.finish = {
+      title: await script("return document.title"),
+      alert: await script("return [...document.querySelectorAll('[role=alert]')].map(n=>n.textContent.trim())"),
+      busy: await script("return [...document.querySelectorAll('.onboarding button')].map(b=>b.textContent.trim()+(b.disabled?' (disabled)':''))"),
+      license: await invoke("get_license", {}, true),
+    };
+    await screenshot("onboarding-finish");
+    throw error;
+  }
   const ready = await invoke("get_state");
   assert.equal(ready.onboardingCompleted, true);
   assert.equal(ready.license.canUse, true);

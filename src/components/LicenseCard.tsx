@@ -163,7 +163,9 @@ export default function LicenseCard({
             ? `Try Bard free for ${daysLeft(status.trialExpiresAt)} more days. No card is required.`
             : restricted
               ? "Your shelf remains readable. Buy another licence to capture, dictate, draw, and edit."
-              : "Bard is checking its local licence state."}
+              : trialAvailable
+                ? "There is no trial or licence on this PC yet."
+                : "Bard is checking its local licence state."}
       </p>
       {/*
         The backend's own message, in every state. It used to render only when
