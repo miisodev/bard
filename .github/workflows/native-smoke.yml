@@ -64,10 +64,16 @@ jobs:
         run: |
           # The regional Azure mirror can stall large WebKit downloads. Use
           # Ubuntu's signed archive and bounded retries instead.
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
-          echo 'Acquire::http::Timeout "30"; Acquire::Retries "2";' | sudo tee /etc/apt/apt.conf.d/99-ci-timeout
+          # Hosted images also use mirror+file:/etc/apt/apt-mirrors.txt;
+          # changing only ubuntu.sources leaves Azure selected in that file.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/apt-mirrors*.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i -e 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' -e 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g' "$source"
+            fi
+          done
+          echo 'Acquire::http::Timeout "20"; Acquire::https::Timeout "20"; Acquire::Retries "1";' | sudo tee /etc/apt/apt.conf.d/99-ci-timeout
           sudo apt-get update
-          sudo apt-get install -y webkit2gtk-driver xvfb dbus-x11 gnome-keyring
+          sudo apt-get install -y --no-install-recommends webkit2gtk-driver xvfb dbus-x11 gnome-keyring
           sudo apt-get install -y ./candidate/deb/*.deb
       - name: Prepare Windows desktop
         if: runner.os == 'Windows'

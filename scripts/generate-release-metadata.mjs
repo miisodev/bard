@@ -7,31 +7,39 @@
   release box runs bash, bun and node — not PowerShell. It reads the same
   inputs and keeps the same two document shapes:
 
-    release-provenance.json — schema string, product, version, git commit,
+    release-provenance.json — schema string, product, version, source commit,
       generated_at, the artifact list (basename, bytes, sha256) and a signing
       block;
     bard-sbom.json — CycloneDX 1.5: the real dependency inventory, one library
-      component per crate in the platform's Cargo resolution (name, version,
-      purl, licence) and per production npm dependency (name, version, purl,
-      licence), plus the npm application component.
+      component per crate reachable in the platform's resolved Cargo graph and
+      per package in the installed production npm closure (name, version,
+      purl, licence), plus the npm application component.
 
-  Only the signing block differs, and it states the Linux truth: no
-  Authenticode, no Microsoft Store package, and no Tauri updater artifact — a
-  deb or rpm is updated by the package manager, and Flathub updates the
-  flatpak.
+  Only the signing block differs, and it states the truth: no Authenticode;
+  the Microsoft Store MSIX is prepared for owner submission and Microsoft signs
+  it after certification; deb/rpm have no Tauri updater artifact because the
+  package manager updates them. No Flathub package is produced by this release.
 
   Run it from the repository root after the release build:
 
     bun scripts/generate-release-metadata.mjs --platform linux \
-      [--version <v>] [--bundle-dir <dir>] [--output-dir <dir>] [--target <triple>]
+      [--version <v>] [--bundle-dir <dir>] [--binary-dir <dir>] \
+      [--output-dir <dir>] [--target <triple>] [--source-commit <sha>]
 
   --platform defaults to the host (windows on Windows, linux elsewhere).
   --bundle-dir defaults to the NSIS output folder on Windows and to the bundle
   root on Linux; --output-dir defaults to release-metadata, as the PowerShell
-  script's does. --target defaults to the platform's release triple
+  script's does. --binary-dir points at the hosted build's executable directory
+  on Windows (and defaults --bundle-dir to <binary-dir>/bundle/nsis); on Linux
+  it defaults --bundle-dir when that is omitted, because the deb/rpm packages
+  are the release assets. --target defaults to the platform's release triple
   (x86_64-pc-windows-msvc or x86_64-unknown-linux-gnu) and only scopes the
   Cargo resolution — no build happens here, so the triple need not be
   installed.
+
+  --source-commit is for hosted-built packages signed locally. It must be a
+  full 40-character commit that exists, and its product source and version must
+  match the current tree. Without it the default remains HEAD, as before.
 
   The dependency inventory needs a warm frontend install: run
   `bun install --frozen-lockfile` first, as the release order does.
@@ -42,6 +50,17 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  PRODUCT_SOURCE_PATHS,
+  collectCargoClosure,
+  collectNpmClosure,
+  createFsPackageReader,
+  isFullCommitSha,
+  npmPurl,
+  parseCargoLockPackage,
+  parseCargoPackageIdentity,
+  validateSourceIdentity,
+} from "./release-metadata-lib.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -86,10 +105,11 @@ function run(command, args) {
 }
 
 function artifact(path) {
-  // statSync throws on a missing artifact, exactly as Get-Item does in the
-  // PowerShell script: metadata that describes a file that is not there is
-  // worse than no metadata.
+  // Metadata that describes a file that is not there is worse than no
+  // metadata, so a missing release asset is a clear failure.
+  if (!existsSync(path)) fail(`missing release artifact: ${path}`);
   const item = statSync(path);
+  if (!item.isFile()) fail(`release artifact is not a file: ${path}`);
   return { file: basename(path), bytes: item.size, sha256: sha256(path) };
 }
 
@@ -107,37 +127,143 @@ function theArtifact(dir, extension) {
   return artifact(found[0]);
 }
 
+function readIdentity(readText) {
+  return {
+    package: JSON.parse(readText("package.json")),
+    tauri: JSON.parse(readText("src-tauri/tauri.conf.json")),
+    cargo: parseCargoPackageIdentity(readText("src-tauri/Cargo.toml")),
+    cargoLock: parseCargoLockPackage(readText("src-tauri/Cargo.lock"), "bard"),
+  };
+}
+
+function resolveSourceCommit(requested) {
+  if (!isFullCommitSha(requested)) {
+    fail("--source-commit must be a full 40-character hexadecimal commit SHA.");
+  }
+  let resolved;
+  try {
+    resolved = execFileSync("git", ["rev-parse", "--verify", `${requested}^{commit}`], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch (error) {
+    const detail = (error.stderr ?? "").trim() || error.message;
+    fail(`--source-commit ${requested} does not name a commit: ${detail}`);
+  }
+  if (!isFullCommitSha(resolved) || resolved.toLowerCase() !== requested.toLowerCase()) {
+    fail(`--source-commit ${requested} resolved to ${resolved}, not the full commit.`);
+  }
+  try {
+    execFileSync("git", ["cat-file", "-e", `${resolved}^{commit}`], {
+      cwd: repoRoot,
+      stdio: "ignore",
+    });
+  } catch {
+    fail(`--source-commit ${requested} does not exist in this repository.`);
+  }
+  return resolved;
+}
+
+/**
+ * A hosted build may be signed from a later local commit, but only when the
+ * product source in the claimed commit is exactly what this tree builds. A
+ * release script change is fine; an app, Cargo or lockfile difference is not.
+ */
+function productSourceMatches(commit) {
+  try {
+    execFileSync("git", ["diff", "--quiet", commit, "--", ...PRODUCT_SOURCE_PATHS], {
+      cwd: repoRoot,
+      stdio: "ignore",
+    });
+  } catch (error) {
+    if (error.status === 1) return false;
+    const detail = (error.stderr ?? "").trim() || error.message;
+    fail(`could not compare product source with ${commit}: ${detail}`);
+  }
+  let untracked;
+  try {
+    untracked = execFileSync(
+      "git",
+      ["ls-files", "--others", "--exclude-standard", "--", ...PRODUCT_SOURCE_PATHS],
+      { cwd: repoRoot, encoding: "utf8" },
+    ).trim();
+  } catch (error) {
+    const detail = (error.stderr ?? "").trim() || error.message;
+    fail(`could not inspect untracked product source: ${detail}`);
+  }
+  return untracked === "";
+}
+
 const options = parseArgs(process.argv.slice(2));
 const platform = options.platform ?? (process.platform === "win32" ? "windows" : "linux");
 if (platform !== "windows" && platform !== "linux") {
   fail(`--platform must be windows or linux, not ${platform}`);
 }
 
-const version =
-  options.version ?? JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).version;
+const currentPackage = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+const version = options.version ?? currentPackage.version;
+const defaultBundleDir = join(
+  repoRoot,
+  "src-tauri/target/release/bundle",
+  platform === "windows" ? "nsis" : "",
+);
+const binaryDir = resolve(
+  options["binary-dir"] ??
+    (platform === "windows"
+      ? join(repoRoot, "src-tauri/target/release")
+      : resolve(options["bundle-dir"] ?? defaultBundleDir)),
+);
 const bundleDir = resolve(
   options["bundle-dir"] ??
-    join(repoRoot, "src-tauri/target/release/bundle", platform === "windows" ? "nsis" : ""),
+    (options["binary-dir"]
+      ? platform === "windows"
+        ? join(binaryDir, "bundle/nsis")
+        : binaryDir
+      : defaultBundleDir),
 );
 const outputDir = resolve(options["output-dir"] ?? join(repoRoot, "release-metadata"));
 
-const commit = run("git", ["rev-parse", "HEAD"]).trim();
+let commit;
+if (options["source-commit"] !== undefined) {
+  commit = resolveSourceCommit(options["source-commit"]);
+  const source = readIdentity((path) => run("git", ["show", `${commit}:${path}`]));
+  const current = readIdentity((path) => readFileSync(join(repoRoot, path), "utf8"));
+  const errors = validateSourceIdentity({
+    source,
+    current,
+    version: options.version,
+  });
+  if (errors.length > 0) {
+    fail(`--source-commit does not describe this release:\n- ${errors.join("\n- ")}`);
+  }
+  if (!productSourceMatches(commit)) {
+    fail(
+      `--source-commit ${commit} has product source that differs from the current tree; check out the hosted build's source or sign the matching build.`,
+    );
+  }
+} else {
+  commit = run("git", ["rev-parse", "HEAD"]).trim();
+}
 
 let artifacts;
 let signing;
 if (platform === "windows") {
-  const releaseDir = join(repoRoot, "src-tauri/target/release");
   const installer = join(bundleDir, `Bard_${version}_x64-setup.exe`);
   artifacts = [
-    artifact(join(releaseDir, "bard.exe")),
+    artifact(join(binaryDir, "bard.exe")),
     artifact(installer),
     artifact(`${installer}.sig`),
   ];
   signing = {
-    authenticode: { required: false, status: "unsigned by decision; SmartScreen shows its notice once" },
+    authenticode: {
+      required: false,
+      status: "unsigned by decision; SmartScreen shows its notice once",
+    },
     microsoft_store: {
       public_asset: false,
-      status: "MSIX submitted through Partner Center; Microsoft signs it after certification",
+      status:
+        "MSIX package prepared for owner submission through Partner Center; not yet submitted. Microsoft signs it after certification.",
     },
     tauri_updater: { required: true, envelope: `${installer}.sig` },
   };
@@ -147,11 +273,18 @@ if (platform === "windows") {
     theArtifact(join(bundleDir, "rpm"), ".rpm"),
   ];
   signing = {
-    authenticode: { required: false, status: "not applicable; Authenticode signs Windows binaries only" },
-    microsoft_store: { public_asset: false, status: "not applicable; the MSIX is a Windows package" },
+    authenticode: {
+      required: false,
+      status: "not applicable; Authenticode signs Windows binaries only",
+    },
+    microsoft_store: {
+      public_asset: false,
+      status: "not applicable; the MSIX is a Windows package",
+    },
     tauri_updater: {
       required: false,
-      status: "no updater artifact for deb or rpm; Flathub updates the flatpak",
+      status:
+        "no updater artifact for deb or rpm; the package manager updates them. No Flathub package is produced by this release.",
     },
   };
 }
@@ -167,53 +300,13 @@ const provenance = {
   signing,
 };
 
-/**
- * CycloneDX 1.5 takes either a licence object or an SPDX expression. Most
- * crates carry an SPDX expression; the older "MIT/Apache-2.0" spelling is a
- * cargo convention, not SPDX, so it travels as a named licence instead.
- */
-function licenseChoice(text) {
-  const value = typeof text === "string" ? text.trim() : "";
-  if (value === "") return undefined;
-  const spdx = value
-    .split(/\s+/)
-    .every((token) => /^(?:\(*[A-Za-z0-9.+-]+\)*|OR|AND|WITH)$/.test(token));
-  return spdx ? { expression: value } : { license: { name: value } };
-}
-
-/** npm allows a string, a { type, url } object, or an array of either. */
-function licenseChoices(value) {
-  if (typeof value === "string") {
-    const choice = licenseChoice(value);
-    return choice ? [choice] : undefined;
-  }
-  if (Array.isArray(value)) {
-    const texts = value
-      .map((entry) => (typeof entry === "string" ? entry : entry?.type))
-      .filter((entry) => typeof entry === "string" && entry.trim() !== "");
-    if (texts.length === 0) return undefined;
-    const choice = licenseChoice(texts.join(" OR "));
-    return choice ? [choice] : undefined;
-  }
-  if (value && typeof value === "object" && typeof value.type === "string") {
-    const choice = licenseChoice(value.type);
-    return choice ? [choice] : undefined;
-  }
-  return undefined;
-}
-
-function withLicense(component, choices) {
-  return choices ? { ...component, licenses: choices } : component;
-}
-
 const target =
   options.target ??
   (platform === "windows" ? "x86_64-pc-windows-msvc" : "x86_64-unknown-linux-gnu");
 
-// The whole resolved graph for this platform — not --no-deps: an SBOM whose
-// component list is the product itself cannot answer what it exists to answer.
-// --filter-platform scopes it to the crates this platform actually compiles
-// (no GTK/WebKit on Windows), and resolves without building anything.
+// `cargo metadata --filter-platform` leaves `packages` unfiltered but filters
+// resolve.nodes[].deps. The closure walker treats those nodes as the authority,
+// so target-only crates never leak into the SBOM and dev-only edges are skipped.
 const cargo = JSON.parse(
   run("cargo", [
     "metadata",
@@ -226,19 +319,13 @@ const cargo = JSON.parse(
     target,
   ]),
 );
-const crates = cargo.packages
-  .map((entry) =>
-    withLicense(
-      {
-        type: "library",
-        name: entry.name,
-        version: entry.version,
-        purl: `pkg:cargo/${entry.name}@${entry.version}`,
-      },
-      licenseChoices(entry.license),
-    ),
-  )
-  .sort((a, b) => a.purl.localeCompare(b.purl));
+
+let crates;
+try {
+  crates = collectCargoClosure(cargo);
+} catch (error) {
+  fail(error.message);
+}
 
 const application = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 if (!existsSync(join(repoRoot, "node_modules"))) {
@@ -246,35 +333,30 @@ if (!existsSync(join(repoRoot, "node_modules"))) {
     "node_modules is missing; the SBOM needs the installed frontend dependencies. Run bun install --frozen-lockfile first.",
   );
 }
-const npm = Object.keys(application.dependencies ?? {})
-  .sort()
-  .map((name) => {
-    const installed = join(repoRoot, "node_modules", ...name.split("/"), "package.json");
-    if (!existsSync(installed)) {
-      fail(`node_modules/${name} is missing; run bun install --frozen-lockfile first.`);
-    }
-    const entry = JSON.parse(readFileSync(installed, "utf8"));
-    return withLicense(
-      {
-        type: "library",
-        name,
-        version: entry.version,
-        purl: `pkg:npm/${name}@${entry.version}`,
-      },
-      licenseChoices(entry.license ?? entry.licenses),
-    );
-  });
 
-const components = [
-  ...crates,
-  ...npm,
-  {
-    type: "application",
-    name: application.name,
-    version: application.version,
-    purl: `pkg:npm/${application.name}@${application.version}`,
-  },
-];
+let npm;
+try {
+  npm = collectNpmClosure({
+    rootDir: repoRoot,
+    dependencies: Object.keys(application.dependencies ?? {}),
+    optionalDependencies: Object.keys(application.optionalDependencies ?? {}),
+    peerDependencies: Object.keys(application.peerDependencies ?? {}),
+    peerDependenciesMeta: application.peerDependenciesMeta ?? {},
+    readPackage: createFsPackageReader(repoRoot),
+  });
+} catch (error) {
+  fail(error.message);
+}
+
+const applicationComponent = {
+  type: "application",
+  name: application.name,
+  version,
+  purl: npmPurl(application.name, version),
+};
+const components = [...crates, ...npm, applicationComponent].sort((a, b) =>
+  a.purl.localeCompare(b.purl),
+);
 const sbom = {
   bomFormat: "CycloneDX",
   specVersion: "1.5",
@@ -294,6 +376,7 @@ for (const [name, document] of [
   console.log(`metadata  ${path}  (${statSync(path).size} bytes)`);
 }
 console.log(`platform  ${platform}`);
+console.log(`source    ${commit}`);
 for (const entry of artifacts) {
   console.log(`artifact  ${entry.file}  ${entry.bytes} bytes  sha256 ${entry.sha256}`);
 }

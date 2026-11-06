@@ -228,7 +228,7 @@ export default function Onboarding({
         ) : (
           <>
             <h1>You're set</h1>
-            <p>Start with a 14-day local trial, or enter the licence key from your purchase email.</p>
+            <p>{license.canUse ? "Bard is ready on this computer. You can manage your licence in Settings." : "Start with a 14-day local trial, or enter the licence key from your purchase email."}</p>
           </>
         )}
       </div>

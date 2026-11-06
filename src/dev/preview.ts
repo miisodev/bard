@@ -99,7 +99,19 @@ function text(
 }
 
 const license: AppState["license"] =
-  scene === "restricted"
+  scene === "onboarding"
+    ? {
+        state: "trial_available",
+        canUse: false,
+        keyConfigured: false,
+        trialStartedAt: null,
+        trialExpiresAt: null,
+        expiresAt: null,
+        lastCheckedAt: null,
+        message: null,
+        activationLimit: 3,
+      }
+    : scene === "restricted"
     ? {
         state: "restricted",
         canUse: false,
@@ -291,6 +303,12 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "get_license":
     case "refresh_license":
       return license;
+    case "start_trial":
+      Object.assign(license, {
+        state: "trial", canUse: true,
+        trialStartedAt: secs(now), trialExpiresAt: secs(now + 14 * 864e5),
+      });
+      return structuredClone(license);
     case "get_models":
       return models;
     case "get_model":

@@ -102,6 +102,7 @@ fn show_now_inner(app: &tauri::AppHandle) {
         }
     } else {
         if win.is_decorated().unwrap_or(false) {
+            let _ = win.unmaximize();
             let _ = win.set_title("Bard");
             let _ = win.set_min_size(None::<tauri::LogicalSize<f64>>);
             let _ = win.set_resizable(false);

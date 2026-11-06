@@ -44,6 +44,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - run: node --test scripts/release-metadata.test.mjs
       # The runner image includes Chrome and its OS libraries. Reuse it rather
       # than downloading a second browser and running another apt transaction.
       - run: google-chrome --version
