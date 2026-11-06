@@ -131,11 +131,19 @@
   first row; the inks, the widths and the three save actions on the second.
   Each row wraps further if it has to, but every control is always present.
 */
+/* The tools ride a tonal floating toolbar, as Material's and Apple's drawing
+   tools do: one rounded tray under the page, its corners concentric with the
+   window's. */
 .draw-toolbar {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  padding: var(--sp-5) var(--sp-6);
+  margin: var(--sp-5) var(--sp-6) var(--sp-6);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--el-card);
+  color: var(--text);
 }
 
 .draw-row {
@@ -155,7 +163,7 @@
   width: 1px;
   align-self: stretch;
   margin: var(--sp-2) var(--sp-3);
-  background: var(--canvas-rule);
+  background: var(--rule);
 }
 
 .draw-spacer { flex: 1; }
@@ -163,18 +171,21 @@
 .draw-tool {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border: none;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-pill);
   background: none;
-  color: var(--on-canvas-2);
+  color: var(--text-2);
   cursor: pointer;
   transition: background var(--t-fast) var(--ease-out),
-              color var(--t-fast) var(--ease-out);
+              color var(--t-fast) var(--ease-out),
+              transform var(--t-base) var(--ease-spring);
 }
 
-.draw-tool:hover:not(:disabled) { background: var(--canvas-hover); color: var(--on-canvas); }
+.draw-tool:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+
+.draw-tool:active:not(:disabled) { transform: scale(0.9); }
 
 .draw-tool:disabled {
   opacity: 0.35;
@@ -182,8 +193,8 @@
 }
 
 .draw-tool.on {
-  background: var(--accent);
-  color: var(--text-on-accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 /*
@@ -220,17 +231,17 @@
 /* The ring sits outside the swatch so the colour itself stays uncovered. */
 .draw-swatch.on::before {
   box-shadow: inset 0 0 0 1px var(--border-strong),
-              0 0 0 2px var(--canvas), 0 0 0 4px var(--accent);
+              0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
 }
 
 .draw-width {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: none;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-pill);
   background: none;
   cursor: pointer;
   transition: background var(--t-fast) var(--ease-out);
@@ -240,12 +251,12 @@
   display: block;
   width: 16px;
   border-radius: var(--r-pill);
-  background: var(--on-canvas-2);
+  background: var(--text-2);
 }
 
-.draw-width:hover { background: var(--canvas-hover); }
-.draw-width.on { background: var(--canvas-hover); }
-.draw-width.on span { background: var(--accent); }
+.draw-width:hover { background: var(--surface-2); }
+.draw-width.on { background: var(--accent-soft); }
+.draw-width.on span { background: var(--accent-text); }
 
 /*
   The second row's actions sit at the secondary text size with tighter padding:
@@ -255,24 +266,29 @@
 .draw-text-btn,
 .draw-primary {
   border: none;
-  border-radius: var(--r-control);
-  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--r-pill);
+  min-height: 30px;
+  padding: var(--sp-3) var(--sp-6);
   font: inherit;
   font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
+  font-weight: var(--fw-semibold);
   cursor: pointer;
   transition: background var(--t-fast) var(--ease-out),
-              color var(--t-fast) var(--ease-out);
+              color var(--t-fast) var(--ease-out),
+              transform var(--t-base) var(--ease-spring);
 }
 
+.draw-text-btn:active:not(:disabled),
+.draw-primary:active:not(:disabled) { transform: scale(var(--press-scale)); }
+
 .draw-text-btn {
-  background: none;
-  color: var(--on-canvas-2);
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 .draw-text-btn:hover:not(:disabled) {
-  background: var(--canvas-hover);
-  color: var(--on-canvas);
+  background: color-mix(in srgb, var(--surface-2) 82%, var(--text));
+  color: var(--text);
 }
 
 .draw-primary {

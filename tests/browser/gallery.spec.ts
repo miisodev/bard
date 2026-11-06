@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test.use({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1.2 });
 
-const shots = ["dictate", "capture", "models", "draw", "dark"];
+const shots = ["hero", "capture", "dictate", "draw", "models", "dark"];
 for (const [index, shot] of shots.entries()) {
   test(`launch gallery renders ${shot} from the product windows`, async ({ page }, info) => {
     await page.goto(`/src/dev/stage.html?shot=${shot}`);

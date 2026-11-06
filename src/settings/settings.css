@@ -31,6 +31,9 @@
   gap: var(--sp-1);
   padding: var(--sp-9) var(--sp-6);
   border-right: 1px solid var(--canvas-rule);
+  /* GNOME's sidebar tone: one step off the content's ground, derived from the
+     canvas so a custom background keeps it. */
+  background: color-mix(in srgb, var(--canvas-hover) 55%, transparent);
 }
 
 .settings-nav-title {
@@ -63,7 +66,7 @@
   background: none;
   cursor: pointer;
   padding: var(--sp-4) var(--sp-5);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-pill);
   font: inherit;
   font-size: var(--fs-base);
   color: var(--on-canvas-2);
@@ -73,10 +76,11 @@
 
 .settings-nav button:hover { background: var(--canvas-hover); color: var(--on-canvas); }
 
+/* Material's active indicator: the chosen pane is a tonal pill, its glyph and
+   label in the accent ink. */
 .settings-nav button.on {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--el-card);
+  background: var(--accent-soft);
+  color: var(--accent-text);
   font-weight: var(--fw-semibold);
 }
 

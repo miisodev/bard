@@ -26,14 +26,14 @@ export interface Appearance {
   systemDark?: boolean;
 }
 
-/** The canvases of the two themes, measured off the Copper captures. */
-export const CANVAS = { light: "#eff0f2", dark: "#1c1c1f" } as const;
+/** The canvases of the two themes, matching tokens.css. */
+export const CANVAS = { light: "#f3f3f6", dark: "#1c1c20" } as const;
 
 /**
  * Draw's page in each theme. The dark page is the dark card surface rather
  * than the dark canvas, so the page still reads as a page inside Draw's chrome.
  */
-export const DRAW_CANVAS = { light: "#ffffff", dark: "#26262a" } as const;
+export const DRAW_CANVAS = { light: "#ffffff", dark: "#2a2a2f" } as const;
 
 const INK_DARK = [29, 29, 31] as const;
 const INK_LIGHT = [245, 245, 247] as const;

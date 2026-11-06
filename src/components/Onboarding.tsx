@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ArrowRight, ChevronLeft, Download, LoaderCircle, RotateCcw } from "lucide-react";
+import { ArrowRight, ChevronLeft, ClipboardList, Download, LoaderCircle, Mic, PenTool, RotateCcw } from "lucide-react";
 import { api } from "../store";
 import LicenseCard from "./LicenseCard";
 import type { AppState, ModelInfo, ModelProgress } from "../types";
@@ -23,11 +23,11 @@ const STEP_TITLES = [
 ];
 
 /**
- * The step you are on, in a lighter tint; the steps behind you are solid. The
- * segments used to light for `index <= step`, so at the last step all four
- * were lit and the current one could not be picked out.
+ * The step you are on is the long accent pill; the steps behind you are short
+ * accent-tinted pills and the ones ahead are neutral. Width carries the
+ * position as well as colour, so it reads without the tint.
  */
-const CURRENT_STEP: CSSProperties = { background: "var(--accent-soft)", width: 30 };
+const CURRENT_STEP: CSSProperties = { background: "var(--accent)", width: 28 };
 
 function errorText(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -235,6 +235,31 @@ export default function Onboarding({
 
       {/* The one step being asked about. */}
       <div className="onb-step">
+        {step === 0 ? (
+          <ul className="onb-features">
+            <li data-kind="text">
+              <span className="onb-feature-glyph"><ClipboardList size={18} aria-hidden="true" /></span>
+              <span>
+                <strong>Clipboard</strong>
+                <span>Everything you copy waits on one searchable shelf. Enter pastes it back where you were.</span>
+              </span>
+            </li>
+            <li data-kind="draw">
+              <span className="onb-feature-glyph"><PenTool size={18} aria-hidden="true" /></span>
+              <span>
+                <strong>Draw</strong>
+                <span>Sketch a diagram or a note by hand, and keep it on the shelf beside everything else.</span>
+              </span>
+            </li>
+            <li data-kind="dictation">
+              <span className="onb-feature-glyph"><Mic size={18} aria-hidden="true" /></span>
+              <span>
+                <strong>Dictate</strong>
+                <span>Speak in any app and Bard types it. Transcription runs on this computer.</span>
+              </span>
+            </li>
+          </ul>
+        ) : null}
         {step === 1 ? (
           <div className="model-card">
             <div className="name">{model?.name ?? (modelsLoading ? "Preparing model…" : "Voice model")}</div>

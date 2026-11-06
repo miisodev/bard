@@ -27,6 +27,6 @@ describe("appearance", () => {
   it("follows the theme until a background is chosen", () => {
     expect(canvasFor(base)).toBeNull();
     expect(canvasFor({ ...base, background: "dark" })).toBe(CANVAS.dark);
-    expect(drawCanvasFor({ ...base, drawBackground: "dark" })).toBe("#26262a");
+    expect(drawCanvasFor({ ...base, drawBackground: "dark" })).toBe("#2a2a2f");
   });
 });

@@ -5,36 +5,36 @@
   a size, a radius, a shadow or a duration: if a value is needed and missing, it
   is added here first.
 
-  The target is shadcn's Copper — light, translucent, generous, low-chroma, with
-  near-white content cards floating on a cool-grey chrome — expressed with
-  Windows-native primitives rather than transplanted macOS ones. The light
-  palette below is measured off the Copper demo captures, not guessed:
-  panel #e5e6e9 · card #f8f8f8 · field #f3f4f7 · body text #434343.
+  The language is what the GNOME, Apple and Android design teams would make
+  together. From GNOME: opaque, calm surfaces, boxed preference groups and pill
+  controls. From Apple: concentric corners, a strict type hierarchy and one
+  floating layer of controls above the content. From Material 3 Expressive:
+  tonal colour roles, shape contrast between containers and pills, and short
+  spring responses that confirm a press. No glass: every surface is opaque, so
+  contrast holds over any desktop.
 
   Three themes: data-theme = light | dark, with "system" resolved before it
-  is set. The window is transparent so the panel's own rounded corners show
-  the desktop through, but nothing behind it is blurred or tinted.
+  is set.
 */
 
 :root {
   /* ─── Type ────────────────────────────────────────────────────────────── */
 
-  /* Segoe UI Variable is the Windows 11 system face and the native counterpart
-     to Copper's SF Pro. Text/Display are separate optical sizes, not weights —
-     Display is drawn tighter and is correct above ~16px only. */
-  --font-text: "Segoe UI Variable Text", "Segoe UI", "Adwaita Sans", "Ubuntu Sans", "Cantarell", system-ui, sans-serif;
-  --font-display: "Segoe UI Variable Display", "Segoe UI Variable Text",
-    "Segoe UI", "Adwaita Sans", "Ubuntu Sans", "Cantarell", system-ui, sans-serif;
-  --font-small: "Segoe UI Variable Small", "Segoe UI Variable Text", "Segoe UI",
-    "Adwaita Sans", "Ubuntu Sans", "Cantarell", system-ui, sans-serif;
-  --font-mono: "Cascadia Code", "Cascadia Mono", ui-monospace, "Consolas", monospace;
+  /* Inter is bundled (styles.css) so Bard reads the same on Windows and Linux;
+     Adwaita Sans is built from it, so on GNOME it is the desktop's own face. */
+  --font-text: "Inter Variable", "Adwaita Sans", "Segoe UI Variable Text", "Segoe UI",
+    "Ubuntu Sans", "Cantarell", system-ui, sans-serif;
+  --font-display: "Inter Variable", "Adwaita Sans", "Segoe UI Variable Display",
+    "Segoe UI", "Ubuntu Sans", "Cantarell", system-ui, sans-serif;
+  --font-small: var(--font-text);
+  --font-mono: "Adwaita Mono", "Cascadia Code", "Cascadia Mono", ui-monospace, "Consolas", monospace;
 
-  --fs-caption: 11px;   /* section labels, meta */
+  --fs-caption: 11px;   /* meta, keycaps */
   --fs-sm: 12px;        /* secondary UI text */
-  --fs-base: 14px;      /* card body — the size most of the app is read at */
+  --fs-base: 13.5px;    /* card body — the size most of the app is read at */
   --fs-md: 15px;        /* composer, emphasised body */
   --fs-lg: 17px;        /* sheet titles */
-  --fs-xl: 22px;        /* onboarding, empty states */
+  --fs-xl: 24px;        /* onboarding, page titles */
 
   --fw-normal: 400;
   --fw-medium: 500;
@@ -45,9 +45,9 @@
   --lh-base: 1.45;
   --lh-loose: 1.6;
 
-  --tr-caption: 0.07em;  /* small-caps section labels */
-  --tr-tight: -0.01em;   /* display sizes only */
-  --tr-normal: 0;
+  --tr-caption: 0.01em;  /* group labels are sentence case now, not small caps */
+  --tr-tight: -0.022em;  /* display sizes only */
+  --tr-normal: -0.006em; /* Inter's body tracking at UI sizes */
 
   /* ─── Space ───────────────────────────────────────────────────────────── */
 
@@ -65,39 +65,44 @@
 
   /* ─── Shape ───────────────────────────────────────────────────────────── */
 
-  --r-panel: 18px;
-  --r-card: 12px;
-  --r-control: 10px;
-  --r-sm: 8px;
-  --r-pill: 999px;
+  /* Concentric: each radius is its container's minus the padding between
+     them, so corners nest instead of colliding. Containers are rounded
+     rectangles; controls are full pills — Material's shape contrast. */
+  --r-panel: 22px;
+  --r-card: 14px;       /* panel 22 − 8 inset */
+  --r-control: 12px;    /* boxes that hold wrapped text: menus, confirms, text areas */
+  --r-sm: 9px;          /* tiles and swatches inside a card: 14 − 5 */
+  --r-pill: 999px;      /* buttons, single-line fields, chips and segments */
 
   --hairline: 1px;
 
   /* ─── Motion ──────────────────────────────────────────────────────────── */
 
-  /* Measured, never bouncy. Copper's panel arrives and leaves without ceremony;
-     nothing here overshoots, and nothing runs long enough to be waited on. */
-  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Transitions stay quick and settled; --ease-spring is a gentle spring
+     (a ~4% overshoot) kept for small things answering a press or arriving —
+     a chip's fill, a switch's knob, a card lifting. Nothing loops but the
+     live recording dot. */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --ease-linear: linear;
+  --ease-spring: linear(0, 0.012, 0.048 3.3%, 0.192 7.3%, 0.711 16.5%, 0.918 21.5%,
+      1.008 26%, 1.04 30.6%, 1.043 34.1%, 1.03 39.6%, 1.006 49.5%, 0.997 61%, 1);
 
   --t-instant: 90ms;
-  --t-fast: 130ms;
-  --t-base: 180ms;
-  --t-slow: 260ms;
+  --t-fast: 140ms;
+  --t-base: 200ms;
+  --t-slow: 320ms;
 
-  /* The one breathing rhythm for a "live" indicator — the shelf's dictation
-     dot and the overlay pill's. It is deliberately not one of the transition
-     durations: a pulse repeats, so it is gated off under reduced motion
-     rather than zeroed (a 0s infinite animation never settles). */
+  /* The one breathing rhythm for a "live" indicator. Gated off under reduced
+     motion rather than zeroed (a 0s infinite animation never settles). */
   --t-pulse: 1.1s;
+
+  /* Press feedback: controls dip slightly under the pointer and spring back. */
+  --press-scale: 0.96;
 
   /* ─── Layout ──────────────────────────────────────────────────────────── */
 
   --checkbox-size: 18px;
-  /* The design system names a single 32px hit area for every icon control.
-     The build had seven control sizes from 16px to 34px, all as literals.
-     This is the canonical pair. */
   --icon-control: 32px;
   --composer-action-h: 26px;
   --preview-width: 560px;
@@ -107,9 +112,9 @@
      The edge-docked shelf. The window itself is anchored and sized by Rust;
      these are what the cards, the rail and the zones are laid out from, and
      the page size is measured against them at runtime. The band is as deep as
-     one card plus its chrome on a horizontal edge — the arithmetic and the
-     number it comes to are in `SHELF_THICKNESS_H` (src-tauri/src/geometry.rs),
-     which is the constant that has to move with `--shelf-card-h`.
+     one card plus its chrome on a horizontal edge — the arithmetic is in
+     `SHELF_THICKNESS_H` (src-tauri/src/geometry.rs), which has to move with
+     `--shelf-card-h`.
   */
   --shelf-rail-h: 48px;
   --shelf-card-w: 224px;      /* horizontal bands: one card's width */
@@ -130,85 +135,75 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --canvas: #eff0f2;        /* the panel chrome itself */
-  --surface: #ffffff;       /* content cards floating on it */
-  --surface-hover: #ffffff;
-  --surface-2: #f5f5f7;     /* fields: search, composer */
+  /* Tonal roles. The canvas is the window; surfaces float on it; the tonal
+     container (surface-2) is the filled, borderless field and button ground
+     GNOME and Material share. */
+  --canvas: #f3f3f6;
+  --surface: #ffffff;
+  --surface-hover: #fbfbfd;
+  --surface-2: #e9e9ee;
   --surface-3: #ffffff;     /* popovers, sheets, menus */
 
-  --text: #1d1d1f;
-  --text-2: #5f6065;
-  --text-3: #66676d;
+  --text: #1b1b20;
+  --text-2: #55565e;
+  --text-3: #64656d;
   --text-on-accent: #ffffff;
 
-  --border: rgba(0, 0, 0, 0.07);
-  --border-strong: rgba(0, 0, 0, 0.14);
-  --rule: rgba(0, 0, 0, 0.08);   /* the hairline beside a section label */
+  --border: rgba(20, 20, 40, 0.07);
+  --border-strong: rgba(20, 20, 40, 0.14);
+  --rule: rgba(20, 20, 40, 0.08);
 
-  --accent: #2f6fed;
-  --accent-hover: #2560d8;
-  --accent-soft: rgba(47, 111, 237, 0.12);
-  --accent-text: #2059ca;
+  /* Bard blue, from the icon. White on it is 5.2:1; it is the one strong
+     colour in the app, kept for the primary action, selection and focus. */
+  --accent: #2c63e6;
+  --accent-hover: #2253cc;
+  --accent-soft: #e2e9fc;    /* the tonal container: selected chips, rows */
+  --accent-text: #1d4fc4;    /* accent as text; 5.8:1 on soft, 7.1:1 on white */
 
   --danger: #e5484d;
-  --danger-soft: rgba(229, 72, 77, 0.12);
+  --danger-soft: #fde6e7;
   --success: #2c9e5b;
-  /* The amber ink the Draw toolbar offers. One value in both themes, unlike
-     the accent/danger/success pairs: a mid amber is chosen so it reads on a
-     light page and a dark one alike, which is what a drawing ink has to do. */
   --warning: #e8a33d;
 
-  /* Danger and success as *text*. The pair above is tuned for icons and
-     borders, where 3:1 is the bar; as body copy #e5484d measured 3.72:1 on
-     --surface, 3.56 on --surface-2 and 3.17 on --canvas, and #2c9e5b 3.25,
-     3.11 and 2.76 — all below AA. These are the same hues, darkened so every
-     ground the app draws them on clears 4.5:1 — including the danger-soft
-     ground a danger button hovers into:
-       --danger-text  #b4232a  6.21 / 5.94 / 5.28  (surface / surface-2 / canvas)
-       --success-text #14713c  5.78 / 5.52 / 4.91
-     The dark theme keeps the pair above. */
+  /* Danger and success as text: the hues above darkened until every ground
+     they are written on clears 4.5:1, including their own soft grounds. */
   --danger-text: #b4232a;
   --success-text: #14713c;
 
-  /* Placeholder ink. In light it is the same step as --text-3 (measured
-     5.36 / 5.12 on --surface / --surface-2); in dark the field steps up to
-     --text-2, because --text-3 landed at 4.09:1 there. */
   --placeholder: var(--text-3);
-
-  /* The 1px line of the focus ring, apart from --accent because a ring is a
-     graphic that has to hold 3:1 against whatever it lands on — see the dark
-     block. */
   --ring: var(--accent);
 
-  --el-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
-  --el-pop: 0 8px 32px rgba(0, 0, 0, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
-  --el-panel: 0 16px 56px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.1);
+  --el-card: 0 0 0 1px rgba(20, 20, 40, 0.05), 0 1px 2px rgba(20, 20, 40, 0.05),
+    0 2px 6px rgba(20, 20, 40, 0.03);
+  --el-raised: 0 0 0 1px rgba(20, 20, 40, 0.06), 0 2px 4px rgba(20, 20, 40, 0.06),
+    0 8px 20px rgba(20, 20, 40, 0.07);
+  --el-pop: 0 0 0 1px rgba(20, 20, 40, 0.07), 0 6px 16px rgba(20, 20, 40, 0.1),
+    0 18px 44px rgba(20, 20, 40, 0.14);
+  --el-panel: 0 18px 60px rgba(20, 20, 40, 0.22), 0 2px 8px rgba(20, 20, 40, 0.08);
 
-  --scrim: rgba(0, 0, 0, 0.26);
+  --scrim: rgba(12, 12, 20, 0.28);
   --scrollbar: rgba(0, 0, 0, 0.22);
-  --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--ring);
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
 
-  /* ══ Kind tints ══════════════════════════════════════════════════════════
-     The strip across a card's head. Every pair is measured for AA against its
-     own ink, and the kind is always also written and glyphed — the tint is a
-     second signal, never the only one. Light tints are pastel strips; dark
-     tints are deep and desaturated, so a wall of cards stays quiet. */
-  --kind-text: #eceef2;
-  --kind-text-ink: #39414d;
-  --kind-image: #e6f2ea;
-  --kind-image-ink: #1f5340;
-  --kind-link: #e7eefb;
-  --kind-link-ink: #24479a;
-  --kind-color: #f3ebf7;
-  --kind-color-ink: #63347a;
-  --kind-dictation: #fbece6;
-  --kind-dictation-ink: #8a4227;
-  --kind-draw: #faf1df;
-  --kind-draw-ink: #755314;
+  /* ══ Kind tones ══════════════════════════════════════════════════════════
+     Each kind's glyph sits in a small tonal circle of its own colour — the
+     third signal beside the written kind and the glyph, never the only one.
+     Pairs are AA-checked (ink on tone ≥ 6:1). */
+  --kind-text: #ececf1;
+  --kind-text-ink: #3a3f4b;
+  --kind-image: #ddf1e5;
+  --kind-image-ink: #1b5a3d;
+  --kind-link: #e0e8fc;
+  --kind-link-ink: #2148a8;
+  --kind-color: #f1e3f8;
+  --kind-color-ink: #6a2f86;
+  --kind-dictation: #fde5dc;
+  --kind-dictation-ink: #8e3f20;
+  --kind-draw: #fbefd5;
+  --kind-draw-ink: #744e0c;
 
-  /* The quick-paste badge, on the head strip of the first five cards. */
   --keycap-bg: #ffffff;
-  --keycap-ink: #414b59;
+  --keycap-ink: #3d4553;
 }
 
 /* ══ Dark ════════════════════════════════════════════════════════════════ */
@@ -216,84 +211,62 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --canvas: #1c1c1f;
-  --surface: #26262a;
-  --surface-hover: #2e2e33;
-  --surface-2: #2e2e33;
-  --surface-3: #303036;
+  --canvas: #1c1c20;
+  --surface: #2a2a2f;
+  --surface-hover: #303036;
+  --surface-2: #34343a;
+  --surface-3: #2f2f35;
 
-  --text: #f5f5f7;
-  --text-2: #a1a1a2;
-  --text-3: #8c8d94;
+  --text: #f4f4f7;
+  --text-2: #b0b0b8;
+  --text-3: #a1a1aa;
   --text-on-accent: #ffffff;
 
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --rule: rgba(255, 255, 255, 0.1);
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --rule: rgba(255, 255, 255, 0.09);
 
-  /* The design system specifies these values for the dark theme, and they are
-     load-bearing: white on the lightened #5b8def is 3.23:1, so every primary
-     button, the active Settings sidebar item, every selected Draw tool and the
-     menu hover state were below AA in dark — and 2.60:1 on hover, which made a
-     primary button less readable when you hovered it. `--accent-text` below
-     already covers accent-as-text, which is the reason the accent had been
-     lightened in the first place. */
-  --accent: #3f73d8;
-  --accent-hover: #315fb8;
-  --accent-soft: rgba(63, 115, 216, 0.24);
-  --accent-text: #9ab8f7;
+  /* White on #3a6ee0 is 4.7:1, so primary buttons stay AA; accent as text
+     steps up to a light tint. */
+  --accent: #3a6ee0;
+  --accent-hover: #2f5ecb;
+  --accent-soft: #273a63;
+  --accent-text: #a9c3fa;
 
   --danger: #ff6369;
-  --danger-soft: rgba(255, 99, 105, 0.16);
+  --danger-soft: #4a2427;
   --success: #43c07c;
   --warning: #e8a33d;
 
-  /* The pair above is light enough to write with on plain surfaces (#ff6369
-     measures 5.20 / 4.66 / 4.52 and #43c07c 6.51 / 5.83 / 5.66 against
-     --surface / --surface-2 / --surface-3), but danger labels also sit on the
-     danger-soft hover grounds, where #ff6369 drops to 4.14 / 3.74 / 3.64.
-     --danger-text is stepped up so every danger label clears 4.5:1 there too:
-     #ff8f95 measures 5.50 / 4.96 / 4.83 / 6.20 across surface / surface-2 /
-     surface-3 / canvas over the soft ground. */
-  --danger-text: #ff8f95;
+  --danger-text: #ff9a9f;
   --success-text: var(--success);
 
-  /* --text-3 is 4.09:1 on the fields — under AA for copy a person reads
-     before it is replaced by what they type. Placeholders step up to
-     --text-2, measured 5.23 there. */
   --placeholder: var(--text-2);
+  --ring: #6f97f2;
 
-  /* The ring over a popover. --accent (#3f73d8) measured 2.91:1 against
-     --surface-3, where menus and sheets live; #5b8def — the pre-darkening
-     accent — measures 4.06 against --surface-3, 4.18 against --surface-2 and
-     4.67 against --surface, so the ring reads wherever it lands. */
-  --ring: #5b8def;
+  --el-card: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.35);
+  --el-raised: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 14px rgba(0, 0, 0, 0.4);
+  --el-pop: 0 0 0 1px rgba(255, 255, 255, 0.09), 0 10px 32px rgba(0, 0, 0, 0.55);
+  --el-panel: 0 18px 60px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.35);
 
-  --el-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
-  --el-pop: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.07);
-  --el-panel: 0 16px 56px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --scrim: rgba(0, 0, 0, 0.5);
+  --scrollbar: rgba(255, 255, 255, 0.22);
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
 
-  --scrim: rgba(0, 0, 0, 0.45);
-  --scrollbar: rgba(255, 255, 255, 0.2);
-  --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--ring);
+  --kind-text: #383a42;
+  --kind-text-ink: #d6dbe5;
+  --kind-image: #1f3b2e;
+  --kind-image-ink: #a9dcc0;
+  --kind-link: #23345a;
+  --kind-link-ink: #b2cbf7;
+  --kind-color: #3a2843;
+  --kind-color-ink: #dfbcea;
+  --kind-dictation: #43291f;
+  --kind-dictation-ink: #f0bea9;
+  --kind-draw: #40331d;
+  --kind-draw-ink: #ebcf95;
 
-  /* Deep, desaturated kind strips. Ratios are 7.5:1 or better against their
-     inks, and the keycap is a dark chip rather than a white one, which would
-     glare on a dark shelf. */
-  --kind-text: #2b2e36;
-  --kind-text-ink: #cfd6e2;
-  --kind-image: #1f352c;
-  --kind-image-ink: #a6d8bd;
-  --kind-link: #22304a;
-  --kind-link-ink: #a9c5f4;
-  --kind-color: #33263a;
-  --kind-color-ink: #d9b6e4;
-  --kind-dictation: #3a2822;
-  --kind-dictation-ink: #ecb7a2;
-  --kind-draw: #372e1e;
-  --kind-draw-ink: #e6c98e;
-
-  --keycap-bg: rgba(0, 0, 0, 0.35);
+  --keycap-bg: rgba(255, 255, 255, 0.08);
   --keycap-ink: #eef1f7;
 }
 
