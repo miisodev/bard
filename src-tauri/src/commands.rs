@@ -1924,10 +1924,20 @@ pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> 
         db::set_setting(&app, "autostart_enabled", if enabled { "1" } else { "0" });
         return Ok(());
     }
+    let launcher = app.autolaunch();
     if enabled {
-        app.autolaunch().enable().map_err(|e| e.to_string())?;
-    } else {
-        app.autolaunch().disable().map_err(|e| e.to_string())?;
+        launcher.enable().map_err(|e| e.to_string())?;
+    } else if launcher.is_enabled().unwrap_or(true) {
+        // Turning off a login item that was never registered is already the
+        // state asked for. On Windows, removing the absent Run entry fails
+        // with "cannot find the file specified", which left a fresh install
+        // unable to finish setup with Start at login left off. Only a removal
+        // that leaves the entry in place is a failure.
+        if let Err(error) = launcher.disable() {
+            if launcher.is_enabled().unwrap_or(true) {
+                return Err(error.to_string());
+            }
+        }
     }
     db::set_setting(&app, "autostart_enabled", if enabled { "1" } else { "0" });
     Ok(())
