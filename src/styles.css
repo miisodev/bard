@@ -1526,13 +1526,14 @@ body {
 }
 
 .setting-row .label {
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   color: var(--text);
 }
 
 .setting-row .sub {
-  font-size: 11px;
-  color: var(--text-3);
+  margin-top: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
 }
 
 /* Buttons are pills, as GNOME and Material both draw them: a tonal ground
@@ -2052,13 +2053,22 @@ body {
   text-align: center;
 }
 
-.onboarding p {
+/* The introduction only: a card inside the step keeps its own alignment. */
+.onb-copy p {
   font-size: var(--fs-base);
   line-height: var(--lh-loose);
   color: var(--on-canvas-2);
   text-align: center;
   max-width: 440px;
   margin: 0;
+}
+
+/* A setting asked during setup sits in a boxed row, as it does in Settings. */
+.onb-step > .setting-row {
+  padding: var(--sp-6) var(--sp-7);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--el-card);
 }
 
 /* What Bard does, as Apple's welcome sheets list it: a glyph in its kind's
@@ -3084,7 +3094,7 @@ mark {
 }
 
 .license-card.compact {
-  padding: var(--sp-5);
+  padding: var(--sp-6) var(--sp-7);
 }
 
 .license-card-head,
