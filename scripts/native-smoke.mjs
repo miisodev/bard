@@ -64,6 +64,13 @@ async function screenshot(name) {
   const png = await command("/screenshot");
   await writeFile(`${output}/${name}.png`, Buffer.from(png, "base64"));
 }
+async function waitForSelector(selector) {
+  const deadline = Date.now() + 15_000;
+  while (!(await script("return Boolean(document.querySelector(arguments[0]))", [selector]))) {
+    if (Date.now() > deadline) throw new Error(`The native window did not render ${selector}`);
+    await new Promise((done) => setTimeout(done, 100));
+  }
+}
 try {
   if (app) {
     app.on("exit", (code, signal) => { evidence.appExit = { code, signal }; });
@@ -116,7 +123,7 @@ try {
   await screenshot("shelf-dark");
   await invoke("open_settings");
   await selectWindow("settings");
-  assert(await script("return Boolean(document.querySelector('[role=tablist]'))"), "settings navigation renders");
+  await waitForSelector('[role="tablist"]');
   await screenshot("settings-dark");
   await invoke("set_theme", { theme: "light" });
   assert.equal((await invoke("get_state")).theme, "light");
@@ -125,7 +132,7 @@ try {
   await selectWindow("main");
   await invoke("open_draw");
   await selectWindow("draw");
-  assert(await script("return Boolean(document.querySelector('canvas,svg'))"), "drawing surface renders");
+  await waitForSelector("canvas");
   await screenshot("draw");
   check("native lazy drawing window renders");
 } catch (error) {
