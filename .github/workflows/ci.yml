@@ -10,7 +10,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: bard-ci-${{ github.ref }}
+  group: bard-ci-${{ github.ref }}-r2
   cancel-in-progress: true
 
 jobs:
@@ -80,10 +80,13 @@ jobs:
 
       # Without a cache every run compiled the whole dependency graph from cold
       # several times over and ran into the timeout with every gate green.
+      # Restore only. Saving this target directory on the Windows runner hangs
+      # in the post-job step indefinitely, holding the job (and the PR's
+      # concurrency group) long after every gate has finished.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          cache-on-failure: true
+          save-if: false
 
       - name: Add native build tools to PATH
         shell: pwsh
