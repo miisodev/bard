@@ -353,8 +353,12 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn start_trial(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
-    crate::license::start_trial(&app).map_err(|error| error.to_string())
+pub async fn start_trial(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::license::start_trial(&app).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|_| "Bard could not finish setting up its trial. Try again.".to_string())?
 }
 
 #[tauri::command]
@@ -1064,6 +1068,44 @@ fn companion(app: &AppHandle, label: &str) -> Option<tauri::WebviewWindow> {
     Some(built)
 }
 
+/// WebView2 creation must not run inside a synchronous IPC/menu callback.
+/// Its initialization needs that same UI event loop and otherwise deadlocks.
+/// Serialize first creation on a worker, then return display/focus operations
+/// to the UI thread. Every entry point (button, tray and gesture) uses this.
+fn with_companion(
+    app: &AppHandle,
+    label: &str,
+    action: impl FnOnce(&AppHandle, tauri::WebviewWindow) + Send + 'static,
+) {
+    let label = match label {
+        "draw" => "draw",
+        "settings" => "settings",
+        _ => return,
+    };
+    let handle = app.clone();
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = app.run_on_main_thread(move || action(&handle, window));
+        return;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        static CREATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = CREATION.lock().unwrap_or_else(|error| error.into_inner());
+        let window = companion(&handle, label);
+        drop(guard);
+        let Some(window) = window else {
+            crate::crash::record_event("window:companion-create-failed");
+            let _ = handle.emit_to(
+                "main",
+                "capture-failed",
+                "Bard could not open that window. Try again.",
+            );
+            return;
+        };
+        let task_handle = handle.clone();
+        let _ = handle.run_on_main_thread(move || action(&task_handle, window));
+    });
+}
+
 /// Whether the drawing window has finished loading its bundle in this process.
 ///
 /// The seed below arrives as an event, and an event delivered before the page's
@@ -1119,9 +1161,6 @@ fn flush_draw_seed(app: &AppHandle) {
 /// Both are ordinary windows now: movable, resizable, on the taskbar, and
 /// independent of the panel and of each other.
 pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
-    let Some(win) = companion(app, label) else {
-        return;
-    };
     if label == "draw" {
         // Draw's delivery target, remembered as it opens. A panel button runs
         // this with the panel in front, so the app the panel was summoned over
@@ -1130,6 +1169,10 @@ pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
         // again here.
         remember_draw_target();
     }
+    with_companion(app, label, |app, win| show_secondary_window(app, &win));
+}
+
+fn show_secondary_window(app: &AppHandle, win: &tauri::WebviewWindow) {
     if win.is_fullscreen().unwrap_or(false) {
         let _ = win.set_fullscreen(false);
     }
@@ -1137,7 +1180,7 @@ pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
     if !win.is_visible().unwrap_or(false) {
         crate::geometry::restore(
             app,
-            &win,
+            win,
             crate::panel::COMPANION_WIDTH,
             crate::panel::COMPANION_HEIGHT,
         );
@@ -1193,16 +1236,18 @@ fn hide_panel_for_secondary(app: &AppHandle) {
 }
 
 fn toggle_secondary_alone(app: &AppHandle, label: &str) {
-    let Some(win) = companion(app, label) else {
-        return;
-    };
-    if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
-        crate::panel::hide_companion(app, &win);
-        return;
+    if label == "draw" {
+        remember_draw_target();
     }
-    // A gesture opens that one window; the panel steps aside for it.
-    hide_panel_for_secondary(app);
-    show_secondary(app, label, false);
+    with_companion(app, label, |app, win| {
+        if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
+            crate::panel::hide_companion(app, &win);
+            return;
+        }
+        // A gesture opens that one window; the panel steps aside for it.
+        hide_panel_for_secondary(app);
+        show_secondary_window(app, &win);
+    });
 }
 
 /// Left Alt × 2 opens Draw as a single window. It runs from the raw-input

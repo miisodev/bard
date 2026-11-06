@@ -247,7 +247,10 @@ impl fmt::Display for LicenseError {
         match self {
             Self::InvalidKey => f.write_str("Enter a valid Bard licence key."),
             Self::CredentialStore => {
-                f.write_str("Windows Credential Manager could not store the licence key.")
+                #[cfg(target_os = "linux")]
+                { f.write_str("Bard could not save its licence information in the desktop keyring. Unlock the keyring, then try again.") }
+                #[cfg(not(target_os = "linux"))]
+                { f.write_str("Windows Credential Manager could not save Bard's licence information. Try again.") }
             }
             Self::DamagedInstallation => f.write_str(
                 "Bard cannot read this computer's installation identity. Contact support before activating again.",
@@ -620,58 +623,133 @@ fn trial_mac(secret: &str, started: i64) -> String {
 /// The trial clock is backed by Credential Manager as well as SQLite. Deleting
 /// the database therefore cannot silently grant another 14 days, while a
 /// failed/altered state fails closed instead of manufacturing a fresh trial.
-fn trial_window(app: &tauri::AppHandle) -> Option<(i64, i64)> {
-    let now = now_seconds();
-    let secret = read_credential_bounded(TRIAL_SECRET_USERNAME).value();
-    let state = read_credential_bounded(TRIAL_STATE_USERNAME).value();
-    let (secret, started) = match (secret, state) {
-        (None, None) => {
-            let secret = uuid::Uuid::new_v4().to_string();
-            write_credential_bounded(TRIAL_SECRET_USERNAME, secret.clone()).ok()?;
-            let started = crate::db::get_setting(app, TRIAL_SETTING)
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(now);
-            let state = format!("v1|{}|{}", started, trial_mac(&secret, started));
-            write_credential_bounded(TRIAL_STATE_USERNAME, state).ok()?;
+#[derive(Debug, PartialEq)]
+enum TrialSetup {
+    Existing(i64),
+    Write {
+        secret: String,
+        started: i64,
+        new_secret: bool,
+    },
+}
+
+fn parsed_trial_start(secret: &str, raw: &str) -> Option<i64> {
+    let mut parts = raw.split('|');
+    let version = parts.next()?;
+    let started = parts.next()?.parse::<i64>().ok()?;
+    let mac = parts.next()?;
+    (version == "v1" && parts.next().is_none() && mac == trial_mac(secret, started))
+        .then_some(started)
+}
+
+fn trial_setup(
+    secret: CredentialRead,
+    state: CredentialRead,
+    saved_start: Option<i64>,
+    now: i64,
+) -> Option<TrialSetup> {
+    use CredentialRead::{Absent, Value};
+    let started = saved_start.unwrap_or(now).min(now);
+    match (secret, state) {
+        (Value(secret), Value(raw)) => parsed_trial_start(&secret, &raw).map(TrialSetup::Existing),
+        // A first write may finish after its caller's deadline. Complete the
+        // interrupted pair with its existing secret and original start date.
+        // A present but malformed state is never replaced with a fresh trial.
+        (Value(secret), Absent) => Some(TrialSetup::Write {
+            secret,
+            started: saved_start?.min(now),
+            new_secret: false,
+        }),
+        (Absent, Absent) => Some(TrialSetup::Write {
+            secret: uuid::Uuid::new_v4().to_string(),
+            started,
+            new_secret: true,
+        }),
+        // A vault failure is not evidence that either entry is absent.
+        _ => None,
+    }
+}
+
+fn read_setup_credential(username: &str, deadline: std::time::Instant) -> CredentialRead {
+    match crate::credential::read(
+        username,
+        deadline.saturating_duration_since(std::time::Instant::now()),
+    ) {
+        crate::credential::Read::Value(value) => CredentialRead::Value(value),
+        crate::credential::Read::Absent => CredentialRead::Absent,
+        crate::credential::Read::Unavailable => CredentialRead::Unavailable,
+    }
+}
+
+fn trial_window(app: &tauri::AppHandle, deadline: std::time::Instant) -> Option<(i64, i64)> {
+    let secret = read_setup_credential(TRIAL_SECRET_USERNAME, deadline);
+    let state = read_setup_credential(TRIAL_STATE_USERNAME, deadline);
+    let mut saved_start =
+        crate::db::get_setting(app, TRIAL_SETTING).and_then(|value| value.parse::<i64>().ok());
+    if saved_start.is_none()
+        && matches!(&secret, CredentialRead::Value(_))
+        && matches!(&state, CredentialRead::Absent)
+    {
+        saved_start = crate::credential::created(
+            TRIAL_SECRET_USERNAME,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+        );
+    }
+    let setup = trial_setup(secret, state, saved_start, now_seconds())?;
+    let started = match setup {
+        TrialSetup::Existing(started) => started,
+        TrialSetup::Write {
+            secret,
+            started,
+            new_secret,
+        } => {
+            // Persist the original attempt before any vault write. A retry
+            // after an interrupted write must never restart its fourteen days.
             crate::db::set_setting_checked(app, TRIAL_SETTING, &started.to_string()).ok()?;
-            (secret, started)
-        }
-        (Some(secret), Some(raw)) => {
-            let mut parts = raw.split('|');
-            let version = parts.next()?;
-            let started = parts.next()?.parse::<i64>().ok()?;
-            let mac = parts.next()?;
-            if version != "v1" || parts.next().is_some() || mac != trial_mac(&secret, started) {
+            let write = |username, value| {
+                matches!(
+                    crate::credential::write(
+                        username,
+                        value,
+                        deadline.saturating_duration_since(std::time::Instant::now())
+                    ),
+                    crate::credential::Done::Ok
+                )
+            };
+            if new_secret && !write(TRIAL_SECRET_USERNAME, secret.clone()) {
                 return None;
             }
-            (secret, started)
+            let state = format!("v1|{}|{}", started, trial_mac(&secret, started));
+            if !write(TRIAL_STATE_USERNAME, state) {
+                return None;
+            }
+            started
         }
-        _ => return None,
     };
-    let _ = secret;
     Some((started, started.saturating_add(TRIAL_DAYS * 24 * 60 * 60)))
 }
 
 fn existing_trial_window(_app: &tauri::AppHandle) -> Option<(i64, i64)> {
     let secret = read_credential_bounded(TRIAL_SECRET_USERNAME).value()?;
     let raw = read_credential_bounded(TRIAL_STATE_USERNAME).value()?;
-    let mut parts = raw.split('|');
-    let version = parts.next()?;
-    let started = parts.next()?.parse::<i64>().ok()?;
-    let mac = parts.next()?;
-    if version != "v1" || parts.next().is_some() || mac != trial_mac(&secret, started) {
-        return None;
-    }
+    let started = parsed_trial_start(&secret, &raw)?;
     Some((started, started.saturating_add(TRIAL_DAYS * 24 * 60 * 60)))
 }
 
 pub fn start_trial(app: &tauri::AppHandle) -> Result<LicenseStatus, LicenseError> {
-    if read_key_bounded().is_some() {
-        return Err(LicenseError::Service(
-            "A saved licence already controls Bard.".into(),
-        ));
+    // Interactive setup can unlock/initialize a desktop vault. Keep the 400ms
+    // background budget, but give this entire user-requested operation 30s.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    match read_setup_credential(LICENSE_USERNAME, deadline) {
+        CredentialRead::Value(_) => {
+            return Err(LicenseError::Service(
+                "A saved licence already controls Bard.".into(),
+            ))
+        }
+        CredentialRead::Unavailable => return Err(LicenseError::CredentialStore),
+        CredentialRead::Absent => {}
     }
-    trial_window(app).ok_or(LicenseError::CredentialStore)?;
+    trial_window(app, deadline).ok_or(LicenseError::CredentialStore)?;
     invalidate_status();
     Ok(status(app))
 }
@@ -1386,6 +1464,118 @@ pub fn clear(app: &tauri::AppHandle) -> Result<LicenseStatus, LicenseError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn interrupted_trial_keeps_its_secret_and_original_start() {
+        use super::{trial_setup, CredentialRead, TrialSetup};
+        assert_eq!(
+            trial_setup(
+                CredentialRead::Value("original-secret".into()),
+                CredentialRead::Absent,
+                Some(1000),
+                2000
+            ),
+            Some(TrialSetup::Write {
+                secret: "original-secret".into(),
+                started: 1000,
+                new_secret: false,
+            })
+        );
+    }
+
+    #[test]
+    fn unavailable_trial_entries_never_become_a_new_trial() {
+        use super::{trial_setup, CredentialRead};
+        assert!(trial_setup(
+            CredentialRead::Unavailable,
+            CredentialRead::Absent,
+            None,
+            2000
+        )
+        .is_none());
+        assert!(trial_setup(
+            CredentialRead::Absent,
+            CredentialRead::Unavailable,
+            None,
+            2000
+        )
+        .is_none());
+        assert!(trial_setup(
+            CredentialRead::Value("secret".into()),
+            CredentialRead::Unavailable,
+            None,
+            2000
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn completed_and_invalid_trial_records_are_not_reinitialized() {
+        use super::{trial_mac, trial_setup, CredentialRead, TrialSetup};
+        let raw = format!("v1|1000|{}", trial_mac("secret", 1000));
+        assert_eq!(
+            trial_setup(
+                CredentialRead::Value("secret".into()),
+                CredentialRead::Value(raw),
+                None,
+                2000
+            ),
+            Some(TrialSetup::Existing(1000))
+        );
+        assert!(trial_setup(
+            CredentialRead::Value("secret".into()),
+            CredentialRead::Value("v1|1000|wrong-mac".into()),
+            None,
+            2000
+        )
+        .is_none());
+        assert!(trial_setup(
+            CredentialRead::Absent,
+            CredentialRead::Value("orphaned-state".into()),
+            None,
+            2000
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn a_retry_before_the_first_vault_write_keeps_the_original_start() {
+        use super::{trial_setup, CredentialRead, TrialSetup};
+        let setup = trial_setup(
+            CredentialRead::Absent,
+            CredentialRead::Absent,
+            Some(1000),
+            2000,
+        )
+        .unwrap();
+        assert!(matches!(
+            setup,
+            TrialSetup::Write {
+                started: 1000,
+                new_secret: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_legacy_partial_trial_needs_its_original_timestamp() {
+        assert!(super::trial_setup(
+            super::CredentialRead::Value("legacy-secret".into()),
+            super::CredentialRead::Absent,
+            None,
+            2000
+        )
+        .is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_credential_error_names_the_desktop_keyring() {
+        let message = super::LicenseError::CredentialStore.to_string();
+        assert!(message.contains("desktop keyring"));
+        assert!(!message.contains("Windows"));
+    }
+
     use super::*;
 
     #[test]

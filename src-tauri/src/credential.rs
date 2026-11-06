@@ -53,6 +53,7 @@ enum Request {
     Read(String, Sender<Read>, Caller),
     Write(String, String, Sender<Done>, Caller),
     Delete(String, Sender<Done>, Caller),
+    Created(String, Sender<Option<i64>>, Caller),
 }
 
 /// Whether the caller is still waiting.
@@ -82,7 +83,8 @@ impl Request {
         match self {
             Self::Read(_, _, caller)
             | Self::Write(_, _, _, caller)
-            | Self::Delete(_, _, caller) => caller.gone(),
+            | Self::Delete(_, _, caller)
+            | Self::Created(_, _, caller) => caller.gone(),
         }
     }
 
@@ -95,6 +97,9 @@ impl Request {
             }
             Self::Write(_, _, reply, _) | Self::Delete(_, reply, _) => {
                 let _ = reply.send(Done::Unavailable);
+            }
+            Self::Created(_, reply, _) => {
+                let _ = reply.send(None);
             }
         }
     }
@@ -147,6 +152,9 @@ fn worker() -> &'static Sender<Request> {
 
 fn serve(request: &Request) {
     match request {
+        Request::Created(username, reply, _) => {
+            let _ = reply.send(creation_time(username));
+        }
         Request::Read(username, reply, _) => {
             let outcome = match keyring::Entry::new(SERVICE, username) {
                 Ok(entry) => match entry.get_password() {
@@ -182,6 +190,39 @@ fn serve(request: &Request) {
             let _ = reply.send(outcome);
         }
     }
+}
+
+/// OS-maintained metadata only, scoped to one Bard entry. A missing/ambiguous
+/// date is never replaced by "now": doing so would extend an old trial.
+#[cfg(target_os = "linux")]
+fn creation_time(username: &str) -> Option<i64> {
+    use secret_service::{blocking::SecretService, EncryptionType};
+    let service = SecretService::connect(EncryptionType::Plain).ok()?;
+    let items = service
+        .search_items(std::collections::HashMap::from([
+            ("service", SERVICE),
+            ("username", username),
+        ]))
+        .ok()?;
+    let items: Vec<_> = items.unlocked.into_iter().chain(items.locked).collect();
+    if items.len() != 1 {
+        return None;
+    }
+    i64::try_from(items[0].get_created().ok()?).ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn creation_time(_username: &str) -> Option<i64> {
+    None
+}
+
+pub fn created(username: &str, timeout: Duration) -> Option<i64> {
+    let username = username.to_owned();
+    ask(
+        move |reply, caller| Request::Created(username, reply, caller),
+        timeout,
+    )
+    .flatten()
 }
 
 /// Send one request and wait for its reply, up to `timeout`.

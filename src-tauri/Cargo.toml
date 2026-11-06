@@ -80,6 +80,9 @@ ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "
 keyring = { version = "4.2", default-features = false, features = ["v1", "zbus-secret-service-keyring-store"] }
 enigo = { version = "0.2", default-features = false, features = ["x11rb"] }
 x11rb = "=0.13.2"
+# Metadata-only creation time recovers an interrupted legacy Linux trial
+# without granting a fresh trial or reading unrelated keyring items.
+secret-service = { version = "=5.2.0", default-features = false, features = ["rt-tokio-crypto-rust"] }
 
 [dev-dependencies]
 minisign-verify = "0.2.5"

@@ -170,7 +170,115 @@ mod tests {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod native {
+    use x11rb::{
+        connection::Connection,
+        protocol::xproto::{
+            AtomEnum, ClientMessageData, ClientMessageEvent, ConfigureWindowAux, ConnectionExt,
+            EventMask, InputFocus, StackMode,
+        },
+        rust_connection::RustConnection,
+        CURRENT_TIME,
+    };
+
+    fn connection() -> Option<(RustConnection, usize)> {
+        // Xwayland cannot identify or activate a native Wayland window.
+        if crate::desktop::is_wayland() {
+            return None;
+        }
+        x11rb::connect(None).ok()
+    }
+
+    fn property(
+        connection: &RustConnection,
+        window: u32,
+        name: &[u8],
+        kind: AtomEnum,
+    ) -> Option<u32> {
+        let atom = connection.intern_atom(false, name).ok()?.reply().ok()?.atom;
+        let reply = connection
+            .get_property(false, window, atom, kind, 0, 1)
+            .ok()?
+            .reply()
+            .ok()?;
+        let value = reply.value32()?.next();
+        value
+    }
+
+    pub fn current() -> isize {
+        let Some((connection, screen)) = connection() else {
+            return 0;
+        };
+        property(
+            &connection,
+            connection.setup().roots[screen].root,
+            b"_NET_ACTIVE_WINDOW",
+            AtomEnum::WINDOW,
+        )
+        .unwrap_or(0) as isize
+    }
+
+    pub fn focus(hwnd: isize) {
+        let Ok(window) = u32::try_from(hwnd) else {
+            return;
+        };
+        let Some((connection, screen)) = connection() else {
+            return;
+        };
+        let root = connection.setup().roots[screen].root;
+        if let Ok(cookie) = connection.intern_atom(false, b"_NET_ACTIVE_WINDOW") {
+            if let Ok(atom) = cookie.reply() {
+                let event = ClientMessageEvent::new(
+                    32,
+                    window,
+                    atom.atom,
+                    ClientMessageData::from([1, CURRENT_TIME, 0, 0, 0]),
+                );
+                if let Ok(cookie) = connection.send_event(
+                    false,
+                    root,
+                    EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                    event,
+                ) {
+                    let _ = cookie.check();
+                }
+            }
+        }
+        // Also works without an EWMH window manager. Checked requests make a
+        // target closed during handoff a normal failure, never an Xlib abort.
+        if let Ok(cookie) = connection.configure_window(
+            window,
+            &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+        ) {
+            let _ = cookie.check();
+        }
+        if let Ok(cookie) = connection.set_input_focus(InputFocus::PARENT, window, CURRENT_TIME) {
+            let _ = cookie.check();
+        }
+        let _ = connection.flush();
+    }
+
+    pub fn is_ours(hwnd: isize) -> bool {
+        let Ok(window) = u32::try_from(hwnd) else {
+            return false;
+        };
+        if window == 0 {
+            return false;
+        }
+        let Some((connection, _)) = connection() else {
+            return false;
+        };
+        property(&connection, window, b"_NET_WM_PID", AtomEnum::CARDINAL)
+            == Some(std::process::id())
+    }
+
+    pub fn foreground_is_ours() -> bool {
+        is_ours(current())
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod native {
     pub fn current() -> isize {
         0

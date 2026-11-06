@@ -1,0 +1,5 @@
+# Synthetic receipt payloads and the public signature fixture in unit tests.
+# Exact historical findings only; new occurrences must still be reviewed.
+f0084e5372578acc3f1468a205238aeee519c365:src-tauri/src/license.rs:generic-api-key:876
+f0084e5372578acc3f1468a205238aeee519c365:src-tauri/src/license.rs:generic-api-key:882
+f0084e5372578acc3f1468a205238aeee519c365:src-tauri/src/license.rs:generic-api-key:894
