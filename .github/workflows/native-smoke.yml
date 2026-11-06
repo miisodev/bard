@@ -75,6 +75,11 @@ jobs:
           if (!$installer) { throw 'Missing installer' }
           $process = Start-Process $installer.FullName -ArgumentList '/S' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exit $($process.ExitCode)" }
+          New-Item -ItemType Directory -Force src-tauri/target/release, native-review | Out-Null
+          Copy-Item candidate/bard.exe src-tauri/target/release/bard.exe
+          ./scripts/build-msix.ps1 -Store
+          Copy-Item src-tauri/target/release/bundle/msix/*.msix native-review/
+          choco install gsudo --no-progress -y
       - name: Test installed Linux app
         if: runner.os == 'Linux'
         run: |
@@ -85,7 +90,12 @@ jobs:
         run: |
           $app = Join-Path $env:LOCALAPPDATA 'Bard/bard.exe'
           if (!(Test-Path $app)) { throw "Installed executable missing: $app" }
-          node scripts/native-smoke.mjs $app
+          # WebView2 >=150 deliberately ignores debugging environment options
+          # in elevated processes. Test as the ordinary user Bard is built for.
+          # https://github.com/tauri-apps/wry/issues/1782
+          icacls "$env:GITHUB_WORKSPACE" /grant "${env:USERNAME}:(OI)(CI)M"
+          & "$env:ProgramFiles/gsudo/Current/gsudo.exe" --integrity Medium node scripts/native-smoke.mjs $app
+          if ($LASTEXITCODE -ne 0) { throw "Native smoke exit $LASTEXITCODE" }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
