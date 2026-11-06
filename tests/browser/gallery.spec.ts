@@ -17,6 +17,8 @@ async function staged(page: Page, shot: string) {
 
 // The launch gallery: 16:9 at 1920 × 1080.
 test.describe("launch gallery", () => {
+  // The hero frame composes three live windows; give the set room to paint.
+  test.describe.configure({ timeout: 90_000 });
   test.use({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1.2 });
   for (const [index, shot] of shots.entries()) {
     test(`renders ${shot} from the product windows`, async ({ page }, info) => {
@@ -30,6 +32,7 @@ test.describe("launch gallery", () => {
 
 // The Microsoft Store set: the same frames at 3200 × 1800.
 test.describe("store screenshots", () => {
+  test.describe.configure({ timeout: 90_000 });
   test.use({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 2 });
   for (const [index, shot] of shots.entries()) {
     test(`renders ${shot} for the Store`, async ({ page }, info) => {

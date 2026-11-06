@@ -75,6 +75,10 @@ keyring = { version = "4.2", default-features = false, features = ["v1", "window
 enigo = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Bard's own StatusNotifierItem tray: libappindicator never reports a left
+# click, so the shelf could not be opened from the icon. Uses the zbus stack
+# the portals already depend on.
+ksni = { version = "=0.3.6", default-features = false, features = ["tokio"] }
 ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast", "background"] }
 keyring = { version = "4.2", default-features = false, features = ["v1", "zbus-secret-service-keyring-store"] }
 enigo = { version = "0.2", default-features = false, features = ["x11rb"] }

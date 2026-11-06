@@ -47,6 +47,7 @@ pub fn prefer_xwayland_windows() {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn should_prefer_xwayland(
     session: Option<&str>,
     wayland_display: Option<&str>,
