@@ -10,3 +10,5 @@ test-results/
 playwright-report/
 # Production-readiness audit output (2026-10-18)
 production-readiness/
+
+tools/asr-bench/target/

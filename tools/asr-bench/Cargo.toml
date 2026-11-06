@@ -1,0 +1,16 @@
+[package]
+name = "bard-asr-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+transcribe-cpp = "=0.2.3"
+serde_json = "1"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = true

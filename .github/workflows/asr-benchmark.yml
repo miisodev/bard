@@ -1,0 +1,50 @@
+name: ASR benchmark
+
+on:
+  pull_request:
+    paths: [tools/asr-bench/**, .github/workflows/asr-benchmark.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+      - name: Build the isolated benchmark
+        run: cargo build --release --locked --manifest-path tools/asr-bench/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asr-benchmark-tool
+          path: tools/asr-bench/target/release/bard-asr-bench
+          retention-days: 3
+      - name: Fetch the pinned fast model and synthesize nonpersonal speech
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib
+          row=next(m for m in json.loads(pathlib.Path('src-tauri/src/catalog/catalog.json').read_text())['models'] if m.get('role')=='multilingualFast')
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+              f.write('MODEL_URL='+row['file']['url']+'\nMODEL_SHA256='+row['file']['sha256']+'\n')
+          PY
+          ffmpeg -v error -f lavfi -i "flite=text='Bard keeps useful words close by. Speak a thought and keep working. This short recording checks local dictation on the computer.'" -af 'apad,atrim=0:10' -ar 16000 -ac 1 -f f32le speech.f32le
+      - name: Measure the engine
+        run: |
+          curl -fL --retry 2 --max-time 300 "$MODEL_URL" -o fast.gguf
+          printf '%s  fast.gguf\n' "$MODEL_SHA256" | sha256sum -c -
+          mkdir benchmark-review
+          lscpu > benchmark-review/cpu.txt
+          tools/asr-bench/target/release/bard-asr-bench fast.gguf speech.f32le 4 > benchmark-review/result.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: asr-benchmark-results
+          path: benchmark-review/
+          retention-days: 3
