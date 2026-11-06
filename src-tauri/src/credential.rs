@@ -208,7 +208,9 @@ fn creation_time(username: &str) -> Option<i64> {
     if items.len() != 1 {
         return None;
     }
-    i64::try_from(items[0].get_created().ok()?).ok()
+    i64::try_from(items[0].get_created().ok()?)
+        .ok()
+        .filter(|created| *created > 0)
 }
 
 #[cfg(not(target_os = "linux"))]

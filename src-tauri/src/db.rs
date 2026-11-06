@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
@@ -695,14 +695,47 @@ pub fn get_setting(app: &AppHandle, key: &str) -> Option<String> {
     if !is_ready(app) {
         return None;
     }
-    with_conn(app, |c| {
-        c.query_row(
+    get_setting_checked(app, key).ok().flatten()
+}
+
+fn read_setting(connection: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
+    connection
+        .query_row(
             "SELECT value FROM settings WHERE key = ?1",
             params![key],
-            |r| r.get(0),
+            |row| row.get(0),
         )
-        .ok()
-    })
+        .optional()
+}
+
+#[cfg(test)]
+#[test]
+fn checked_setting_reads_distinguish_absence_from_a_failed_query() {
+    let connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+        .unwrap();
+    assert_eq!(read_setting(&connection, "trial-start").unwrap(), None);
+    connection
+        .execute(
+            "INSERT INTO settings VALUES (?1, ?2)",
+            params!["trial-start", "1000"],
+        )
+        .unwrap();
+    assert_eq!(
+        read_setting(&connection, "trial-start").unwrap().as_deref(),
+        Some("1000")
+    );
+    connection.execute_batch("DROP TABLE settings;").unwrap();
+    assert!(read_setting(&connection, "trial-start").is_err());
+}
+
+pub fn get_setting_checked(app: &AppHandle, key: &str) -> Result<Option<String>, String> {
+    if !is_ready(app) {
+        return Err("Bard's settings are not available yet.".into());
+    }
+    with_conn(app, |connection| read_setting(connection, key))
+        .map_err(|_| "Bard could not read its saved settings.".to_string())
 }
 
 pub fn set_setting(app: &AppHandle, key: &str, value: &str) {

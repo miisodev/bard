@@ -230,6 +230,9 @@ struct Receipt {
 pub enum LicenseError {
     InvalidKey,
     CredentialStore,
+    InvalidTrialState,
+    TrialStorage,
+    TrialEnded,
     /// The stored installation identity is present but is not the 32-hex form
     /// the broker accepts. It is kept and reported, never replaced: a fresh ID
     /// would bind the next activation to a second identity while the original
@@ -252,6 +255,9 @@ impl fmt::Display for LicenseError {
                 #[cfg(not(target_os = "linux"))]
                 { f.write_str("Windows Credential Manager could not save Bard's licence information. Try again.") }
             }
+            Self::InvalidTrialState => f.write_str("Bard could not verify its saved trial. Contact support; reinstalling will not reset it."),
+            Self::TrialStorage => f.write_str("Bard could not save its trial settings. Check that the drive has free space, then try again."),
+            Self::TrialEnded => f.write_str("Bard's trial has ended. Activate a licence to continue."),
             Self::DamagedInstallation => f.write_str(
                 "Bard cannot read this computer's installation identity. Contact support before activating again.",
             ),
@@ -681,11 +687,25 @@ fn read_setup_credential(username: &str, deadline: std::time::Instant) -> Creden
     }
 }
 
-fn trial_window(app: &tauri::AppHandle, deadline: std::time::Instant) -> Option<(i64, i64)> {
+fn trial_window(
+    app: &tauri::AppHandle,
+    deadline: std::time::Instant,
+) -> Result<(i64, i64), LicenseError> {
     let secret = read_setup_credential(TRIAL_SECRET_USERNAME, deadline);
     let state = read_setup_credential(TRIAL_STATE_USERNAME, deadline);
-    let mut saved_start =
-        crate::db::get_setting(app, TRIAL_SETTING).and_then(|value| value.parse::<i64>().ok());
+    if matches!(&secret, CredentialRead::Unavailable)
+        || matches!(&state, CredentialRead::Unavailable)
+    {
+        return Err(LicenseError::CredentialStore);
+    }
+    let mut saved_start = crate::db::get_setting_checked(app, TRIAL_SETTING)
+        .map_err(|_| LicenseError::TrialStorage)?
+        .map(|value| value.parse::<i64>())
+        .transpose()
+        .map_err(|_| LicenseError::InvalidTrialState)?;
+    if saved_start.is_some_and(|value| value <= 0) {
+        return Err(LicenseError::InvalidTrialState);
+    }
     if saved_start.is_none()
         && matches!(&secret, CredentialRead::Value(_))
         && matches!(&state, CredentialRead::Absent)
@@ -695,7 +715,8 @@ fn trial_window(app: &tauri::AppHandle, deadline: std::time::Instant) -> Option<
             deadline.saturating_duration_since(std::time::Instant::now()),
         );
     }
-    let setup = trial_setup(secret, state, saved_start, now_seconds())?;
+    let setup = trial_setup(secret, state, saved_start, now_seconds())
+        .ok_or(LicenseError::InvalidTrialState)?;
     let started = match setup {
         TrialSetup::Existing(started) => started,
         TrialSetup::Write {
@@ -705,7 +726,8 @@ fn trial_window(app: &tauri::AppHandle, deadline: std::time::Instant) -> Option<
         } => {
             // Persist the original attempt before any vault write. A retry
             // after an interrupted write must never restart its fourteen days.
-            crate::db::set_setting_checked(app, TRIAL_SETTING, &started.to_string()).ok()?;
+            crate::db::set_setting_checked(app, TRIAL_SETTING, &started.to_string())
+                .map_err(|_| LicenseError::TrialStorage)?;
             let write = |username, value| {
                 matches!(
                     crate::credential::write(
@@ -717,16 +739,16 @@ fn trial_window(app: &tauri::AppHandle, deadline: std::time::Instant) -> Option<
                 )
             };
             if new_secret && !write(TRIAL_SECRET_USERNAME, secret.clone()) {
-                return None;
+                return Err(LicenseError::CredentialStore);
             }
             let state = format!("v1|{}|{}", started, trial_mac(&secret, started));
             if !write(TRIAL_STATE_USERNAME, state) {
-                return None;
+                return Err(LicenseError::CredentialStore);
             }
             started
         }
     };
-    Some((started, started.saturating_add(TRIAL_DAYS * 24 * 60 * 60)))
+    Ok((started, started.saturating_add(TRIAL_DAYS * 24 * 60 * 60)))
 }
 
 fn existing_trial_window(_app: &tauri::AppHandle) -> Option<(i64, i64)> {
@@ -736,7 +758,19 @@ fn existing_trial_window(_app: &tauri::AppHandle) -> Option<(i64, i64)> {
     Some((started, started.saturating_add(TRIAL_DAYS * 24 * 60 * 60)))
 }
 
+fn trial_setup_guard() -> Result<std::sync::MutexGuard<'static, ()>, LicenseError> {
+    static SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    match SETUP.try_lock() {
+        Ok(guard) => Ok(guard),
+        Err(std::sync::TryLockError::Poisoned(error)) => Ok(error.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => Err(LicenseError::Service(
+            "Trial setup is already running. Wait for it to finish.".into(),
+        )),
+    }
+}
+
 pub fn start_trial(app: &tauri::AppHandle) -> Result<LicenseStatus, LicenseError> {
+    let _guard = trial_setup_guard()?;
     // Interactive setup can unlock/initialize a desktop vault. Keep the 400ms
     // background budget, but give this entire user-requested operation 30s.
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
@@ -749,9 +783,16 @@ pub fn start_trial(app: &tauri::AppHandle) -> Result<LicenseStatus, LicenseError
         CredentialRead::Unavailable => return Err(LicenseError::CredentialStore),
         CredentialRead::Absent => {}
     }
-    trial_window(app, deadline).ok_or(LicenseError::CredentialStore)?;
+    let (started, expires) = trial_window(app, deadline)?;
+    if observed_now() >= expires {
+        return Err(LicenseError::TrialEnded);
+    }
     invalidate_status();
-    Ok(status(app))
+    // We just verified/wrote the pair. Do not immediately re-read it using the
+    // shorter background deadline and mistake a slow vault for a failed trial.
+    let status = status_for_trial(app, false, started, expires);
+    STATUS_CACHE.set(status.clone());
+    Ok(status)
 }
 
 /// The bounds inside the receipt's own signature, re-checked so a lease older
@@ -975,6 +1016,15 @@ fn compute_status(app: &tauri::AppHandle) -> LicenseStatus {
         }
         .with_terms(app);
     };
+    status_for_trial(app, key_configured, started, expires)
+}
+
+fn status_for_trial(
+    app: &tauri::AppHandle,
+    key_configured: bool,
+    started: i64,
+    expires: i64,
+) -> LicenseStatus {
     let now = observed_now();
     if now < expires {
         return LicenseStatus {
@@ -1480,6 +1530,14 @@ mod tests {
                 new_secret: false,
             })
         );
+    }
+
+    #[test]
+    fn concurrent_trial_setup_is_refused_before_any_record_is_changed() {
+        let guard = super::trial_setup_guard().unwrap();
+        assert!(super::trial_setup_guard().is_err());
+        drop(guard);
+        assert!(super::trial_setup_guard().is_ok());
     }
 
     #[test]
