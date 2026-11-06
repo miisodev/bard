@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "transcribe-cpp",
+ "transcribe-cpp-sys",
 ]
 
 [[package]]
@@ -163,9 +164,9 @@ dependencies = [
 
 [[package]]
 name = "transcribe-cpp-sys"
-version = "0.2.4"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c6946c7bf90046fc51e5bc25373a4f6270ca10fdcf4f35b1174075e43c535b5"
+checksum = "00e81030804f0ce2dd83761ba18e90e0c0c0c2794d68ca008e24245ed6d2702e"
 dependencies = [
  "cmake",
  "serde_json",
