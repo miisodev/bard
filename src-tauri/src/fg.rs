@@ -80,6 +80,96 @@ mod native {
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use x11rb::{
+        connection::Connection,
+        protocol::xproto::{AtomEnum, ConnectionExt, CreateWindowAux, WindowClass},
+        wrapper::ConnectionExt as _,
+        COPY_DEPTH_FROM_PARENT, CURRENT_TIME,
+    };
+
+    #[test]
+    #[ignore = "requires an isolated X11 display; run under xvfb-run"]
+    fn x11_foreground_tracks_and_focuses_real_windows() {
+        let (connection, screen) = x11rb::connect(None).unwrap();
+        let root = connection.setup().roots[screen].root;
+        let window = connection.generate_id().unwrap();
+        connection
+            .create_window(
+                COPY_DEPTH_FROM_PARENT,
+                window,
+                root,
+                0,
+                0,
+                100,
+                80,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new(),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+        connection.map_window(window).unwrap().check().unwrap();
+        let active = connection
+            .intern_atom(false, b"_NET_ACTIVE_WINDOW")
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom;
+        let pid = connection
+            .intern_atom(false, b"_NET_WM_PID")
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom;
+        connection
+            .change_property32(
+                x11rb::protocol::xproto::PropMode::REPLACE,
+                root,
+                active,
+                AtomEnum::WINDOW,
+                &[window],
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+        connection
+            .change_property32(
+                x11rb::protocol::xproto::PropMode::REPLACE,
+                window,
+                pid,
+                AtomEnum::CARDINAL,
+                &[std::process::id()],
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+        connection.flush().unwrap();
+        assert_eq!(current(), window as isize);
+        assert!(is_ours(window as isize));
+        assert!(foreground_is_ours());
+        connection
+            .set_input_focus(
+                x11rb::protocol::xproto::InputFocus::POINTER_ROOT,
+                root,
+                CURRENT_TIME,
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+        focus(window as isize);
+        assert_eq!(
+            connection.get_input_focus().unwrap().reply().unwrap().focus,
+            window
+        );
+        assert!(!is_ours(0));
+    }
+}
+
 #[cfg(not(windows))]
 mod native {
     pub fn current() -> isize {

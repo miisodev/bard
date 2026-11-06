@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    paths-ignore: [scripts/native-smoke.mjs, .github/workflows/native-smoke.yml]
 
 permissions:
   contents: read
@@ -121,7 +122,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y ca-certificates git curl wget unzip file build-essential cmake pkg-config libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libx11-dev libxtst-dev libxi-dev zstd rpm
+          apt-get install -y ca-certificates git curl wget unzip file build-essential cmake pkg-config libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libx11-dev libxtst-dev libxi-dev zstd rpm xvfb xauth
 
       - uses: actions/checkout@v4
         with:
@@ -163,6 +164,9 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
       # The same prebuilt cargo-audit the Windows job uses.
+      - name: X11 foreground integration
+        run: xvfb-run -a cargo test --locked --manifest-path src-tauri/Cargo.toml fg::tests::x11_foreground_tracks_and_focuses_real_windows -- --ignored --exact
+
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit

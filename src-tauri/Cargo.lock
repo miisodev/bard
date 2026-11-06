@@ -362,6 +362,7 @@ dependencies = [
  "tokio",
  "transcribe-cpp",
  "uuid",
+ "x11rb",
  "zeroize",
 ]
 
