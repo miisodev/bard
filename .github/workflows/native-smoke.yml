@@ -52,10 +52,15 @@ jobs:
           gh run download "$CANDIDATE_RUN" --name "$ARTIFACT" --dir candidate
           printf 'Candidate run %s, source %s\n' "$CANDIDATE_RUN" "$SOURCE_COMMIT"
       - name: Install native automation tools
+        if: runner.os == 'Linux'
         run: cargo install tauri-driver --locked
       - name: Prepare Linux desktop
         if: runner.os == 'Linux'
         run: |
+          # The regional Azure mirror can stall large WebKit downloads. Use
+          # Ubuntu's signed archive and bounded retries instead.
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          echo 'Acquire::http::Timeout "30"; Acquire::Retries "2";' | sudo tee /etc/apt/apt.conf.d/99-ci-timeout
           sudo apt-get update
           sudo apt-get install -y webkit2gtk-driver xvfb dbus-x11 gnome-keyring
           sudo apt-get install -y ./candidate/deb/*.deb
