@@ -61,7 +61,12 @@ async function selectWindow(label) {
   throw new Error(`No ${label} webview`);
 }
 async function screenshot(name) {
-  await script("return document.fonts.ready");
+  // DOM/IPC readiness precedes painting. A sync script returning a Promise
+  // does not wait for fonts or compositor frames in WebKitWebDriver.
+  await command("/execute/async", {
+    script: "const done=arguments[arguments.length-1]; document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>done(true))));",
+    args: [],
+  });
   const png = await command("/screenshot");
   await writeFile(`${output}/${name}.png`, Buffer.from(png, "base64"));
 }
@@ -69,6 +74,17 @@ async function waitForSelector(selector) {
   const deadline = Date.now() + 15_000;
   while (!(await script("return Boolean(document.querySelector(arguments[0]))", [selector]))) {
     if (Date.now() > deadline) throw new Error(`The native window did not render ${selector}`);
+    await new Promise((done) => setTimeout(done, 100));
+  }
+}
+async function clickSetupAction(text) {
+  const clicked = await script("const button=[...document.querySelectorAll('.onboarding button')].find(b=>b.textContent.trim()===arguments[0]&&!b.disabled); if(!button)return false;button.click();return true;", [text]);
+  assert(clicked, `Setup action is available: ${text}`);
+}
+async function waitForTheme(theme) {
+  const deadline = Date.now() + 15_000;
+  while (await script("return document.documentElement.dataset.theme") !== theme) {
+    if (Date.now() > deadline) throw new Error(`Renderer did not apply ${theme} theme`);
     await new Promise((done) => setTimeout(done, 100));
   }
 }
@@ -107,8 +123,19 @@ try {
   await waitForSelector(".onboarding h1");
   await screenshot("onboarding");
   check("first run opens as a readable setup window");
-  await invoke("start_trial");
-  await invoke("set_onboarding_completed", { done: true });
+  await clickSetupAction("Continue");
+  await waitForSelector(".model-card");
+  await clickSetupAction("Skip for now");
+  await waitForSelector(".shortcut-list");
+  await clickSetupAction("Continue");
+  await waitForSelector(".license-card");
+  await screenshot("onboarding-license");
+  await clickSetupAction("Start using Bard");
+  await waitForSelector('[role="listbox"][aria-label="Cards"]');
+  const ready = await invoke("get_state");
+  assert.equal(ready.onboardingCompleted, true);
+  assert.equal(ready.license.canUse, true);
+  check("all four setup steps finish through the UI with a usable OS-backed trial");
   await invoke("show_panel");
   await invoke("add_item", { content: "Bard native smoke — synthetic note" });
   let next = await invoke("get_state");
@@ -141,13 +168,16 @@ try {
   }
   await invoke("set_theme", { theme: "dark" });
   assert.equal((await invoke("get_state")).theme, "dark");
+  await waitForTheme("dark");
   await screenshot("shelf-dark");
   await invoke("open_settings");
   await selectWindow("settings");
   await waitForSelector('[role="tablist"]');
+  await waitForTheme("dark");
   await screenshot("settings-dark");
   await invoke("set_theme", { theme: "light" });
   assert.equal((await invoke("get_state")).theme, "light");
+  await waitForTheme("light");
   await screenshot("settings-light");
   check("native lazy settings window and theme persistence work");
   await selectWindow("main");
