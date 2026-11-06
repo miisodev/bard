@@ -1,8 +1,6 @@
 name: ASR benchmark
 
 on:
-  pull_request:
-    paths: [tools/asr-bench/**, .github/workflows/asr-benchmark.yml]
   workflow_dispatch:
 
 permissions:

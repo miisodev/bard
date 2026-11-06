@@ -24,6 +24,7 @@ const driver = spawn(windows ? "msedgedriver.exe" : "tauri-driver", windows ? ["
 driver.on("error", (error) => { console.error(error); process.exitCode = 1; });
 let session;
 const evidence = { application, platform: process.platform, checks: [] };
+const failures = [];
 if (app) evidence.appPid = app.pid;
 const check = (name) => { evidence.checks.push(name); console.log(`PASS ${name}`); };
 async function request(path, body, method = body === undefined ? "GET" : "POST") {
@@ -101,6 +102,11 @@ try {
   assert.equal(state.platform, process.platform === "win32" ? "windows" : "linux");
   assert.equal(state.storageNotice, undefined);
   check("packaged version, platform and persistent storage initialize");
+  const setupSize = await script("return {width:innerWidth,height:innerHeight}");
+  assert(setupSize.width <= 800 && setupSize.height >= 440, `Setup must open as a normal window: ${JSON.stringify(setupSize)}`);
+  await waitForSelector(".onboarding h1");
+  await screenshot("onboarding");
+  check("first run opens as a readable setup window");
   await invoke("start_trial");
   await invoke("set_onboarding_completed", { done: true });
   await invoke("show_panel");
@@ -116,8 +122,23 @@ try {
   next = await invoke("get_state");
   assert.equal(next.items.find((item) => item.id === note.id).content, "Bard native smoke — edited note");
   check("real note create/edit and blank edit rejection preserve data");
-  await invoke("copy_item", { id: note.id });
-  check("native clipboard write succeeds");
+  try {
+    // Several independent writes expose clipboard races instead of relying on
+    // the state left by one lucky invocation. Failures remain release failures
+    // while Settings/Draw still run to produce useful independent evidence.
+    for (let i = 0; i < 5; i++) await invoke("copy_item", { id: note.id });
+    check("native clipboard writes succeed repeatedly");
+  } catch (error) {
+    failures.push(String(error));
+    if (windows) {
+      const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", `
+        Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class ClipMeta { [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber(); [DllImport("user32.dll")] public static extern bool IsClipboardFormatAvailable(uint format); [DllImport("user32.dll")] public static extern IntPtr GetClipboardOwner(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process); }';
+        $owner = [ClipMeta]::GetClipboardOwner(); $ownerPid = [uint32]0; [void][ClipMeta]::GetWindowThreadProcessId($owner, [ref]$ownerPid);
+        @{sequence=[ClipMeta]::GetClipboardSequenceNumber(); unicodeText=[ClipMeta]::IsClipboardFormatAvailable(13); ownerPid=$ownerPid} | ConvertTo-Json
+      `], { encoding: "utf8", timeout: 15_000 });
+      await writeFile(`${output}/clipboard-metadata.json`, result.stdout || result.stderr);
+    }
+  }
   await invoke("set_theme", { theme: "dark" });
   assert.equal((await invoke("get_state")).theme, "dark");
   await screenshot("shelf-dark");
@@ -135,6 +156,7 @@ try {
   await waitForSelector("canvas");
   await screenshot("draw");
   check("native lazy drawing window renders");
+  if (failures.length) throw new Error(failures.join("; "));
 } catch (error) {
   evidence.failure = String(error);
   process.exitCode = 1;

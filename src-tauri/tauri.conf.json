@@ -61,7 +61,7 @@
     "createUpdaterArtifacts": true,
     "category": "Productivity",
     "shortDescription": "Clipboard, Draw and Dictate",
-    "longDescription": "Bard: Clipboard, Draw and Dictate. One quiet, keyboard-first Windows panel for everything you copy, quick sketches, and offline dictation with a local speech model.",
+    "longDescription": "Bard: Clipboard, Draw and Dictate. One quiet desktop shelf for everything you copy, quick sketches, and offline dictation with a local speech model.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

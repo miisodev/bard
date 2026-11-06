@@ -199,8 +199,7 @@ export default function Onboarding({
     <div className="onboarding" ref={rootRef} tabIndex={-1}>
       <div className="mark">{WAVE}</div>
 
-      {/* The promise. One column on a side edge; on a band it sits beside the
-          body instead of above it, so a band-tall window keeps its room. */}
+      {/* A readable introduction above the current step in the setup window. */}
       <div className="onb-copy">
         {step === 0 ? (
           <>
@@ -332,12 +331,12 @@ export default function Onboarding({
                 <span className="knob" />
               </button>
             </div>
-            {finishError ? <div className="meta" role="alert">{finishError}</div> : null}
           </>
         ) : null}
       </div>
 
       <div className="onb-foot">
+        {finishError ? <div className="onb-error" role="alert">{finishError}</div> : null}
         {/*
           The position is announced once, by the bar. The segments are pictures of
           it, so they are hidden from assistive technology — and `aria-current`

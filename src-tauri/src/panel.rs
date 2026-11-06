@@ -86,10 +86,32 @@ fn show_now_inner(app: &tauri::AppHandle) {
     // window's to change — Windows answers SetWindowPos about the restored
     // rectangle — so the shelf is brought back to normal before it is anchored.
     let _ = win.unminimize();
-    // The shelf is docked, never restored: every show puts it back on its edge
-    // and on its monitor at the size that edge dictates. Where it was left by
-    // hand is not a place it can be left, so there is no rectangle to return to.
-    crate::geometry::anchor(app, &win, crate::geometry::shelf_edge(app));
+    let setup = crate::db::get_setting(app, "onboarding_completed").as_deref() != Some("1");
+    if setup {
+        // Setup is a normal desktop window. In particular it must not inherit
+        // the shelf's full-monitor width and 292px height on first launch.
+        if !win.is_decorated().unwrap_or(false) {
+            let _ = win.set_title("Set up Bard");
+            let _ = win.set_decorations(true);
+            let _ = win.set_shadow(true);
+            let _ = win.set_always_on_top(false);
+            let _ = win.set_skip_taskbar(false);
+            let _ = win.set_resizable(true);
+            let _ = win.set_min_size(Some(tauri::LogicalSize::new(480.0, 440.0)));
+            crate::geometry::restore(app, &win, 620.0, 680.0);
+        }
+    } else {
+        if win.is_decorated().unwrap_or(false) {
+            let _ = win.set_title("Bard");
+            let _ = win.set_min_size(None::<tauri::LogicalSize<f64>>);
+            let _ = win.set_resizable(false);
+            let _ = win.set_decorations(false);
+            let _ = win.set_shadow(false);
+            let _ = win.set_skip_taskbar(true);
+            let _ = win.set_always_on_top(true);
+        }
+        crate::geometry::anchor(app, &win, crate::geometry::shelf_edge(app));
+    }
     let _ = win.show();
     let _ = win.set_focus();
     let _ = app.emit("panel-shown", ());
@@ -217,6 +239,13 @@ fn hide_now_inner(app: &tauri::AppHandle, blur_generation: Option<u64>) {
     };
     if !win.is_visible().unwrap_or(false) {
         // Already away: nothing to slide out, so nothing to wait for.
+        SHELF_HIDDEN.open();
+        return;
+    }
+    if crate::db::get_setting(app, "onboarding_completed").as_deref() != Some("1") {
+        // A closed setup window stays at its normal position for the next
+        // tray/launcher open; parking it like the shelf would strand it offscreen.
+        let _ = win.hide();
         SHELF_HIDDEN.open();
         return;
     }

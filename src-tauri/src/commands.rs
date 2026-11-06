@@ -1887,8 +1887,10 @@ pub fn set_theme(app: AppHandle, theme: String) {
 }
 
 #[tauri::command]
-pub fn set_onboarding_completed(app: AppHandle, done: bool) {
-    db::set_setting(&app, "onboarding_completed", if done { "1" } else { "0" });
+pub fn set_onboarding_completed(app: AppHandle, done: bool) -> Result<(), String> {
+    db::set_setting_checked(&app, "onboarding_completed", if done { "1" } else { "0" })?;
+    crate::panel::show_now(&app);
+    Ok(())
 }
 
 #[tauri::command]

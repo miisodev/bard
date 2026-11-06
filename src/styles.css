@@ -1852,30 +1852,27 @@ body {
 
 /* ---------- onboarding ---------- */
 
-/*
-  The first run, on either dock. On the side edges it is the tall column it
-  has always been: mark, promise, the step's body, then its actions. On the
-  bottom and top bands the same parts lie in a wide row — those parts stacked
-  vertically would scroll away from their own buttons — with the body scrolling
-  on its own if one step needs more than the band has.
-*/
+/* Setup uses a normal, resizable desktop window with a scrolling step body.
+   Navigation remains visible when a permission message or licence error grows. */
+.app.setup {
+  border: 0;
+  border-radius: 0;
+}
 
 .onboarding {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  justify-items: center;
+  height: 100%;
+  min-height: 0;
   background: var(--canvas);
-  padding: 26px 24px 22px;
-  gap: 12px;
-  overflow-y: auto;
-  /* It is the focus fallback when a step has no control to land on, not a
-     control itself: no ring. */
+  padding: 28px 32px 24px;
+  gap: 20px;
+  overflow: hidden;
   outline: none;
 }
 
-/* The promise: the headline and its sentence. Its own column, so the wide
-   layout can set it beside the body instead of above it. */
+/* The headline and its introduction share a comfortable reading width. */
 .onb-copy {
   display: flex;
   flex-direction: column;
@@ -1895,25 +1892,42 @@ body {
   gap: 12px;
   width: 100%;
   min-width: 0;
-  max-width: 100%;
+  max-width: 480px;
+  min-height: 0;
+  overflow-y: auto;
+  align-items: stretch;
+}
+
+.onb-step > .model-card,
+.onb-step > .shortcut-list {
+  width: 100%;
 }
 
 /* The progress bar and the actions, held together at the screen's end. */
 .onb-foot {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--sp-5);
-  margin-top: auto;
-  margin-bottom: 2vh;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.onb-error {
+  grid-column: 1 / -1;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .onboarding .mark {
   flex: none;
-  margin-top: auto;
-  width: 84px;
-  height: 84px;
-  border-radius: 24px;
+  margin-top: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 19px;
   background: linear-gradient(0deg, #1e6fa8, #63bcf2);
   display: grid;
   place-items: center;
@@ -1939,7 +1953,7 @@ body {
   line-height: 1.6;
   color: var(--on-canvas-2);
   text-align: center;
-  max-width: 280px;
+  max-width: 440px;
   margin: 0;
 }
 
@@ -1991,102 +2005,23 @@ body {
   justify-content: center;
 }
 
-/*
-  The band: the same four steps in a row. The mark shrinks to a badge, the
-  promise becomes the first column, the step's body takes the rest, and the
-  steps bar and actions close the line.
-*/
-.app[data-edge="bottom"] .onboarding,
-.app[data-edge="top"] .onboarding {
-  flex-direction: row;
-  gap: var(--sp-8);
-  padding: var(--sp-6) var(--sp-8);
-  /* The body scrolls, the band does not. */
-  overflow: hidden;
-}
+/* Compact displays retain the same reading order and footer. */
+@media (max-height: 540px) {
+  .onboarding {
+    padding: 16px 24px;
+    gap: 12px;
+  }
 
-.app[data-edge="bottom"] .onboarding .mark,
-.app[data-edge="top"] .onboarding .mark {
-  margin-top: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-}
+  .onboarding .mark {
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+  }
 
-.app[data-edge="bottom"] .onboarding .mark svg,
-.app[data-edge="top"] .onboarding .mark svg {
-  width: 20px;
-  height: 20px;
-}
-
-.app[data-edge="bottom"] .onb-copy,
-.app[data-edge="top"] .onb-copy {
-  flex: 0 1 300px;
-  align-items: flex-start;
-  gap: var(--sp-4);
-}
-
-.app[data-edge="bottom"] .onboarding h1,
-.app[data-edge="top"] .onboarding h1 {
-  font-size: var(--fs-lg);
-  text-align: left;
-}
-
-.app[data-edge="bottom"] .onboarding p,
-.app[data-edge="top"] .onboarding p {
-  font-size: var(--fs-sm);
-  text-align: left;
-  max-width: none;
-}
-
-.app[data-edge="bottom"] .onb-step,
-.app[data-edge="top"] .onb-step {
-  /* A zero basis: the body takes exactly the room the promise and the actions
-     do not, whatever its own content's width would otherwise claim. */
-  flex: 1 1 0;
-  width: auto;
-  flex-direction: row;
-  flex-wrap: wrap;
-  /* `safe` so a body taller than the band starts at the top and scrolls
-     instead of having its first line clipped; the plain `center` is what
-     engines without the keyword fall back to. */
-  align-items: center;
-  align-items: safe center;
-  align-content: center;
-  align-self: stretch;
-  gap: var(--sp-6) var(--sp-7);
-  overflow-y: auto;
-}
-
-.app[data-edge="bottom"] .onb-step > .model-card,
-.app[data-edge="bottom"] .onb-step > .license-card,
-.app[data-edge="top"] .onb-step > .model-card,
-.app[data-edge="top"] .onb-step > .license-card {
-  flex: 1 1 320px;
-  min-width: 0;
-  max-width: 560px;
-}
-
-.app[data-edge="bottom"] .onb-step > .setting-row,
-.app[data-edge="top"] .onb-step > .setting-row {
-  flex: 0 1 260px;
-}
-
-.app[data-edge="bottom"] .onb-step > .shortcut-list,
-.app[data-edge="top"] .onb-step > .shortcut-list {
-  flex: 1 1 auto;
-  width: auto;
-  margin-top: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--sp-4) var(--sp-7);
-}
-
-.app[data-edge="bottom"] .onb-foot,
-.app[data-edge="top"] .onb-foot {
-  flex: none;
-  margin-top: 0;
-  margin-bottom: 0;
-  align-self: center;
+  .onboarding .mark svg {
+    width: 26px;
+    height: 26px;
+  }
 }
 
 /* ---------- overlay ---------- */
