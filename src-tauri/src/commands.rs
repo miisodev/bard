@@ -1927,20 +1927,36 @@ pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> 
     let launcher = app.autolaunch();
     if enabled {
         launcher.enable().map_err(|e| e.to_string())?;
-    } else if launcher.is_enabled().unwrap_or(true) {
+    } else {
         // Turning off a login item that was never registered is already the
-        // state asked for. On Windows, removing the absent Run entry fails
-        // with "cannot find the file specified", which left a fresh install
-        // unable to finish setup with Start at login left off. Only a removal
-        // that leaves the entry in place is a failure.
-        if let Err(error) = launcher.disable() {
-            if launcher.is_enabled().unwrap_or(true) {
-                return Err(error.to_string());
+        // state asked for. On Windows both the check and the removal fail with
+        // "cannot find the file specified" when the per-user Run key or its
+        // value does not exist, which left a fresh install unable to finish
+        // setup with Start at login left off. "Not found" means not
+        // registered; any other failure, or an entry still present, is real.
+        let registered = match launcher.is_enabled() {
+            Ok(registered) => registered,
+            Err(error) if login_item_absent(&error.to_string()) => false,
+            Err(_) => true,
+        };
+        if registered {
+            if let Err(error) = launcher.disable() {
+                let message = error.to_string();
+                if !login_item_absent(&message) {
+                    return Err(message);
+                }
             }
         }
     }
     db::set_setting(&app, "autostart_enabled", if enabled { "1" } else { "0" });
     Ok(())
+}
+
+/// Whether an autostart error only says the login item is not there: the OS
+/// "not found" error (ERROR_FILE_NOT_FOUND / ENOENT), which every platform's
+/// auto-launch backend surfaces as "os error 2".
+fn login_item_absent(message: &str) -> bool {
+    message.contains("(os error 2)")
 }
 
 /// Opens a miiso.dev page — purchase, licence management, terms, privacy,
@@ -2405,5 +2421,20 @@ mod draw_tests {
         for tool in ["select", "pen", "line", "arrow", "rect", "ellipse", "text"] {
             assert!(DRAW_TOOLS.contains(&tool), "{tool}");
         }
+    }
+}
+
+#[cfg(test)]
+mod login_item_tests {
+    use super::login_item_absent;
+
+    #[test]
+    fn a_missing_login_item_is_not_a_failure() {
+        assert!(login_item_absent(
+            "The system cannot find the file specified. (os error 2)"
+        ));
+        assert!(login_item_absent("No such file or directory (os error 2)"));
+        assert!(!login_item_absent("Access is denied. (os error 5)"));
+        assert!(!login_item_absent("os error 22"));
     }
 }
