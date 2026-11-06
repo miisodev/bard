@@ -1,8 +1,11 @@
 name: Packaged desktop smoke
 
 on:
-  pull_request:
-    paths: [scripts/native-smoke.mjs, .github/workflows/native-smoke.yml]
+  workflow_call:
+    inputs:
+      candidate_run:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       candidate_run:
@@ -44,7 +47,9 @@ jobs:
             CANDIDATE_RUN=$(gh run list --workflow ci.yml --branch "$HEAD_BRANCH" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           fi
           test -n "$CANDIDATE_RUN"
-          test "$(gh run view "$CANDIDATE_RUN" --json conclusion --jq .conclusion)" = success
+          # A reusable invocation belongs to the still-running parent CI run.
+          # Require every build/review gate, rather than its final conclusion.
+          gh run view "$CANDIDATE_RUN" --json jobs --jq '[.jobs[] | select(.name == "windows" or .name == "linux" or .name == "browser" or .name == "secrets")] | length == 4 and all(.[]; .conclusion == "success")' | grep -qx true
           SOURCE_COMMIT=$(gh run view "$CANDIDATE_RUN" --json headSha --jq .headSha)
           # Never test an older binary against changed product sources.
           git diff --exit-code "$SOURCE_COMMIT" HEAD -- src src-tauri package.json bun.lock index.html settings.html draw.html overlay.html

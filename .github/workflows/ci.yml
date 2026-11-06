@@ -7,8 +7,15 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  desktop:
+    needs: [windows, linux, browser, secrets]
+    uses: ./.github/workflows/native-smoke.yml
+    with:
+      candidate_run: ${{ format('{0}', github.run_id) }}
+
   secrets:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -5,6 +5,36 @@ test.afterEach(async ({ page }, info) => {
   await page.screenshot({ path: info.outputPath("window.png") });
 });
 
+for (const theme of ["light", "dark"]) {
+  for (const size of [{ width: 620, height: 640 }, { width: 480, height: 440 }]) {
+    test(`${theme} onboarding keeps each step above its actions at ${size.width}×${size.height}`, async ({ page }, info) => {
+      await page.setViewportSize(size);
+      await page.goto(`/?scene=onboarding&platform=linux&theme=${theme}&bare=1&fail=set_autostart`);
+      const headings = ["Clipboard, Draw and Dictate.", "Offline voice", "Make it yours", "You're set"];
+      for (let step = 0; step < headings.length; step++) {
+        await expect(page.getByRole("heading", { name: headings[step], exact: true })).toBeVisible();
+        const layout = await page.evaluate(() => {
+          const copy = document.querySelector(".onb-copy")!.getBoundingClientRect();
+          const body = document.querySelector(".onb-step")!.getBoundingClientRect();
+          const foot = document.querySelector(".onb-foot")!.getBoundingClientRect();
+          return { copyBottom: copy.bottom, bodyTop: body.top, bodyBottom: body.bottom, footTop: foot.top, footBottom: foot.bottom, width: document.documentElement.scrollWidth, viewport: innerWidth, height: innerHeight };
+        });
+        expect(layout.bodyTop).toBeGreaterThanOrEqual(layout.copyBottom);
+        expect(layout.footTop).toBeGreaterThanOrEqual(layout.bodyBottom);
+        expect(layout.footBottom).toBeLessThanOrEqual(layout.height);
+        expect(layout.width).toBeLessThanOrEqual(layout.viewport);
+        const { violations } = await new AxeBuilder({ page }).analyze();
+        expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious")).toEqual([]);
+        await page.screenshot({ path: info.outputPath(`step-${step + 1}.png`) });
+        if (step < 3) await page.getByRole("button", { name: step === 1 ? "Skip for now" : "Continue", exact: true }).click();
+      }
+      await page.getByRole("button", { name: "Start using Bard" }).click();
+      await expect(page.getByRole("alert")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Start using Bard" })).toBeEnabled();
+    });
+  }
+}
+
 test("Wayland shortcut help describes desktop permissions", async ({ page }) => {
   await page.goto("/?platform=linux&bare=1");
   await page.getByRole("listbox", { name: "Cards" }).waitFor();
