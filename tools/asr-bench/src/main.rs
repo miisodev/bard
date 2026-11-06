@@ -5,6 +5,15 @@ use transcribe_cpp::{Model, RunOptions, SessionOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().collect();
+    if args.len() == 2 && args[1] == "--probe" {
+        transcribe_cpp::init_backends_default()?;
+        let count = transcribe_cpp::device_count();
+        if count == 0 {
+            return Err("No supported speech backend is available".into());
+        }
+        println!("{}", serde_json::json!({ "devices": count }));
+        return Ok(());
+    }
     if args.len() != 4 {
         return Err("Usage: bard-asr-bench MODEL.gguf AUDIO.f32le THREADS".into());
     }

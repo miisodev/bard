@@ -131,6 +131,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bard.exe
+            src-tauri/target/release/*.dll
           if-no-files-found: error
           retention-days: 3
 

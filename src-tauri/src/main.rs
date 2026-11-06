@@ -20,6 +20,9 @@ mod license;
 #[cfg(target_os = "linux")]
 mod linux_portal;
 mod monitor;
+#[cfg(test)]
+#[path = "../native_runtime.rs"]
+mod native_runtime;
 mod packaging;
 mod panel;
 mod paste;
@@ -177,6 +180,18 @@ fn main() {
     crash::record_event("app:start");
     guardian::install_console_handler();
     let args = std::env::args().collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == "--check-speech-backends") {
+        match transcribe_cpp::init_backends_default() {
+            Ok(()) if transcribe_cpp::device_count() > 0 => {
+                println!("Speech backends ready: {}", transcribe_cpp::device_count());
+            }
+            result => {
+                eprintln!("Speech backends unavailable: {result:?}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if args.iter().any(|a| a == "--guardian") {
         guardian::run();
         return;

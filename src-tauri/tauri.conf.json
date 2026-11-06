@@ -55,6 +55,7 @@
   },
   "bundle": {
     "active": true,
+    "resources": { "transcribe-libs/*": ".", "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md" },
     "targets": [
       "nsis"
     ],

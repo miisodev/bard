@@ -89,6 +89,11 @@ async function waitForTheme(theme) {
   }
 }
 try {
+  const probe = spawnSync(application, ["--check-speech-backends"], { encoding: "utf8", timeout: 30_000 });
+  await writeFile(`${output}/backend-probe.txt`, `${probe.stdout || ""}\n${probe.stderr || ""}`);
+  assert.equal(probe.signal, null, "speech backend probe must not crash on this CPU");
+  assert.equal(probe.status, 0, "installed package includes a usable speech backend");
+  check("installed speech runtime loads and selects a supported CPU backend");
   if (app) {
     app.on("exit", (code, signal) => { evidence.appExit = { code, signal }; });
     const deadline = Date.now() + 60_000;

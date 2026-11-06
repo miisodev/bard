@@ -87,6 +87,13 @@ New-Item -ItemType Directory -Path (Join-Path $staging "Assets") -Force | Out-Nu
 New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 
 Copy-Item -LiteralPath $binary -Destination (Join-Path $staging "Bard.exe")
+$runtime = Get-ChildItem (Split-Path $binary) -File -Filter '*.dll' |
+  Where-Object { $_.Name -match '^(lib)?(ggml|transcribe)' }
+if (!($runtime | Where-Object { $_.Name -match 'ggml-cpu-x64' })) {
+  throw 'Missing baseline speech backend. Build and stage the complete release runtime first.'
+}
+$runtime | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $staging }
+
 foreach ($asset in @("StoreLogo.png", "Square44x44Logo.png", "Square150x150Logo.png", "Square310x310Logo.png")) {
   $assetPath = Join-Path $repoRoot "src-tauri\icons\$asset"
   if (-not (Test-Path -LiteralPath $assetPath)) { throw "Missing MSIX asset: $assetPath" }

@@ -1,3 +1,5 @@
+mod native_runtime;
+
 const COMMANDS: &[&str] = &[
     "get_state",
     "get_setting_str",
@@ -116,6 +118,7 @@ const COMMANDS: &[&str] = &[
 ];
 
 fn main() {
+    native_runtime::stage("Bard");
     let manifest = tauri_build::AppManifest::new().commands(COMMANDS);
     let attributes = tauri_build::Attributes::new().app_manifest(manifest);
     tauri_build::try_build(attributes).expect("failed to build Tauri application metadata");

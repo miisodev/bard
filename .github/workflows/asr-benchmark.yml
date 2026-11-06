@@ -9,7 +9,7 @@ permissions:
 jobs:
   engine:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,7 +22,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: asr-benchmark-tool
-          path: tools/asr-bench/target/release/bard-asr-bench
+          path: |
+            tools/asr-bench/target/release/bard-asr-bench
+            tools/asr-bench/target/release/*.so*
           retention-days: 3
       - name: Read the pinned fast model location
         run: |
@@ -32,6 +34,11 @@ jobs:
           with open(os.environ['GITHUB_ENV'],'a') as f:
               f.write('MODEL_URL='+row['file']['url']+'\nMODEL_SHA256='+row['file']['sha256']+'\n')
           PY
+      - name: Verify a CPU without AVX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user
+          timeout 60s qemu-x86_64 -cpu Nehalem tools/asr-bench/target/release/bard-asr-bench --probe
       - name: Measure the engine
         run: |
           curl -fL --retry 2 --max-time 300 "$MODEL_URL" -o fast.gguf

@@ -43,10 +43,9 @@ earshot = "1.2"
 # features download pyke's prebuilt ONNX Runtime, which runs AVX in a static
 # initialiser and crashes at startup on pre-Haswell CPUs.
 #
-# Note on features: default-features would have to stay off to reach Vulkan and
-# per-ISA CPU dispatch, but that makes transcribe-cpp-sys build ggml from
-# source, which needs CMake on PATH and a short build path.
-transcribe-cpp = "=0.2.3"
+# Runtime CPU dispatch keeps the core safe on baseline x64 while selecting
+# faster instruction sets only when supported. build.rs bundles its libraries.
+transcribe-cpp = { version = "=0.2.3", default-features = false, features = ["dynamic-backends"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli", "stream"] }
 sha2 = "0.10"
 zeroize = "1"

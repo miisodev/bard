@@ -12,3 +12,5 @@ playwright-report/
 production-readiness/
 
 tools/asr-bench/target/
+src-tauri/transcribe-libs/
+tools/asr-bench/transcribe-libs/

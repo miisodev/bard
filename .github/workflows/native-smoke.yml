@@ -88,6 +88,7 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "Installer exit $($process.ExitCode)" }
           New-Item -ItemType Directory -Force src-tauri/target/release, native-review | Out-Null
           Copy-Item candidate/bard.exe src-tauri/target/release/bard.exe
+          Copy-Item candidate/*.dll src-tauri/target/release/
           ./scripts/build-msix.ps1 -Store
           Copy-Item src-tauri/target/release/bundle/msix/*.msix native-review/
           choco install gsudo --no-progress -y

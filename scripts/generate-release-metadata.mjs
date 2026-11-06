@@ -252,6 +252,7 @@ if (platform === "windows") {
   const installer = join(bundleDir, `Bard_${version}_x64-setup.exe`);
   artifacts = [
     artifact(join(binaryDir, "bard.exe")),
+    ...readdirSync(binaryDir).filter((name) => /^(?:lib)?(?:ggml|transcribe).*\.dll$/i.test(name)).sort().map((name) => artifact(join(binaryDir, name))),
     artifact(installer),
     artifact(`${installer}.sig`),
   ];
