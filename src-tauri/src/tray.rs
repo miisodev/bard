@@ -222,10 +222,10 @@ mod linux_tray {
         let Some(image) = app.default_window_icon() else {
             return Vec::new();
         };
-        let data = image
-            .rgba()
-            .chunks_exact(4)
-            .flat_map(|pixel| [pixel[3], pixel[0], pixel[1], pixel[2]])
+        let (pixels, _) = image.rgba().as_chunks::<4>();
+        let data = pixels
+            .iter()
+            .flat_map(|&[r, g, b, a]| [a, r, g, b])
             .collect();
         vec![Icon {
             width: image.width() as i32,
