@@ -2,7 +2,7 @@
 // mocked IPC. Run only on a disposable desktop/CI account: this starts a trial
 // and writes synthetic notes to that account's Bard database and clipboard.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -24,6 +24,7 @@ const driver = spawn(windows ? "msedgedriver.exe" : "tauri-driver", windows ? ["
 driver.on("error", (error) => { console.error(error); process.exitCode = 1; });
 let session;
 const evidence = { application, platform: process.platform, checks: [] };
+if (app) evidence.appPid = app.pid;
 const check = (name) => { evidence.checks.push(name); console.log(`PASS ${name}`); };
 async function request(path, body, method = body === undefined ? "GET" : "POST") {
   const response = await fetch(`http://127.0.0.1:4444${path}`, {
@@ -32,7 +33,9 @@ async function request(path, body, method = body === undefined ? "GET" : "POST")
     signal: AbortSignal.timeout(90_000),
   });
   const result = await response.json();
-  if (!response.ok || result.value?.error) throw new Error(JSON.stringify(result));
+  // An executed app command may intentionally return {ok:false,error:...};
+  // that is data, while a WebDriver protocol failure uses a non-2xx status.
+  if (!response.ok) throw new Error(JSON.stringify(result));
   return result.value;
 }
 const command = (path, body, method) => request(`/session/${session}${path}`, body, method);
@@ -130,6 +133,12 @@ try {
   process.exitCode = 1;
   console.error(error);
 } finally {
+  if (windows) {
+    const diagnostics = spawnSync("powershell.exe", ["-NoProfile", "-Command",
+      "Get-CimInstance Win32_Process | Where-Object {$_.Name -in @('bard.exe','msedgewebview2.exe')} | Select-Object Name,ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Depth 3; Get-Process bard -ErrorAction SilentlyContinue | Select-Object Id,Responding,MainWindowTitle,MainWindowHandle | ConvertTo-Json; Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {$_.LocalPort -eq 9222} | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json"
+    ], { encoding: "utf8", timeout: 15_000 });
+    await writeFile(`${output}/desktop-startup.txt`, diagnostics.stdout || diagnostics.stderr || "No process diagnostics");
+  }
   await writeFile(`${output}/result.json`, JSON.stringify(evidence, null, 2));
   const logs = windows
     ? join(process.env.LOCALAPPDATA, "com.miisodev.bard", "logs")
