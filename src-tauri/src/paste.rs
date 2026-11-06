@@ -27,13 +27,40 @@ pub fn send_paste(_app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    cb.set_text(text.to_string()).map_err(|e| e.to_string())?;
-    if cb.get_text().map_err(|e| e.to_string())? != text {
-        return Err("The clipboard write could not be verified.".into());
+    // The clipboard is shared with every process on the desktop: another
+    // program (a clipboard history service, a remote-desktop bridge, a
+    // password manager clearing its copy) can hold it open or replace it in
+    // the instant between Bard's write and its read-back. A failed
+    // verification is retried with a fresh write a few times before it is
+    // reported, so a passing collision does not surface as a failed copy,
+    // while a clipboard that genuinely refuses the text still does.
+    let mut last = String::new();
+    for attempt in 0..CLIPBOARD_ATTEMPTS {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(30 * attempt as u64));
+        }
+        match write_and_verify_text(text) {
+            Ok(()) => {
+                crate::monitor::note_own_write(app);
+                return Ok(());
+            }
+            Err(error) => last = error,
+        }
     }
-    crate::monitor::note_own_write(app);
-    Ok(())
+    Err(last)
+}
+
+const CLIPBOARD_ATTEMPTS: usize = 4;
+
+fn write_and_verify_text(text: &str) -> Result<(), String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| format!("clipboard open: {e}"))?;
+    cb.set_text(text.to_string())
+        .map_err(|e| format!("clipboard write: {e}"))?;
+    match cb.get_text() {
+        Ok(read) if read == text => Ok(()),
+        Ok(_) => Err("The clipboard write could not be verified.".into()),
+        Err(e) => Err(format!("clipboard read-back: {e}")),
+    }
 }
 
 /// Read a file Bard owns, with the same guards [`image_data`] applies.

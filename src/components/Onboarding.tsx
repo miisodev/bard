@@ -233,8 +233,9 @@ export default function Onboarding({
         )}
       </div>
 
-      {/* The one step being asked about. */}
-      <div className="onb-step">
+      {/* The one step being asked about. It scrolls on a small window, so it is
+          a focusable region a keyboard can scroll, named after its step. */}
+      <div className="onb-step" tabIndex={0} role="region" aria-label={STEP_TITLES[step]}>
         {step === 0 ? (
           <ul className="onb-features">
             <li data-kind="text">

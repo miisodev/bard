@@ -1988,6 +1988,12 @@ body {
   align-items: stretch;
 }
 
+.onb-step:focus-visible {
+  outline: none;
+  border-radius: var(--r-card);
+  box-shadow: var(--focus-ring);
+}
+
 .onb-step > .model-card,
 .onb-step > .shortcut-list {
   width: 100%;

@@ -562,19 +562,19 @@ function playReview() {
 }
 
 const INK = "#1d1d1f";
-const BLUE = "#2f6fed";
+const BLUE = "#2c63e6";
 const RED = "#e5484d";
 
 /** A small flow sketch: the kind of diagram Draw is for. */
 const SKETCH: Shape[] = [
-  { kind: "rect", id: 1, color: INK, width: 2.5, a: { x: 70, y: 170 }, b: { x: 240, y: 250 } },
-  { kind: "text", id: 2, color: INK, size: 20, at: { x: 104, y: 202 }, text: "Copy / Say" },
-  { kind: "arrow", id: 3, color: BLUE, width: 3, a: { x: 252, y: 210 }, b: { x: 382, y: 210 } },
-  { kind: "ellipse", id: 4, color: INK, width: 2.5, a: { x: 392, y: 160 }, b: { x: 606, y: 262 } },
-  { kind: "text", id: 5, color: INK, size: 20, at: { x: 450, y: 202 }, text: "One timeline" },
-  { kind: "arrow", id: 6, color: BLUE, width: 3, a: { x: 498, y: 272 }, b: { x: 498, y: 372 } },
-  { kind: "rect", id: 7, color: INK, width: 2.5, a: { x: 400, y: 382 }, b: { x: 600, y: 452 } },
-  { kind: "text", id: 8, color: INK, size: 20, at: { x: 432, y: 410 }, text: "Paste anywhere" },
+  { kind: "rect", id: 1, color: INK, width: 2.5, a: { x: 70, y: 80 }, b: { x: 240, y: 160 } },
+  { kind: "text", id: 2, color: INK, size: 20, at: { x: 104, y: 122 }, text: "Copy / Say" },
+  { kind: "arrow", id: 3, color: BLUE, width: 3, a: { x: 252, y: 120 }, b: { x: 382, y: 120 } },
+  { kind: "ellipse", id: 4, color: INK, width: 2.5, a: { x: 392, y: 70 }, b: { x: 606, y: 172 } },
+  { kind: "text", id: 5, color: INK, size: 20, at: { x: 450, y: 122 }, text: "One timeline" },
+  { kind: "arrow", id: 6, color: BLUE, width: 3, a: { x: 498, y: 182 }, b: { x: 498, y: 282 } },
+  { kind: "rect", id: 7, color: INK, width: 2.5, a: { x: 400, y: 292 }, b: { x: 600, y: 362 } },
+  { kind: "text", id: 8, color: INK, size: 20, at: { x: 432, y: 330 }, text: "Paste anywhere" },
   {
     kind: "pen",
     id: 9,
@@ -582,8 +582,8 @@ const SKETCH: Shape[] = [
     width: 3,
     points: Array.from({ length: 48 }, (_, i) => ({
       x: 96 + i * 3.2,
-      y: 282 + Math.sin(i / 3.2) * 5 + (i > 40 ? (i - 40) * -1.5 : 0),
+      y: 192 + Math.sin(i / 3.2) * 5 + (i > 40 ? (i - 40) * -1.5 : 0),
     })),
   },
-  { kind: "text", id: 10, color: RED, size: 16, at: { x: 96, y: 326 }, text: "Left Shift ×2  ·  Ctrl ×2" },
+  { kind: "text", id: 10, color: RED, size: 16, at: { x: 96, y: 236 }, text: "Left Shift ×2  ·  Ctrl ×2" },
 ];

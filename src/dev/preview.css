@@ -66,3 +66,10 @@ html[data-bare] #root {
   height: 100vh;
   box-shadow: none;
 }
+
+/* A staged shelf is shown at rest: the search the panel focuses on open
+   would otherwise ring every frame of the gallery. */
+html[data-bare] .search-field:focus-within {
+  background: var(--surface-2);
+  box-shadow: none;
+}
