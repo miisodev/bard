@@ -26,7 +26,7 @@ jobs:
           name: asr-benchmark-tool
           path: tools/asr-bench/target/release/bard-asr-bench
           retention-days: 3
-      - name: Fetch the pinned fast model and synthesize nonpersonal speech
+      - name: Read the pinned fast model location
         run: |
           python3 - <<'PY'
           import json,os,pathlib
@@ -34,14 +34,13 @@ jobs:
           with open(os.environ['GITHUB_ENV'],'a') as f:
               f.write('MODEL_URL='+row['file']['url']+'\nMODEL_SHA256='+row['file']['sha256']+'\n')
           PY
-          ffmpeg -v error -f lavfi -i "flite=text='Bard keeps useful words close by. Speak a thought and keep working. This short recording checks local dictation on the computer.'" -af 'apad,atrim=0:10' -ar 16000 -ac 1 -f f32le speech.f32le
       - name: Measure the engine
         run: |
           curl -fL --retry 2 --max-time 300 "$MODEL_URL" -o fast.gguf
           printf '%s  fast.gguf\n' "$MODEL_SHA256" | sha256sum -c -
           mkdir benchmark-review
           lscpu > benchmark-review/cpu.txt
-          tools/asr-bench/target/release/bard-asr-bench fast.gguf speech.f32le 4 > benchmark-review/result.json
+          tools/asr-bench/target/release/bard-asr-bench fast.gguf tools/asr-bench/speech.f32le 4 > benchmark-review/result.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
