@@ -176,6 +176,9 @@ fn ingest_startup_paths(app: &tauri::AppHandle, args: &[String]) -> bool {
 }
 
 fn main() {
+    // Before anything can start a thread or initialise GTK.
+    #[cfg(target_os = "linux")]
+    desktop::prefer_xwayland_windows();
     crash::install(&paths::logs_dir());
     crash::record_event("app:start");
     guardian::install_console_handler();
