@@ -2053,7 +2053,7 @@ pub fn clipboard_image_data(app: AppHandle) -> Option<String> {
     if crate::license::require(&app).is_err() {
         return None;
     }
-    let mut clipboard = arboard::Clipboard::new().ok()?;
+    let mut clipboard = crate::clip::handle().ok()?;
     let image = clipboard.get_image().ok()?;
     let encoded = crate::monitor::encode_png(&image)?;
     let base64 = base64::engine::general_purpose::STANDARD.encode(&encoded);

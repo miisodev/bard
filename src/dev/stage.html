@@ -180,8 +180,8 @@
           copyTop: true,
           windows: [
             { src: "/draw.html?bare&scene=sketch", x: 640, y: 400, w: 760, h: 580, scale: 0.7 },
-            { src: "/?bare", x: 1090, y: 96, w: 400, h: 620, scale: 1.2 },
-            { src: "/pill.html?bare&scene=copied", x: 74, y: 440, w: 470, h: 70, flat: true, scale: 1.2 },
+            { src: "/?bare&active=2", x: 1090, y: 96, w: 400, h: 620, scale: 1.2 },
+            { src: "/pill.html?bare&scene=copied", x: 74, y: 420, w: 480, h: 130, flat: true, scale: 1.2 },
           ],
         },
         capture: {
@@ -191,8 +191,8 @@
           subline: "Every copy and cut is kept while Bard runs, with a soft pop to say so. Pick one and it is back on your clipboard.",
           keys: chord(["Alt", "Shift", "V"], "opens Bard anywhere"),
           windows: [
-            { src: "/?bare", x: 930, y: 112, w: 400, h: 620, scale: 1.2 },
-            { src: "/pill.html?bare&scene=copied", x: 536, y: 16, w: 480, h: 80, flat: true, scale: 1.1 },
+            { src: "/?bare&active=2", x: 930, y: 112, w: 400, h: 620, scale: 1.2 },
+            { src: "/pill.html?bare&scene=copied", x: 536, y: 8, w: 480, h: 120, flat: true, scale: 1.1 },
           ],
         },
         slots: {
@@ -202,8 +202,8 @@
           subline: "Pin what you reuse. Copy item 1, 2 or 3, or cycle through them, from any app, without opening a window.",
           keys: chord(["Alt", "Shift", "1–3"], "or C to cycle"),
           windows: [
-            { src: "/?bare&theme=dark", x: 930, y: 112, w: 400, h: 620, scale: 1.2 },
-            { src: "/pill.html?bare&scene=selected", x: 536, y: 16, w: 480, h: 80, flat: true, scale: 1.1 },
+            { src: "/?bare&theme=dark&active=2", x: 930, y: 112, w: 400, h: 620, scale: 1.2 },
+            { src: "/pill.html?bare&scene=selected", x: 536, y: 8, w: 480, h: 120, flat: true, scale: 1.1 },
           ],
         },
         dictate: {
@@ -213,7 +213,7 @@
           subline: "Offline dictation with a local speech model. Your voice never leaves your PC, and the words are kept in Bard too.",
           keys: chord(["Alt", "Shift", "Space"], "hold to talk"),
           doc: { x: 760, y: 190, w: 740, h: 560 },
-          windows: [{ src: "/pill.html?bare&scene=listening", x: 488, y: 16, w: 480, h: 70, flat: true, scale: 1.3 }],
+          windows: [{ src: "/pill.html?bare&scene=listening", x: 488, y: 8, w: 480, h: 110, flat: true, scale: 1.3 }],
         },
         draw: {
           tone: "draw",

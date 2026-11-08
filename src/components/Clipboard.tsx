@@ -172,7 +172,7 @@ const Row = memo(function Row({
               <Check size={11} strokeWidth={3} aria-hidden="true" />
             </span>
           )}
-          {item.favorite !== 0 && <Star className="item-flag" size={12} aria-label="Kept" />}
+          {item.favorite !== 0 && <Star className="item-flag" size={12} fill="currentColor" aria-label="Kept forever" />}
           {pinned && <Pin className="item-flag" size={12} aria-label="Pinned" />}
           {slot !== null ? (
             <kbd className="badge slot" title={`Alt+Shift+${slot}`}>
@@ -489,9 +489,9 @@ export default function Clipboard({
       <header
         className="clip-head"
         onMouseDown={(event) => {
-          if (event.button !== 0 || (event.target as HTMLElement).closest("button, input")) return;
-          // Dragging a docked window undocks it.
-          if (docked) void api.setDock("float");
+          // A floating window moves by its title bar; a docked one stays put
+          // until it is set to float from the menu or Settings.
+          if (docked || event.button !== 0 || (event.target as HTMLElement).closest("button, input")) return;
           void getCurrentWindow().startDragging();
         }}
       >

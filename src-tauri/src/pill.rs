@@ -44,9 +44,13 @@ pub fn show(app: &AppHandle, note: Note) {
         }
         let _ = handle.emit_to(LABEL, "pill", &note);
         if !visible {
-            let _ = win.set_ignore_cursor_events(true);
             let _ = win.show();
             let _ = win.set_always_on_top(true);
+            // After show, never before: on Linux the click-through input shape
+            // is set on the native window, which GTK only creates when the
+            // window is first shown, and tao unwraps it (a panic, and under
+            // `panic = "abort"` a dead app, on the first copy).
+            let _ = win.set_ignore_cursor_events(true);
         }
     });
     if !sticky {

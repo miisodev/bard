@@ -273,6 +273,7 @@ impl Chord {
     }
 
     /// The xdg shortcut-spec trigger the portal is offered.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn portal_trigger(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if self.ctrl {

@@ -165,7 +165,8 @@ const state: AppState = {
   modelId: "parakeet-tdt-0.6b-v3",
   modelReady: true,
   micReady: true,
-  activeItemId: null,
+  // `active=<id>` marks an item as the one on the clipboard, for the gallery.
+  activeItemId: params.has("active") ? Number(params.get("active")) : null,
   license,
   channel: params.get("channel") === "flatpak" ? "flatpak" : params.get("channel") === "store" ? "store" : "direct",
   platform: params.get("platform") ?? "windows",
@@ -543,7 +544,7 @@ export function install(label: "main" | "settings" | "draw" | "pill") {
 
 const PILL_SCENES: Record<string, PillNote> = {
   copied: { kind: "copy", text: "Copied", detail: "https://handy.computer/docs/models", sticky: true, holdMs: 0 },
-  selected: { kind: "select", text: "On your clipboard", detail: "ffmpeg -i take.wav -ar 16000 -ac 1…", slot: 2, slots: 3, sticky: true, holdMs: 0 },
+  selected: { kind: "select", text: "On your clipboard", detail: "https://handy.computer/docs/models", slot: 2, slots: 3, sticky: true, holdMs: 0 },
   listening: { kind: "listen", text: "Listening", sticky: true, holdMs: 0 },
   working: { kind: "work", text: "Transcribing", sticky: true, holdMs: 0 },
   done: { kind: "done", text: "Transcript copied", detail: "Book the Cape Town venue for the twelfth", sticky: true, holdMs: 0 },
@@ -589,8 +590,8 @@ const SKETCH: Shape[] = [
   { kind: "ellipse", id: 4, color: INK, width: 2.5, a: { x: 392, y: 70 }, b: { x: 606, y: 172 } },
   { kind: "text", id: 5, color: INK, size: 20, at: { x: 450, y: 122 }, text: "One timeline" },
   { kind: "arrow", id: 6, color: BLUE, width: 3, a: { x: 498, y: 182 }, b: { x: 498, y: 282 } },
-  { kind: "rect", id: 7, color: INK, width: 2.5, a: { x: 400, y: 292 }, b: { x: 600, y: 362 } },
-  { kind: "text", id: 8, color: INK, size: 20, at: { x: 432, y: 330 }, text: "On your clipboard" },
+  { kind: "rect", id: 7, color: INK, width: 2.5, a: { x: 384, y: 292 }, b: { x: 614, y: 362 } },
+  { kind: "text", id: 8, color: INK, size: 20, at: { x: 412, y: 330 }, text: "On your clipboard" },
   {
     kind: "pen",
     id: 9,

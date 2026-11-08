@@ -14,7 +14,61 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{commands::ImagesDir, db};
 
-static LAST_IMAGE_HASH: Mutex<Option<u64>> = Mutex::new(None);
+/// What Bard has just written itself, and what it has just captured, for text
+/// and for images. A change matching Bard's own write is never a capture; a
+/// change matching the last capture within a moment is the same copy reported
+/// twice (apps often set the clipboard in several steps). Anything else — even
+/// the same text copied again a few seconds later — is a fresh copy, kept and
+/// confirmed with a pop.
+struct Seen {
+    own: Option<(u64, std::time::Instant)>,
+    last: Option<(u64, std::time::Instant)>,
+}
+
+/// How long Bard's own write is remembered.
+const OWN_WINDOW: Duration = Duration::from_secs(5);
+/// How close together two reports of one copy arrive.
+const ECHO_WINDOW: Duration = Duration::from_millis(1500);
+
+impl Seen {
+    const fn new() -> Seen {
+        Seen {
+            own: None,
+            last: None,
+        }
+    }
+
+    fn mark_own(&mut self, digest: u64) {
+        self.own = Some((digest, std::time::Instant::now()));
+    }
+
+    /// True when `digest` is a copy worth capturing; records it as the last.
+    fn fresh(&mut self, digest: u64) -> bool {
+        let recent = |entry: Option<(u64, std::time::Instant)>, window: Duration| {
+            entry.is_some_and(|(seen, at)| seen == digest && at.elapsed() < window)
+        };
+        if recent(self.own, OWN_WINDOW) || recent(self.last, ECHO_WINDOW) {
+            return false;
+        }
+        self.last = Some((digest, std::time::Instant::now()));
+        true
+    }
+
+    /// Let a capture that failed to store be tried again.
+    fn forget(&mut self, digest: u64) {
+        if self.last.is_some_and(|(seen, _)| seen == digest) {
+            self.last = None;
+        }
+    }
+}
+
+static SEEN_TEXT: Mutex<Seen> = Mutex::new(Seen::new());
+static SEEN_IMAGE: Mutex<Seen> = Mutex::new(Seen::new());
+
+fn seen(slot: &'static Mutex<Seen>) -> std::sync::MutexGuard<'static, Seen> {
+    // A poisoned lock must not kill capture for the rest of the session.
+    slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 static LAST_OWN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(windows)]
@@ -134,9 +188,7 @@ struct Msg {
 pub fn note_own_image(bytes: &[u8]) {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
-    *LAST_IMAGE_HASH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(hasher.finish());
+    seen(&SEEN_IMAGE).mark_own(hasher.finish());
 }
 
 /// The person's pause switch. While it is on, nothing copied is stored.
@@ -204,15 +256,6 @@ pub fn note_own_write(app: &AppHandle) {
 /// refused with a visible reason rather than absorbed.
 pub const MAX_CAPTURE_TEXT_BYTES: usize = 256 * 1024;
 
-/// Hash of the last captured text, rather than the text itself.
-///
-/// The previous code kept a full `String` copy of the most recent payload alive
-/// for the lifetime of the process, purely to compare against the next one. A
-/// 64-bit hash answers the same question — has this exact text been captured
-/// already — without retaining a user's clipboard contents in memory
-/// indefinitely.
-static LAST_CONTENT_HASH: Mutex<Option<u64>> = Mutex::new(None);
-
 fn content_hash(text: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
@@ -227,28 +270,17 @@ fn content_hash(text: &str) -> u64 {
 /// `capture_text`. Without this the watcher had never seen that text, so every
 /// dictated line came back a moment later as a second `clipboard` row.
 pub fn note_own_text(text: &str) {
-    let digest = content_hash(text);
-    let mut guard = LAST_CONTENT_HASH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *guard = Some(digest);
+    // Hashed trimmed, exactly as the watcher hashes what it reads back: a
+    // transcript is written with a trailing space and read back without one.
+    seen(&SEEN_TEXT).mark_own(content_hash(text.trim()));
 }
 
 pub fn capture_text(app: &AppHandle, text: &str) {
     if crate::license::require(app).is_err() {
         return;
     }
-    let digest = content_hash(text);
-    {
-        // A poisoned lock must not kill capture for the rest of the session, so
-        // degrade to "have not seen this" rather than panicking the monitor.
-        let mut guard = LAST_CONTENT_HASH
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *guard == Some(digest) {
-            return;
-        }
-        *guard = Some(digest);
+    if !seen(&SEEN_TEXT).fresh(content_hash(text.trim())) {
+        return;
     }
 
     if text.len() > MAX_CAPTURE_TEXT_BYTES {
@@ -834,14 +866,8 @@ pub fn capture_image(app: &AppHandle, img: arboard::ImageData<'static>) -> bool 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     img.bytes.hash(&mut hasher);
     let hash = hasher.finish();
-    {
-        let mut guard = LAST_IMAGE_HASH
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *guard == Some(hash) {
-            return true;
-        }
-        *guard = Some(hash);
+    if !seen(&SEEN_IMAGE).fresh(hash) {
+        return true;
     }
     let job = ImageJob {
         app: app.clone(),
@@ -911,12 +937,7 @@ fn image_jobs() -> &'static std::sync::mpsc::SyncSender<ImageJob> {
 /// Only when the stored hash is still `hash`: a failure in the worker must not
 /// erase a *newer* capture's hash and let that picture be stored twice.
 fn forget_image_hash(hash: u64) {
-    let mut guard = LAST_IMAGE_HASH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if *guard == Some(hash) {
-        *guard = None;
-    }
+    seen(&SEEN_IMAGE).forget(hash);
 }
 
 /// Encode, write, file and announce one clipboard image — off the monitor
@@ -977,15 +998,8 @@ fn capture_files(app: &AppHandle, files: Vec<std::path::PathBuf>) {
         .iter()
         .map(|f| f.to_string_lossy().into_owned())
         .collect();
-    let digest = content_hash(&paths.join("\n"));
-    {
-        let mut guard = LAST_CONTENT_HASH
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *guard == Some(digest) {
-            return;
-        }
-        *guard = Some(digest);
+    if !seen(&SEEN_TEXT).fresh(content_hash(paths.join("\n").trim())) {
+        return;
     }
     // A reference, not a copy: Bard keeps where the files are, so copying the
     // item later hands the same files back to a file manager. It never owns
@@ -1166,6 +1180,22 @@ fn clip_excluded() -> bool {
 #[cfg(test)]
 mod tests {
     use super::should_exclude_clipboard;
+
+    #[test]
+    fn bards_own_write_is_never_a_capture_but_a_later_recopy_is() {
+        let mut seen = super::Seen::new();
+        seen.mark_own(7);
+        assert!(!seen.fresh(7), "Bard's own write");
+        assert!(seen.fresh(8), "a new copy");
+        assert!(!seen.fresh(8), "the same copy reported twice");
+        seen.last = Some((
+            8,
+            std::time::Instant::now() - std::time::Duration::from_secs(3),
+        ));
+        assert!(seen.fresh(8), "the same text copied again later");
+        seen.forget(8);
+        assert!(seen.fresh(8), "a failed store can be retried");
+    }
 
     #[test]
     fn clipboard_exclusion_flags_are_fail_closed() {
