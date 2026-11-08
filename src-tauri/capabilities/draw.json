@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "draw",
   "description": "Bard Drawing permissions",
-  "windows": ["draw"],
+  "windows": [
+    "draw"
+  ],
   "permissions": [
     "core:window:allow-start-dragging",
     "core:window:allow-start-resize-dragging",
@@ -16,12 +18,12 @@
     "allow-get-state",
     "allow-add-image",
     "allow-copy-item",
-    "allow-send-drawing",
     "allow-save-svg",
     "allow-open-draw-with-image",
     "allow-item-image-data",
     "allow-clipboard-image-data",
     "allow-set-draw-prefs",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "allow-notify-error"
   ]
 }

@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
   "description": "Primary Bard panel permissions",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "allow-get-appearance",
     "core:event:allow-listen",
@@ -31,7 +33,6 @@
     "allow-delete-all-data",
     "allow-copy-text",
     "allow-copy-item",
-    "allow-paste-back",
     "allow-copy-attachment",
     "allow-item-image-data",
     "allow-item-cover-url",
@@ -42,16 +43,9 @@
     "allow-set-autostart",
     "allow-open-startup-settings",
     "allow-open-link",
-    "allow-set-capture-double-shift",
-    "allow-set-dictation-review",
-    "allow-capture-now",
-    "allow-save-window-geometry",
-    "allow-minimize-panel",
     "allow-show-panel",
     "allow-hide-panel",
     "allow-toggle-panel",
-    "allow-set-shelf-edge",
-    "allow-shelf-hidden",
     "allow-get-models",
     "allow-get-model",
     "allow-set-model",
@@ -61,7 +55,6 @@
     "allow-dictate-start",
     "allow-dictate-stop",
     "allow-dictate-cancel",
-    "allow-set-dictation-overlay-position",
     "allow-create-section",
     "allow-set-active-section",
     "allow-rename-section",
@@ -84,8 +77,6 @@
     "allow-set-active-item",
     "allow-set-retention-days",
     "allow-get-retention-days",
-    "allow-set-sound-on-capture",
-    "allow-get-sound-on-capture",
     "allow-get-microphones",
     "allow-set-microphone",
     "allow-hf-cached-models",
@@ -110,6 +101,14 @@
     "allow-deactivate-license",
     "allow-clear-license",
     "allow-check-for-update",
-    "allow-install-update"
+    "allow-install-update",
+    "allow-set-dock",
+    "allow-get-feedback",
+    "allow-set-capture-paused",
+    "allow-notify-error",
+    "allow-get-shortcuts",
+    "core:window:allow-set-size",
+    "core:window:allow-is-maximized",
+    "core:window:allow-toggle-maximize"
   ]
 }

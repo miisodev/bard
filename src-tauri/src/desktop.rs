@@ -9,7 +9,6 @@ use serde::Serialize;
 pub struct DesktopStatus {
     pub session: &'static str,
     pub shortcuts_ready: bool,
-    pub input_ready: bool,
 }
 
 pub fn is_wayland() -> bool {
@@ -77,13 +76,11 @@ pub fn status() -> DesktopStatus {
         return DesktopStatus {
             session: "wayland",
             shortcuts_ready: crate::linux_portal::shortcuts_ready(),
-            input_ready: crate::linux_portal::input_ready(),
         };
     }
     DesktopStatus {
         session: if cfg!(windows) { "windows" } else { "x11" },
         shortcuts_ready: true,
-        input_ready: true,
     }
 }
 

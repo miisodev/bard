@@ -73,15 +73,6 @@ body {
 /* Docked to the top edge the band mirrors: the composer stays against the
    screen edge and the rail moves down to the band's lower side, so the
    controls never crowd the edge the window is anchored to. */
-.app[data-edge="top"] {
-  flex-direction: column-reverse;
-}
-
-.app[data-edge="top"] .toast-layer {
-  bottom: auto;
-  top: 100%;
-  padding: var(--sp-4) var(--sp-6) 0;
-}
 
 /* ---------- shelf motion ---------- */
 
@@ -92,51 +83,6 @@ body {
   durations in tokens.css, and App.tsx answers Rust immediately instead of
   waiting on a slide it is not going to draw.
 */
-.app[data-anim="in"][data-edge="bottom"] { animation: shelf-in-bottom var(--t-base) var(--ease-out); }
-.app[data-anim="in"][data-edge="top"] { animation: shelf-in-top var(--t-base) var(--ease-out); }
-.app[data-anim="in"][data-edge="left"] { animation: shelf-in-left var(--t-base) var(--ease-out); }
-.app[data-anim="in"][data-edge="right"] { animation: shelf-in-right var(--t-base) var(--ease-out); }
-
-.app[data-anim="out"][data-edge="bottom"] { animation: shelf-out-bottom var(--t-instant) var(--ease-in-out) forwards; }
-.app[data-anim="out"][data-edge="top"] { animation: shelf-out-top var(--t-instant) var(--ease-in-out) forwards; }
-.app[data-anim="out"][data-edge="left"] { animation: shelf-out-left var(--t-instant) var(--ease-in-out) forwards; }
-.app[data-anim="out"][data-edge="right"] { animation: shelf-out-right var(--t-instant) var(--ease-in-out) forwards; }
-
-@keyframes shelf-in-bottom {
-  from { transform: translateY(100%); }
-  to { transform: none; }
-}
-
-@keyframes shelf-in-top {
-  from { transform: translateY(-100%); }
-  to { transform: none; }
-}
-
-@keyframes shelf-in-left {
-  from { transform: translateX(-100%); }
-  to { transform: none; }
-}
-
-@keyframes shelf-in-right {
-  from { transform: translateX(100%); }
-  to { transform: none; }
-}
-
-@keyframes shelf-out-bottom {
-  to { transform: translateY(100%); }
-}
-
-@keyframes shelf-out-top {
-  to { transform: translateY(-100%); }
-}
-
-@keyframes shelf-out-left {
-  to { transform: translateX(-100%); }
-}
-
-@keyframes shelf-out-right {
-  to { transform: translateX(100%); }
-}
 
 /* ---------- shelf rail ---------- */
 
@@ -148,56 +94,11 @@ body {
   side. On the side edges it wraps, and the search collapses to an icon until
   it is wanted.
 */
-.shelf-rail {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  min-height: var(--shelf-rail-h);
-  padding: var(--sp-5) var(--sp-7);
-}
-
-.rail-start,
-.rail-end {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  flex: none;
-}
-
-.rail-spring {
-  flex: 1;
-  min-width: var(--sp-4);
-}
 
 /* The rail buttons are the shelf's own ghost size, a size up from the 30px
    they were in the panel: a 32px target with a 16px glyph. */
-.rail-btn {
-  width: var(--icon-control);
-  height: var(--icon-control);
-  border-radius: var(--r-pill);
-  background: transparent;
-  box-shadow: none;
-  color: var(--on-canvas-2);
-}
-
-.rail-btn:hover {
-  background: var(--canvas-hover);
-  color: var(--on-canvas);
-}
 
 /* ---------- search ---------- */
-
-.search {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: none;
-  outline: none;
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-base);
-}
 
 .search-field {
   flex: 0 1 260px;
@@ -233,92 +134,13 @@ body {
 /* The type filter is one segmented group, as libadwaita's toggle group and
    Apple's segmented control draw it: a tonal track, and the chosen segment a
    raised surface that springs into place. */
-.chips {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-  padding: var(--sp-1);
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 var(--sp-6);
-  border: none;
-  border-radius: var(--r-pill);
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-2);
-  font-family: inherit;
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  cursor: pointer;
-  transition: background var(--t-fast) var(--ease-out),
-              color var(--t-fast) var(--ease-out),
-              box-shadow var(--t-fast) var(--ease-out),
-              transform var(--t-base) var(--ease-spring);
-}
-
-.chip:hover {
-  color: var(--text);
-}
-
-.chip:active {
-  transform: scale(var(--press-scale));
-}
 
 /* The active segment is bolder as well as raised: the weight is the signal
    that survives for anyone the surface step does not reach. */
-.chip.on {
-  background: var(--surface);
-  color: var(--text);
-  font-weight: var(--fw-semibold);
-  box-shadow: var(--el-card);
-}
-
-.chip:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
 
 /* The side edges wrap the rail: the icons stay on one line, and the search —
    collapsed to an icon until it is wanted — takes a line of its own when it
    opens, with the chips under it. */
-.app[data-edge="left"] .shelf-rail,
-.app[data-edge="right"] .shelf-rail {
-  flex-wrap: wrap;
-  align-content: flex-start;
-  row-gap: var(--sp-4);
-  overflow: hidden;
-}
-
-.app[data-edge="left"] .rail-start,
-.app[data-edge="right"] .rail-start,
-.app[data-edge="left"] .rail-end,
-.app[data-edge="right"] .rail-end,
-.app[data-edge="left"] .rail-spring,
-.app[data-edge="right"] .rail-spring {
-  order: 1;
-}
-
-.app[data-edge="left"] .search-field,
-.app[data-edge="right"] .search-field {
-  order: 2;
-  flex: 1 1 100%;
-  min-width: 0;
-}
-
-.app[data-edge="left"] .chips,
-.app[data-edge="right"] .chips {
-  order: 3;
-  flex: 1 1 100%;
-  flex-wrap: wrap;
-  border-radius: var(--r-card);
-}
 
 /* ---------- resize handles ---------- */
 
@@ -345,16 +167,6 @@ body {
   position: absolute;
   pointer-events: auto;
 }
-
-.h-t { top: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
-.h-b { bottom: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
-.h-l { left: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
-.h-r { right: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
-.h-lt { left: 0; top: 0; width: 14px; height: 14px; cursor: nwse-resize; }
-.h-rt { right: 0; top: 0; width: 14px; height: 14px; cursor: nesw-resize; }
-.h-lb { left: 0; bottom: 0; width: 14px; height: 14px; cursor: nesw-resize; }
-.h-rb { right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; }
-
 
 .icon-btn {
   display: grid;
@@ -401,186 +213,26 @@ body {
   decides the axis — a horizontal band lays the zones out left to right with
   the cards in a row; a vertical band stacks them, and the cards with them.
 */
-.shelf-body {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  gap: var(--sp-6);
-  padding: 0 var(--sp-6) var(--sp-5);
-}
-
-.app[data-edge="left"] .shelf-body,
-.app[data-edge="right"] .shelf-body {
-  flex-direction: column;
-}
-
-.shelf-zone {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-.shelf-zone.all {
-  flex: 1;
-}
-
-.shelf-divider {
-  flex: none;
-  background: var(--canvas-rule);
-}
-
-.app[data-edge="bottom"] .shelf-divider,
-.app[data-edge="top"] .shelf-divider {
-  width: 1px;
-}
-
-.app[data-edge="left"] .shelf-divider,
-.app[data-edge="right"] .shelf-divider {
-  height: 1px;
-}
 
 /* The zone whose page size is measured. Only whole cards ever render: the page
    size comes from this box and the card's own size in the tokens. */
-.shelf-page {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  gap: var(--shelf-card-gap);
-  overflow: hidden;
-}
-
-.app[data-edge="left"] .shelf-page,
-.app[data-edge="right"] .shelf-page {
-  flex-direction: column;
-}
 
 /* The zone is a tab stop when it is empty (there is no card to point at), so
    it owes the keyboard a visible focus ring of its own. */
-.shelf-page:focus-visible {
-  outline: none;
-  border-radius: var(--r-card);
-  box-shadow: var(--focus-ring);
-}
 
 /* ---------- pager ---------- */
 
-.pager {
-  flex: none;
-  height: var(--shelf-pager-h);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-2);
-}
-
-.pager-page {
-  display: grid;
-  place-items: center;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 var(--sp-2);
-  border: none;
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--text-3);
-  font-family: inherit;
-  font-size: var(--fs-sm);
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
-}
-
-.pager-page:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
 /* The current page is bolder as well as tinted: colour is never the only
    carrier, and at a glance bold is what makes the position readable. */
-.pager-page.on {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-weight: var(--fw-semibold);
-}
-
-.pager-page:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.pager-gap {
-  color: var(--text-3);
-  font-size: var(--fs-sm);
-}
 
 /* ---------- packs pane ---------- */
-
-.shelf-zone.packs {
-  flex: none;
-}
-
-.app[data-edge="bottom"] .shelf-zone.packs,
-.app[data-edge="top"] .shelf-zone.packs {
-  width: var(--shelf-packs-w);
-}
-
-.app[data-edge="left"] .shelf-zone.packs,
-.app[data-edge="right"] .shelf-zone.packs {
-  height: var(--shelf-packs-h);
-}
 
 /* The zone's tab stop is the packs page — the roving card while it holds one,
    the page itself while it does not — so the ring is drawn there, as the All
    zone's is. */
-.packs-page:focus-visible {
-  outline: none;
-  border-radius: var(--r-card);
-  box-shadow: var(--focus-ring);
-}
-
-.packs-title {
-  margin: 0 0 var(--sp-4);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--tr-caption);
-  color: var(--on-canvas-2);
-}
-
-.packs-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-4);
-  padding: var(--sp-6);
-  text-align: center;
-  color: var(--on-canvas-2);
-}
-
-.packs-empty svg {
-  color: var(--on-canvas-3);
-}
-
-.packs-empty .title {
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  color: var(--on-canvas);
-}
-
-.packs-empty .hint {
-  max-width: 26ch;
-  font-size: var(--fs-caption);
-}
 
 /* A read that failed is not a shelf with no packs: it names the failure, and
    the retry is the one thing that can answer it. */
-.packs-empty.error svg {
-  color: var(--danger);
-}
 
 /* ---------- packs ---------- */
 
@@ -590,20 +242,6 @@ body {
   stacks along — a column on the bottom and top edges, a row on the sides.
   A clipped card would be a scroller, which this shelf does not have.
 */
-.packs-page {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--shelf-card-gap);
-  overflow: hidden;
-}
-
-.app[data-edge="left"] .packs-page,
-.app[data-edge="right"] .packs-page {
-  flex-direction: row;
-}
 
 /*
   One pack: the collage of its leading members, its name and how much it
@@ -611,193 +249,25 @@ body {
   has — with Open and More beside the name for the rest, visible at rest
   because nothing on this shelf hides behind hover.
 */
-.pack-card {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  width: 100%;
-  height: var(--shelf-pack-card-h);
-  /* A band a few pixels short must not clip the meta line: the collage gives
-     way instead, and the card never overflows the page it was measured for. */
-  max-height: 100%;
-  padding: var(--sp-4);
-  border-radius: var(--r-card);
-  background: var(--surface);
-  box-shadow: var(--el-card);
-  cursor: pointer;
-  overflow: hidden;
-  transition: background var(--t-fast) var(--ease-out);
-}
-
-.app[data-edge="left"] .pack-card,
-.app[data-edge="right"] .pack-card {
-  width: var(--shelf-pack-card-w);
-  height: 100%;
-}
-
-.pack-card:hover {
-  background: var(--surface-hover);
-}
 
 /* The keyboard cursor, on the item card's terms: the pack the arrows point at
    reads as lifted even while focus is elsewhere in the window. */
-.pack-card.active {
-  background: var(--surface-hover);
-  box-shadow: var(--el-card), 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
-}
-
-.pack-card:focus-visible {
-  outline: none;
-  box-shadow: var(--el-card), var(--focus-ring);
-}
 
 /* A pack with no text to paste is not a paste; the meta line says why, and
    the cursor stops promising an action that will be refused. */
-.pack-card[aria-disabled="true"] {
-  cursor: default;
-}
 
 /* The collage: up to four leading members, in pack order, sharing the strip
    evenly at any count. Media tiles crop to fill; word tiles are tinted by
    kind, which is the third signal after the text and the shape of the tile. */
-.pack-collage {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  gap: var(--sp-2);
-}
-
-.pack-tile {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--sp-2);
-  border-radius: var(--r-sm);
-  overflow: hidden;
-}
-
-.pack-tile.media {
-  padding: 0;
-  background: var(--surface-2);
-  color: var(--text-3);
-}
-
-.pack-tile.media img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.pack-tile.text { background: var(--kind-text); color: var(--kind-text-ink); }
-.pack-tile.link { background: var(--kind-link); color: var(--kind-link-ink); }
-.pack-tile.dictation { background: var(--kind-dictation); color: var(--kind-dictation-ink); }
 
 /* The swatch is the item's own colour, set inline; the inset ring keeps a
    white swatch from vanishing into the card it sits on. */
-.pack-tile.color {
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-
-.pack-tile-text {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  font-size: var(--fs-caption);
-  line-height: var(--lh-tight);
-  overflow-wrap: anywhere;
-}
-
-.pack-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  min-width: 0;
-}
-
-.pack-name {
-  flex: 1 1 40px;
-  min-width: 0;
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* The count rides the name's line: at 82px of card height on the bottom and
    top edges, a line of its own would be the collage's. */
-.pack-meta {
-  flex: 0 1 auto;
-  min-width: 0;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* The refusal, where the count would be: the reason is what the person needs
    most from this line, and it cannot be pasted at all. */
-.pack-meta.no-text {
-  color: var(--text-2);
-}
-
-.pack-name-input {
-  flex: 1;
-  min-width: 0;
-  height: 20px;
-  padding: 0 var(--sp-2);
-  border: none;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text);
-  font-family: inherit;
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-}
-
-.pack-name-input:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.pack-actions {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
-
-.pack-tool {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
-}
-
-.pack-tool:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.pack-tool:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
 
 /* ---------- pack view ---------- */
 
@@ -806,175 +276,23 @@ body {
   pack's commands in the foot. It rides the sheet's scrim and card, and it is
   the one surface that changes a pack's membership while it is up.
 */
-.sheet-card.pack-view {
-  width: 420px;
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px);
-}
-
-.pack-view-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-6);
-}
-
-.pack-view-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  min-height: 48px;
-}
-
-.pack-view-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  padding: var(--sp-3) var(--sp-4);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-}
-
-.pack-view-glyph {
-  flex: none;
-  display: inline-flex;
-  color: var(--text-3);
-}
-
-.pack-view-text {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fs-sm);
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pack-view-row-actions {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
-.pack-view-empty {
-  margin: 0;
-  padding: var(--sp-7);
-  text-align: center;
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-}
 
 /* The commands stay reachable in a shelf band: the member list scrolls
    under the foot rather than taking it out of view. */
-.pack-view-foot {
-  position: sticky;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  padding-top: var(--sp-4);
-  border-top: 1px solid var(--rule);
-  background: var(--surface);
-}
-
-.pack-view-spring {
-  flex: 1;
-  min-width: var(--sp-4);
-}
-
-.pack-view-note {
-  min-width: 0;
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-}
-
-.pack-view-name {
-  flex: 1;
-  min-width: 0;
-}
 
 /* ---------- card ---------- */
-
-.item-card {
-  position: relative;
-  flex: 1 0 var(--shelf-card-w);
-  min-width: 0;
-  max-width: calc(var(--shelf-card-w) + var(--sp-10));
-  display: flex;
-  flex-direction: column;
-  width: var(--shelf-card-w);
-  height: 100%;
-  border-radius: var(--r-card);
-  background: var(--surface);
-  box-shadow: var(--el-card);
-  cursor: pointer;
-  overflow: hidden;
-  transition: background var(--t-fast) var(--ease-out),
-              box-shadow var(--t-base) var(--ease-out),
-              transform var(--t-slow) var(--ease-spring);
-}
-
-.app[data-edge="left"] .item-card,
-.app[data-edge="right"] .item-card {
-  flex: none;
-  max-width: none;
-  width: 100%;
-  height: var(--shelf-card-h);
-}
 
 /* Only a capture that has not been on screen before arrives with motion. The
    animation used to sit on `.item-card` itself, so every card in the timeline
    re-ran it on every render — and a render happens after every click,
    keypress, capture and sort change. Two hundred items meant two hundred
    animations per interaction, on a list the user was trying to read. */
-.item-card.fresh {
-  animation: card-in var(--t-slow) var(--ease-spring);
-}
-
-.item-card:hover {
-  background: var(--surface-hover);
-  box-shadow: var(--el-raised);
-  transform: translateY(-1px);
-}
-
-.item-card:active {
-  transform: scale(0.985);
-}
-
-.item-card:focus-visible {
-  outline: none;
-  box-shadow: var(--el-card), var(--focus-ring);
-}
 
 /* Selection is a ring, never a fill and never a scale: a filled card competes
    with the done state, and a scaled one reflows the text inside it. */
-.item-card.selected {
-  box-shadow: var(--el-card), var(--focus-ring);
-}
 
 /* The keyboard cursor: a lifted surface and a soft accent hairline — present
    enough to follow, quiet enough to sit beside a selection ring. */
-.item-card.active:not(.selected) {
-  background: var(--surface-hover);
-  box-shadow: var(--el-raised), 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent);
-}
-
-.item-card.active:not(.selected) .item-body {
-  color: var(--text);
-}
-
-.item-card.done .item-body {
-  color: var(--text-3);
-  text-decoration: line-through;
-  text-decoration-color: var(--text-3);
-}
-
-.item-card.done .item-image,
-.item-card.done .thumb img {
-  opacity: 0.5;
-}
 
 /* ---------- card head ---------- */
 
@@ -984,225 +302,24 @@ body {
   pairs are AA-checked in tokens.css. The head itself stays the card's
   surface, so a page of cards reads as content rather than as coloured strips.
 */
-.card-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  height: var(--shelf-card-head);
-  padding: var(--sp-2) var(--sp-4) 0 var(--sp-3);
-  color: var(--text-2);
-}
-
-.card-label {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-signs {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-}
-
-.card-glyph {
-  flex: none;
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--r-pill);
-  background: var(--kind-text);
-  color: var(--kind-text-ink);
-}
-
-.card-head[data-kind="image"] .card-glyph { background: var(--kind-image); color: var(--kind-image-ink); }
-.card-head[data-kind="link"] .card-glyph { background: var(--kind-link); color: var(--kind-link-ink); }
-.card-head[data-kind="color"] .card-glyph { background: var(--kind-color); color: var(--kind-color-ink); }
-.card-head[data-kind="dictation"] .card-glyph { background: var(--kind-dictation); color: var(--kind-dictation-ink); }
-.card-head[data-kind="draw"] .card-glyph { background: var(--kind-draw); color: var(--kind-draw-ink); }
 
 /* The quick-paste badge: every card on the page whose digit is bound. */
-.card-key {
-  display: inline-grid;
-  place-items: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 var(--sp-2);
-  border-radius: 6px;
-  background: var(--keycap-bg);
-  color: var(--keycap-ink);
-  box-shadow: inset 0 0 0 1px var(--border-strong), inset 0 -1px 0 var(--border-strong);
-  font-family: inherit;
-  font-size: 10.5px;
-  font-weight: var(--fw-semibold);
-  font-variant-numeric: tabular-nums;
-}
 
 /* The checkbox: 24px of hit area around a 17px ring, on the head strip. */
-.check {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: var(--r-pill);
-  background: none;
-  color: var(--text-3);
-  cursor: pointer;
-  transition: color var(--t-fast) var(--ease-out),
-              transform var(--t-base) var(--ease-spring);
-}
-
-.check:active {
-  transform: scale(0.88);
-}
-
-.check svg {
-  width: 17px;
-  height: 17px;
-  stroke: currentColor;
-}
-
-.card-head .check:hover,
-.card-head .check:focus-visible {
-  color: var(--text);
-}
-
-.check:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.item-card.done .check {
-  color: var(--accent);
-}
-
-.item-card.done .check svg circle {
-  fill: currentColor;
-}
-
-.item-card.done .check svg path {
-  stroke: var(--text-on-accent);
-}
 
 /* ---------- card body ---------- */
 
-.card-body {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
-  padding: var(--sp-4) var(--sp-5) 0;
-  overflow: hidden;
-}
-
 /* Media sits inset with concentric corners — the card's radius less the
    inset — so a picture reads as held by the card rather than cut by it. */
-.item-card[data-shelf-kind="image"] .card-body,
-.item-card[data-shelf-kind="draw"] .card-body {
-  padding: var(--sp-3) var(--sp-3) 0;
-  gap: 0;
-}
-
-.item-card[data-shelf-kind="image"] .item-image,
-.item-card[data-shelf-kind="draw"] .item-image {
-  border-radius: calc(var(--r-card) - var(--sp-3));
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-
-.item-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  transition: opacity var(--t-fast) var(--ease-out);
-}
-
-.item-image-pending {
-  flex: 1;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-}
-
-.item-missing {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-sm);
-  color: var(--text-3);
-}
-
-.item-link-host { color: var(--accent-text); }
-.item-link-rest { color: var(--text-3); overflow-wrap: anywhere; }
 
 /* ---------- colour card ---------- */
 
 /* The swatch and its name sit side by side rather than stacked: a 64px chip
    above a name and a hex is 105px of content in an 88px body, and the line
    that fell off the bottom was the value — the one the card exists to show. */
-.card-color {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-5);
-  text-align: left;
-}
-
-.color-chip {
-  flex: none;
-  width: 64px;
-  height: 64px;
-  border-radius: 18px;
-  box-shadow: inset 0 0 0 1px var(--border-strong);
-}
-
-.color-text {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--sp-1);
-  min-width: 0;
-}
-
-.color-name {
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  color: var(--text);
-}
-
-.color-value {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-}
 
 /* On a side band the card is shorter than its width; the chip steps down so
    the name and the hex keep their room. */
-.app[data-edge="left"] .color-chip,
-.app[data-edge="right"] .color-chip {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-}
 
 /* ---------- card foot ---------- */
 
@@ -1211,278 +328,23 @@ body {
   how long a note is, how large an image is. A colour card puts its own three
   controls here instead — favourite, preview, more — and keeps the Copy.
 */
-.card-foot {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  height: var(--shelf-card-foot);
-  padding: 0 var(--sp-3) 0 var(--sp-5);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-variant-numeric: tabular-nums;
-}
-
-.card-meta {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.card-spring {
-  flex: 1;
-  min-width: 0;
-}
-
-.card-tools {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
-
-.card-tool {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
-}
-
-.card-tool:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.card-tool.on {
-  color: var(--accent-text);
-}
-
-.card-tool:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
 
 /* Visible at rest. The design system states it twice — "The Copy button is
    never removed from layout" and "At rest it uses --text-3" — and the surfaces
    blueprint says "one visible Copy button". Hiding it until hover meant the
    shelf's only direct command was invisible on a product whose entire claim is
    that it is a natural extension of your input. */
-.item-copy {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  opacity: 1;
-  transition: background var(--t-fast) var(--ease-out),
-              color var(--t-fast) var(--ease-out),
-              transform var(--t-base) var(--ease-spring);
-}
-
-.item-copy:active {
-  transform: scale(0.88);
-}
-
-.item-copy:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.item-copy:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
 
 /* On a clipboard manager the content is the product, so it is selectable: a
    note you cannot drag out of the window is a note you can only copy back
    through Bard. The card is still the click target. */
-.item-body {
-  min-width: 0;
-  font-size: var(--fs-base);
-  line-height: var(--lh-base);
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-word;
-  user-select: text;
-  display: -webkit-box;
-  -webkit-line-clamp: 8;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
 /* The clamp's hard edge gets a fade only where text is actually hidden, which
    CSS cannot tell on its own. The class is measured, not assumed: a three-line
    note gets no fade, because a fade over text that is all there is worse than
    a clean cut. */
-.item-body.clamped {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent 100%);
-}
-
-.item-body b { font-weight: var(--fw-semibold); }
-.item-body i { font-style: italic; }
-.item-body s { text-decoration-color: var(--text-3); }
-
-.md-code {
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-  padding: 0.1em 0.34em;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-
-.item-body mark {
-  background: var(--accent-soft);
-  color: inherit;
-  border-radius: 3px;
-  padding: 0 1px;
-}
-
-@keyframes card-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.empty-state {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-5);
-  padding: var(--sp-8);
-  text-align: center;
-  color: var(--on-canvas-2);
-  animation: card-in var(--t-slow) var(--ease-out);
-}
-
-.empty-state .hint {
-  max-width: 25ch;   /* keeps the shortcut and its sentence on two tidy lines */
-}
-
-.empty-glyph {
-  width: 26px;
-  height: 26px;
-  color: var(--text-3);
-  stroke: currentColor;
-  fill: currentColor;
-  margin-bottom: var(--sp-1);
-}
-
-.empty-state .title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--on-canvas);
-}
-
-
-.empty-state .hint kbd {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 1px 5px;
-  font-size: 11px;
-  color: var(--text);
-  font-family: inherit;
-}
 
 /* ---------- composer ---------- */
-
-.composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
-  background: transparent;
-}
-
-.composer-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-5);
-  border-radius: var(--r-card);
-  background: var(--surface-2);
-  box-shadow: none;
-  transition: background var(--t-fast) var(--ease-out),
-              box-shadow var(--t-fast) var(--ease-out);
-}
-
-.composer-row:focus-within {
-  background: var(--surface);
-  box-shadow: var(--focus-ring);
-}
-
-.composer-input {
-  flex: 1;
-  min-width: 0;
-  height: 26px;
-  border: none;
-  background: none;
-  box-shadow: none;
-  outline: none;
-  color: var(--text);
-  font-family: inherit;
-  font-size: var(--fs-base);
-  line-height: var(--lh-base);
-  padding: 0;
-}
-
-.composer-input::placeholder {
-  color: var(--placeholder);
-}
-
-
-.dictate-indicator {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
-  color: var(--accent-text);
-  animation: fade-in var(--t-slow) var(--ease-out);
-}
-
-.pulse-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse var(--t-pulse) var(--ease-in-out) infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.45;
-    transform: scale(0.8);
-  }
-}
 
 /* ---------- sheets / settings ---------- */
 
@@ -1850,8 +712,7 @@ body {
    all, so onboarding drew them in the browser's monospace default. The review
    foot overrides only the ink, since its caps sit on button grounds. */
 .shortcut-keys kbd,
-.shortcut-list kbd,
-.overlay-sheet kbd {
+.shortcut-list kbd {
   display: inline-grid;
   place-items: center;
   min-width: 22px;
@@ -1877,69 +738,14 @@ body {
   a class with every other sheet.
 */
 
-.color-preview {
-  gap: var(--sp-5);
-}
-
-.color-preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-5);
-}
-
 /* The colour at a size the shelf never has room for, hairlined so a swatch
    that happens to match the card behind it is still a shape. */
-.color-preview-swatch {
-  height: 96px;
-  border-radius: var(--r-control);
-  box-shadow: inset 0 0 0 1px var(--border-strong);
-}
-
-.color-preview-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-5);
-}
-
-.color-preview-label {
-  flex: none;
-  width: 34px;
-  font-family: var(--font-small);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--tr-caption);
-  text-transform: uppercase;
-  color: var(--text-3);
-}
 
 /* Selectable, because carrying the value out in the form you want is the
    reason the sheet exists. */
-.color-preview-value {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  user-select: text;
-}
 
 /* The card's own scale, like the head's close: a 34px pill belongs to the
    panel chrome, not inside a sheet. */
-.color-preview-copy {
-  width: 26px;
-  height: 26px;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-3);
-}
-
-.color-preview-copy:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
 
 /* ---------- onboarding ---------- */
 
@@ -2194,160 +1000,16 @@ body {
 
 /* ---------- overlay ---------- */
 
-.overlay-stage {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-}
-
-.overlay-pill {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  /* Fixed, so the × sits where the click guard hit-tests it
-     (CLOSE_* in dictation/overlay.rs); the label ellipsizes instead. */
-  width: 212px;
-  box-sizing: border-box;
-  height: 34px;
-  padding: 0 11px;
-  border: 0;
-  border-radius: 17px;
-  background: var(--surface-3);
-  box-shadow: inset 0 0 0 1px var(--border-strong);
-  font-size: var(--fs-sm);
-  line-height: 1;
-  color: var(--text);
-  white-space: nowrap;
-  animation: fade-in var(--t-base) var(--ease);
-}
-
-.overlay-pill .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse var(--t-pulse) var(--ease-in-out) infinite;
-}
-
-.overlay-pill .dot[data-state="transcribing"],
-.overlay-pill .dot[data-state="finishing"],
-.overlay-pill .dot[data-state="cancelling"] {
-  animation-play-state: paused;
-  opacity: 0.55;
-}
-
-.overlay-pill .dot[data-state="report"] {
-  animation: none;
-  background: var(--danger);
-}
-
-.overlay-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.overlay-pill .bars {
-  display: flex;
-  gap: 2px;
-  align-items: flex-end;
-  width: 26px;
-  height: 10px;
-  overflow: hidden;
-}
-
-.overlay-pill .bars i {
-  flex: 1;
-  height: 10px;
-  background: var(--accent);
-  border-radius: 2px;
-  transform-origin: bottom;
-  transition: transform 80ms linear;
-}
-
-.overlay-x {
-  position: relative;
-  border: 0;
-  background: transparent;
-  color: var(--text-3);
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-  display: grid;
-  place-items: center;
-}
-
 /* A 12px glyph in a 20px well is the pill's own scale — it is 34px tall — so
    the target's 24px floor is met by a pseudo around it. The guard's own close
    area (CLOSE_* in dictation/overlay.rs) already spans it. */
-.overlay-x::before {
-  content: "";
-  position: absolute;
-  inset: -3px;
-}
-
-.overlay-x svg {
-  width: 12px;
-  height: 12px;
-}
-
-.overlay-x:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.overlay-x:hover {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
 
 /* A click elsewhere during a live take is held back; the × answers it — the
    way out, lit red for a beat. */
-.overlay-x.nudge {
-  animation: overlay-nudge 900ms var(--ease-out) both;
-}
-
-@keyframes overlay-nudge {
-  0% {
-    background: var(--danger);
-    color: #ffffff;
-    transform: scale(1.18);
-  }
-  18%,
-  55% {
-    background: var(--danger);
-    color: #ffffff;
-    transform: scale(1);
-  }
-  100% {
-    background: transparent;
-    color: var(--text-3);
-    transform: scale(1);
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
-  .overlay-x.nudge {
-    animation-name: overlay-nudge-still;
+  
   }
-  @keyframes overlay-nudge-still {
-    0%,
-    60% {
-      background: var(--danger);
-      color: #ffffff;
-    }
-    100% {
-      background: transparent;
-      color: var(--text-3);
-    }
-  }
-}
 
 /*
   The review sheet: a finished take, opened for reading before it goes. Rust
@@ -2356,144 +1018,15 @@ body {
   kind pair and keycaps, all sized from the tokens.
 */
 
-.overlay-sheet {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  border-radius: var(--r-panel);
-  background: var(--surface-3);
-  box-shadow: inset 0 0 0 1px var(--border-strong);
-  animation: sheet-in var(--t-base) var(--ease-out);
-}
-
-.overlay-sheet-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  padding: var(--sp-4) var(--sp-4) var(--sp-3) var(--sp-5);
-}
-
 /* The revision pager. Inert while a take is one page, but drawn from the
    pages it has, so a second revision lands in a layout that already fits. */
-.overlay-pager {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-}
-
-.overlay-pager button {
-  display: grid;
-  place-items: center;
-  /* A glyph-only box, so 24px costs no ink: it is the 24px target the arrows
-     owe, drawn for the revisions a take can hold. */
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: inherit;
-  font: inherit;
-  font-size: var(--fs-base);
-  line-height: 1;
-}
 
 /* The pager is inert at one revision; the ring is ready for when it is not. */
-.overlay-pager button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.overlay-pager-count {
-  font-variant-numeric: tabular-nums;
-}
-
-.overlay-sheet-title {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-semibold);
-  color: var(--text);
-}
 
 /* The kind being reviewed, on the card heads' own pair. */
-.overlay-sheet-kind {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 var(--sp-4);
-  border-radius: var(--r-pill);
-  background: var(--kind-dictation);
-  color: var(--kind-dictation-ink);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-medium);
-}
-
-.overlay-sheet-context {
-  margin: 0;
-  padding: 0 var(--sp-5) var(--sp-4);
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-}
-
-.overlay-sheet-body {
-  flex: 1;
-  min-height: 0;
-  margin: 0 var(--sp-5);
-  padding: var(--sp-4) var(--sp-5);
-  border: none;
-  border-radius: var(--r-control);
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-base);
-  line-height: var(--lh-base);
-  resize: none;
-  outline: none;
-}
-
-.overlay-sheet-body:focus {
-  box-shadow: var(--focus-ring);
-}
-
-.overlay-sheet-error {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-3);
-  margin: 0;
-  padding: var(--sp-3) var(--sp-5) 0;
-  font-size: var(--fs-sm);
-  line-height: var(--lh-base);
-  color: var(--danger-text);
-}
-
-.overlay-sheet-error svg {
-  flex: none;
-  margin-top: 2px;
-}
-
-.overlay-sheet-foot {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--sp-4);
-  padding: var(--sp-5);
-}
 
 /* The caps sit on a neutral button and an accent one, so they take the quick-
    paste badge's ink pair over the shared keycap metrics. */
-.overlay-sheet kbd {
-  background: var(--keycap-bg);
-  color: var(--keycap-ink);
-}
 
 @keyframes fade-in {
   from {
@@ -2518,344 +1051,26 @@ body {
 /* The foot is a positioning context, so the toast is placed above the composer
    by geometry rather than by a magic offset. It was pinned to `bottom: 14px`,
    which put it on top of the field the user was typing into. */
-.shelf-foot {
-  position: relative;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
-  padding: var(--sp-4) var(--sp-6) var(--sp-6);
-}
-
-.toast-layer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
-  z-index: 40;
-  display: flex;
-  justify-content: center;
-  padding: 0 var(--sp-6) var(--sp-4);
-  /* Empty the layer must not eat clicks meant for the card above it. */
-  pointer-events: none;
-}
-
-.toast {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  max-width: 100%;
-  padding: var(--sp-4) var(--sp-7);
-  border: 1px solid transparent;
-  border-radius: var(--r-pill);
-  /* Material's snackbar: inverse surface, so a confirmation reads over any
-     shelf without competing with the cards. */
-  background: var(--text);
-  color: var(--surface);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  line-height: 1.3;
-  box-shadow: var(--el-pop);
-  pointer-events: auto;
-  animation: toast-in var(--t-slow) var(--ease-spring);
-}
 
 /* An error keeps a hairline of the danger colour, a corner radius that suits a
    wrapped sentence, and the control that dismisses it. A confirmation is a
    pill on its way out and needs none of that. */
-.toast.error {
-  padding-right: var(--sp-3);
-  border-color: var(--danger);
-  border-radius: var(--r-control);
-  background: var(--surface);
-  color: var(--text);
-}
-
-.toast-text {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
-.toast-dismiss {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-}
-
-.toast-dismiss:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.toast-dismiss:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-@keyframes toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.inline-edit {
-  width: 100%;
-  min-height: 40px;
-  resize: vertical;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.5;
-  padding: 6px 8px;
-  outline: none;
-}
-
-.thumb-row {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.thumb {
-  position: relative;
-  display: inline-block;
-}
-
-.thumb img {
-  width: 44px;
-  height: 44px;
-  object-fit: cover;
-  border-radius: 6px;
-  display: block;
-  cursor: pointer;
-}
 
 /* Copying an attachment is reachable only by clicking it, so the thumbnail is
    a real button: it takes focus, it has a name, and it stops the click before
    the card turns it into a selection. */
-.thumb-img {
-  display: block;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-  border-radius: 6px;
-}
-
-.thumb-img:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.thumb-x {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-  display: none;
-}
 
 /* The disc stays 16px; the target around it is the 24px a pointer needs. The
    overlay is inert: it draws nothing and only answers clicks. */
-.thumb-x::before {
-  content: "";
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-}
 
 /* Also on focus: `display: none` is not focusable, so a keyboard user could
    never reach the one control that removes an attachment. */
-.thumb:hover .thumb-x,
-.thumb:focus-within .thumb-x {
-  display: grid;
-  place-items: center;
-}
-
-.thumb-x:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.ctx-menu {
-  position: fixed;
-  z-index: 70;
-  min-width: 190px;
-  /* The pack steps and the item rows together can outgrow a shelf band, which
-     is shorter than this menu; the menu scrolls instead of clipping an
-     action. */
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
-  background: var(--surface-3);
-  border: none;
-  border-radius: var(--r-card);
-  box-shadow: var(--el-pop);
-  padding: var(--sp-3);
-  animation: menu-in var(--t-fast) var(--ease-out);
-}
-
-.ctx-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* The pack-name step of the pack flow: a field and its rows in the menu. */
-.ctx-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  min-width: 210px;
-  padding: var(--sp-2);
-}
-
-.ctx-form-title {
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--tr-caption);
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-
-.ctx-input {
-  height: 28px;
-  padding: 0 var(--sp-4);
-  border: none;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text);
-  font-family: inherit;
-  font-size: var(--fs-base);
-}
-
-.ctx-input:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.ctx-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-base);
-  padding: var(--sp-4) var(--sp-5);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-}
-
-.ctx-row:hover:not(:disabled),
-.ctx-row:focus-visible {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-
-.ctx-row:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.ctx-row:disabled {
-  color: var(--text-3);
-  cursor: default;
-  opacity: 0.55;
-}
-
-.ctx-row svg {
-  flex: none;
-}
-
-.ctx-row.danger:hover:not(:disabled) {
-  background: var(--danger-soft);
-  color: var(--danger-text);
-}
-
-.ctx-sep {
-  height: 1px;
-  background: var(--border);
-  margin: 4px 5px;
-}
 
 .sheet-card.compact {
   width: 280px;
   gap: 10px;
-}
-
-.switcher-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-.switcher-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  border: none;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-base);
-  padding: var(--sp-4) var(--sp-5);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  text-align: left;
-}
-
-.switcher-row:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.switcher-row.on {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-
-.switcher-count {
-  flex: none;
-  min-width: 18px;
-  text-align: right;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-variant-numeric: tabular-nums;
-}
-
-.switcher-row.on .switcher-count {
-  color: inherit;
 }
 
 mark {
@@ -2956,31 +1171,6 @@ mark {
 }
 
 /* ---------- composer attach ---------- */
-
-
-.composer-add {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 26px;
-  border: none;
-  border-radius: var(--r-sm);
-  background: none;
-  color: var(--text-3);
-  cursor: pointer;
-  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
-}
-
-.composer-add:hover {
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-
-.composer-add:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
 
 /* ---------- shared controls (panel, settings, switcher) ---------- */
 
@@ -3255,32 +1445,11 @@ mark {
   color: var(--text);
 }
 
-.license-gate {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-4);
-  margin: var(--sp-3) var(--sp-5) 0;
-  padding: var(--sp-4) var(--sp-5);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-control);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-}
-
-.composer-add:disabled,
-.composer-input:disabled {
-  cursor: not-allowed;
-  opacity: .45;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
   /* A repeating pulse is motion a person asked not to see; the state it
      indicates is written beside it and is never carried by the animation. */
-  .pulse-dot,
-  .overlay-pill .dot { animation: none; }
+  
 }
 
 .keys kbd {
@@ -3366,106 +1535,537 @@ mark {
   padding: 0;
 }
 
-.keys-times,
-.keys-then {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-
 /* Search recovery stays in reach while the field retains keyboard focus. */
-.search-clear {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: var(--sp-9);
-  height: var(--sp-9);
-  padding: 0;
-  border: none;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-}
 .search-clear:hover { background: var(--surface-2); color: var(--text); }
 .search-clear:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .search-clear:active { background: var(--accent-soft); }
 
 /* Failed saves stay with the focused draft until the person retries. */
-.note-edit-error {
-  margin: 0;
-  color: var(--danger-text);
-  font-size: var(--fs-sm);
-  line-height: var(--lh-base);
-}
-.note-edit-dialog .inline-edit {
-  flex: 1;
-  min-height: var(--sp-11);
-  height: calc(var(--sp-11) * 3);
-  resize: none;
-  font-size: var(--fs-base);
-  line-height: var(--lh-loose);
-  padding: var(--sp-4);
-}
-.note-edit-dialog .inline-edit:focus-visible { box-shadow: var(--focus-ring); }
-.note-edit-buttons { display: flex; flex: none; gap: var(--sp-4); }
 
-.composer-submit {
+/* A native modal keeps full-content reading separate from the paste action. */
+
+/* ══ Main window ═════════════════════════════════════════════════════════
+   The clipboard history: a compact vertical list. A title bar that moves the
+   window, a search field and a kind filter, then one row per item — glyph,
+   content, and when — with the first three rows numbered for their slot
+   shortcuts. Docked, it loses its outer corners against the screen edge. */
+
+.clip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.app[data-dock="left"],
+.app[data-dock="right"] {
+  border-radius: 0;
+  border-width: 0;
+}
+
+.clip-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 44px;
+  padding: 0 var(--sp-4) 0 var(--sp-7);
   flex: none;
-  height: var(--composer-action-h);
-  padding: 0 var(--sp-5);
-  border: none;
-  border-radius: var(--r-sm);
-  background: var(--accent);
-  color: var(--text-on-accent);
+  cursor: default;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
+  flex: none;
+}
+
+.status-dot.paused {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 22%, transparent);
+}
+
+.clip-title {
+  margin: 0 0 0 var(--sp-3);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-normal);
+  color: var(--on-canvas);
+}
+
+.clip-head-spring {
+  flex: 1;
+}
+
+.head-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--on-canvas-2);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out),
+    transform var(--t-fast) var(--ease-spring);
+}
+
+.head-btn:hover {
+  background: var(--canvas-hover);
+  color: var(--on-canvas);
+}
+
+.head-btn:active {
+  transform: scale(var(--press-scale));
+}
+
+.head-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.head-btn[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--on-canvas);
+}
+
+.head-btn.close:hover {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-pill);
+  font-family: var(--font-text);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.paused-badge {
+  padding: 0 var(--sp-4);
+  background: color-mix(in srgb, var(--warning) 20%, var(--surface));
+  color: var(--on-canvas);
+}
+
+.clip-tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-6) var(--sp-5);
+  flex: none;
+}
+
+.clip-tools .search-field {
+  flex: none;
+  width: 100%;
+  height: 34px;
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+}
+
+.search::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-clear {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.filters {
+  display: flex;
+  gap: var(--sp-2);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.filters::-webkit-scrollbar {
+  display: none;
+}
+
+.filter {
+  flex: none;
+  height: 28px;
+  padding: 0 var(--sp-6);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--on-canvas-2);
   font: inherit;
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
   cursor: pointer;
-}
-.composer-submit:hover { background: var(--accent-hover); }
-.composer-submit:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.composer-submit:disabled { opacity: 0.65; cursor: wait; }
-.composer-hint {
-  flex: none;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  padding: 0 var(--sp-3);
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
 }
 
-/* A native modal keeps full-content reading separate from the paste action. */
-.item-preview {
-  width: var(--preview-width);
-  max-width: calc(100vw - var(--sp-10));
-  max-height: calc(100vh - var(--sp-10));
-  padding: var(--sp-7);
-  border: var(--hairline) solid var(--border-strong);
-  border-radius: var(--r-panel);
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--el-pop);
+.filter:hover:not(:disabled):not(.on) {
+  background: var(--canvas-hover);
+  color: var(--on-canvas);
 }
-.item-preview[open] { display: flex; flex-direction: column; gap: var(--sp-6); }
-.item-preview::backdrop { background: var(--scrim); }
-.item-preview-head,
-.item-preview-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6); }
-.item-preview-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: var(--fw-semibold); }
-.item-preview-content {
+
+.filter.on {
+  background: var(--text);
+  color: var(--canvas);
+}
+
+.filter:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.filter:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.clip-scroll {
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--sp-4) var(--sp-4);
+}
+
+.clip-list:focus-visible {
+  outline: none;
+}
+
+.clip-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
   margin: 0;
-  padding: var(--sp-4);
-  overflow: auto;
+  padding: 0;
+  list-style: none;
+}
+
+.clip-heading {
+  padding: var(--sp-5) var(--sp-5) var(--sp-3);
+  color: var(--on-canvas-3);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-caption);
+}
+
+.item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  min-height: 48px;
+  padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-5);
+  border-radius: var(--r-card);
+  color: var(--text);
+  cursor: default;
+  transition: background var(--t-fast) var(--ease-out);
+}
+
+.item:hover {
+  background: var(--surface);
+  box-shadow: var(--el-card);
+}
+
+.item:active {
+  background: var(--surface-hover);
+}
+
+.item.is-active {
+  background: var(--surface);
+  box-shadow: var(--el-card), inset 0 0 0 2px var(--ring);
+}
+
+.item-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-pill);
+  background: var(--kind-text);
+  color: var(--kind-text-ink);
+}
+
+.item[data-kind="link"] .item-glyph {
+  background: var(--kind-link);
+  color: var(--kind-link-ink);
+}
+
+.item[data-kind="image"] .item-glyph {
+  background: var(--kind-image);
+  color: var(--kind-image-ink);
+}
+
+.item[data-kind="color"] .item-glyph {
+  background: var(--kind-color);
+  color: var(--kind-color-ink);
+}
+
+.item[data-kind="dictation"] .item-glyph {
+  background: var(--kind-dictation);
+  color: var(--kind-dictation-ink);
+}
+
+.item[data-kind="draw"] .item-glyph {
+  background: var(--kind-draw);
+  color: var(--kind-draw-ink);
+}
+
+.item[data-kind="file"] .item-glyph {
+  background: var(--kind-file);
+  color: var(--kind-file-ink);
+}
+
+.item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.item-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.item-main,
+.item-sub {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.item-main {
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
+}
+
+.item-main.mono {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-normal);
+}
+
+.item-sub {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.item-count {
+  margin-left: var(--sp-3);
+  color: var(--text-3);
+  font-weight: var(--fw-normal);
+}
+
+.item-media {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.item-cover {
+  display: block;
+  width: 64px;
+  height: 40px;
   border-radius: var(--r-sm);
+  object-fit: cover;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.item-color {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.item-end {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: none;
+  min-width: 60px;
+}
+
+.item-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  color: var(--text-3);
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.item-time {
+  min-width: 26px;
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.item-flag {
+  color: var(--text-3);
+}
+
+.badge.slot {
+  background: var(--keycap-bg);
+  color: var(--keycap-ink);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.badge.current {
+  width: 18px;
+  padding: 0;
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.item.is-current .item-text,
+.item.is-current .item-main {
+  color: var(--text);
+}
+
+.item-actions {
+  position: absolute;
+  right: 0;
+  display: flex;
+  gap: var(--sp-1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.item:hover .item-actions,
+.item.is-active .item-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.item:hover .item-meta,
+.item.is-active .item-meta {
+  opacity: 0;
+}
+
+.item-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+
+.item-btn:hover {
   background: var(--surface-2);
   color: var(--text);
-  font: inherit;
-  font-size: var(--fs-base);
-  line-height: var(--lh-loose);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
 }
-.item-preview-content:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.item-preview-content img { display: block; max-width: 100%; height: auto; }
-.item-preview-foot .btn { flex: none; }
+
+.clip-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-11) var(--sp-9);
+  color: var(--on-canvas-2);
+  text-align: center;
+}
+
+.clip-empty p {
+  max-width: 260px;
+  margin: 0;
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+}
+
+.empty-title {
+  color: var(--on-canvas);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.empty-hint {
+  margin-top: var(--sp-4);
+}
+
+.empty-hint kbd,
+.foot-hint {
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--keycap-bg);
+  color: var(--keycap-ink);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  font-family: var(--font-text);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+}
+
+.clip-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  min-height: 36px;
+  padding: var(--sp-2) var(--sp-7);
+  border-top: 1px solid var(--canvas-rule);
+  color: var(--on-canvas-3);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.foot-warn {
+  color: var(--danger-text);
+  font-weight: var(--fw-medium);
+}
+
+.btn.small {
+  height: 26px;
+  padding: 0 var(--sp-6);
+  font-size: var(--fs-sm);
+}

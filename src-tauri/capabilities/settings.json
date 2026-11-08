@@ -2,13 +2,14 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings",
   "description": "Bard Settings permissions",
-  "windows": ["settings"],
+  "windows": [
+    "settings"
+  ],
   "permissions": [
     "core:window:allow-start-dragging",
     "core:window:allow-start-resize-dragging",
     "allow-get-appearance",
     "allow-set-background",
-    "allow-set-shelf-edge",
     "core:event:allow-listen",
     "core:window:allow-close",
     "core:event:allow-unlisten",
@@ -20,8 +21,6 @@
     "allow-configure-desktop",
     "allow-open-startup-settings",
     "allow-open-link",
-    "allow-set-capture-double-shift",
-    "allow-set-dictation-review",
     "allow-get-models",
     "allow-get-model",
     "allow-set-model",
@@ -31,7 +30,6 @@
     "allow-dictate-start",
     "allow-dictate-stop",
     "allow-dictate-cancel",
-    "allow-set-dictation-overlay-position",
     "allow-export-markdown",
     "allow-set-export-dir",
     "allow-get-export-dir",
@@ -42,8 +40,6 @@
     "allow-set-retention-days",
     "allow-get-retention-days",
     "allow-prune-history-now",
-    "allow-set-sound-on-capture",
-    "allow-get-sound-on-capture",
     "allow-get-microphones",
     "allow-set-microphone",
     "allow-hf-cached-models",
@@ -71,6 +67,13 @@
     "allow-deactivate-license",
     "allow-clear-license",
     "allow-check-for-update",
-    "allow-install-update"
+    "allow-install-update",
+    "allow-get-feedback",
+    "allow-set-feedback",
+    "allow-get-shortcuts",
+    "allow-set-shortcut",
+    "allow-reset-shortcuts",
+    "allow-set-dock",
+    "allow-set-capture-paused"
   ]
 }

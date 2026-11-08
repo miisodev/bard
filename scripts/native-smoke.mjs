@@ -139,7 +139,7 @@ try {
   try {
     // Finishing writes the trial to the OS credential store and registers
     // autostart before the shelf appears, so it gets longer than a render.
-    await waitForSelector('[role="listbox"][aria-label="Cards"]', 45_000);
+    await waitForSelector('.clip', 45_000);
   } catch (error) {
     // Record what the setup window says and what the backend reports, so a
     // stall is distinguishable from a refused trial or autostart write.
@@ -186,10 +186,28 @@ try {
       await writeFile(`${output}/clipboard-metadata.json`, result.stdout || result.stderr);
     }
   }
+  try {
+    // The v3 promise: whatever another program puts on the clipboard is kept.
+    const marker = `Bard native smoke — copied elsewhere ${Date.now()}`;
+    const copied = windows
+      ? spawnSync("powershell.exe", ["-NoProfile", "-Command", `Set-Clipboard -Value '${marker}'`], { encoding: "utf8", timeout: 15_000 })
+      : spawnSync("bash", ["-c", `printf '%s' "$1" | xclip -selection clipboard >/dev/null 2>&1 &`, "bash", marker], { encoding: "utf8", timeout: 15_000 });
+    assert.equal(copied.status, 0, `external clipboard write failed: ${copied.stderr}`);
+    const deadline = Date.now() + 10_000;
+    let kept = false;
+    while (Date.now() < deadline && !kept) {
+      kept = (await invoke("get_state")).items.some((item) => item.content === marker);
+      if (!kept) await new Promise((done) => setTimeout(done, 250));
+    }
+    assert(kept, "an external copy reaches Bard's history");
+    check("a copy made in another program is kept");
+  } catch (error) {
+    failures.push(String(error));
+  }
   await invoke("set_theme", { theme: "dark" });
   assert.equal((await invoke("get_state")).theme, "dark");
   await waitForTheme("dark");
-  await screenshot("shelf-dark");
+  await screenshot("main-dark");
   await invoke("open_settings");
   await selectWindow("settings");
   await waitForSelector('[role="tablist"]');

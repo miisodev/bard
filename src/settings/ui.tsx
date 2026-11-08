@@ -29,6 +29,23 @@ export function Pane({ title, description, children }: {
   );
 }
 
+/** A titled block inside another pane, for a feature that lives under it. */
+export function Section({ title, description, children }: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="pane-section" aria-label={title}>
+      <header className="pane-section-head">
+        <h2>{title}</h2>
+        {description ? <p>{description}</p> : null}
+      </header>
+      {children}
+    </section>
+  );
+}
+
 export function Group({ title, note, children }: {
   title?: string;
   /** Sits above the card. A note *inside* it reads as a setting, which it is not. */

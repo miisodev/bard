@@ -44,8 +44,7 @@ export const DRAW_SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     name: "Save",
     rows: [
-      { keys: ["Enter"], what: "Send — keep it and paste it" },
-      { keys: ["Ctrl", "Enter"], what: "Send" },
+      { keys: ["Enter"], what: "Copy — keep it and put it on the clipboard" },
       { keys: ["Ctrl", "S"], what: "Keep it in Bard" },
       { keys: ["Ctrl", "C"], what: "Copy it to the clipboard" },
     ],

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Bard",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "identifier": "com.miisodev.bard",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -16,23 +16,25 @@
         "label": "main",
         "dragDropEnabled": false,
         "title": "Bard",
-        "width": 380,
+        "width": 400,
         "height": 620,
         "transparent": true,
         "decorations": false,
-        "shadow": false,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "resizable": false,
+        "shadow": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "resizable": true,
         "visible": false,
-        "center": false
+        "center": false,
+        "minWidth": 300,
+        "minHeight": 360
       },
       {
-        "label": "overlay",
-        "title": "Recording",
-        "width": 260,
-        "height": 60,
-        "url": "overlay.html",
+        "label": "pill",
+        "title": "Bard",
+        "width": 480,
+        "height": 300,
+        "url": "pill.html",
         "transparent": true,
         "decorations": false,
         "shadow": false,
@@ -55,7 +57,10 @@
   },
   "bundle": {
     "active": true,
-    "resources": { "transcribe-libs/*": ".", "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md" },
+    "resources": {
+      "transcribe-libs/*": ".",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    },
     "targets": [
       "nsis"
     ],

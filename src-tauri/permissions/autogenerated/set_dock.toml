@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-dock"
+description = "Enables the set_dock command without any pre-configured scope."
+commands.allow = ["set_dock"]
+
+[[permission]]
+identifier = "deny-set-dock"
+description = "Denies the set_dock command without any pre-configured scope."
+commands.deny = ["set_dock"]

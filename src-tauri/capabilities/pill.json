@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pill",
+  "description": "Status pill permissions",
+  "windows": [
+    "pill"
+  ],
+  "permissions": [
+    "allow-get-appearance",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

@@ -16,10 +16,10 @@ import { resolve } from "node:path";
 
 const STORE_OUT = "../.agents/files/Store submission/Screenshots";
 const STORE_NAME = "Screenshot {n} - {shot}.png";
-const STORE_ORDER = ["hero", "capture", "dictate", "draw", "models", "dark"];
+const STORE_ORDER = ["hero", "capture", "slots", "dictate", "draw", "models"];
 const GALLERY_OUT = "../.agents/files/launch/gallery";
 const GALLERY_NAME = "{n}-{shot}.png";
-const GALLERY_ORDER = ["hero", "capture", "dictate", "draw", "models", "dark"];
+const GALLERY_ORDER = ["hero", "capture", "slots", "dictate", "draw", "models"];
 const DEFAULT_SIZE = "1600x900";
 const DEFAULT_SCALE = "2";
 const DEFAULT_BASE = "http://localhost:1430";

@@ -361,7 +361,7 @@ fn start_monitor(shared: Arc<Shared>, app: AppHandle) -> JoinHandle<()> {
                     // pill in the overlay. This used to reach all four windows
                     // five times a second, and the panel re-rendered the whole
                     // shelf for a level nothing in it drew.
-                    let _ = app.emit_to("overlay", "mic-level", (level, probability));
+                    let _ = app.emit_to("pill", "mic-level", (level, probability));
                 }
             }
 

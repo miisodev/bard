@@ -3,7 +3,7 @@
  * in development. A production build never contains the preview: the branch is
  * dead code there and Vite drops the import with it.
  */
-export async function boot(label: "main" | "settings" | "draw" | "overlay"): Promise<void> {
+export async function boot(label: "main" | "settings" | "draw" | "pill"): Promise<void> {
   if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
     (await import("./preview")).install(label);
   }

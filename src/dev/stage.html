@@ -8,8 +8,8 @@
   every shot into .agents/files.
 
   Each frame takes its ground from the tone of the kind it shows — the same
-  tonal circles the shelf's cards carry — so the gallery and the app are one
-  palette. Flat tones, no gradient washes.
+  tonal circles the main window's rows carry — so the gallery and the app are
+  one palette.
 -->
 <html lang="en">
   <head>
@@ -167,74 +167,69 @@
         mic: '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/>',
         pen: '<path d="M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z"/><path d="m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18"/><path d="m2.3 2.3 7.286 7.286"/><circle cx="11" cy="11" r="2"/>',
         cpu: '<path d="M12 20v2"/><path d="M12 2v2"/><path d="M17 20v2"/><path d="M17 2v2"/><path d="M2 12h2"/><path d="M2 17h2"/><path d="M2 7h2"/><path d="M20 12h2"/><path d="M20 17h2"/><path d="M20 7h2"/><path d="M7 20v2"/><path d="M7 2v2"/><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
-        moon: '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/>',
+        layers: '<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/>',
       };
+      const chord = (keys, text) => [...keys.map((key) => [key, ""]), text];
       const shots = {
         hero: {
           tone: "hero",
           brand: true,
           headline: "Clipboard, Draw and Dictate.",
-          subline: "Everything you copy, sketch and say, one keystroke away. Speech is transcribed on your own PC, on Windows and Linux.",
+          subline: "Everything you copy is kept. Everything you pick lands on your clipboard. Speech is transcribed on your own PC, on Windows and Linux.",
           keys: [],
           copyTop: true,
           windows: [
-            { src: "/draw.html?bare&scene=sketch", x: 900, y: 48, w: 760, h: 580, scale: 0.84 },
-            { src: "/overlay.html?bare&scene=recording", x: 610, y: 432, w: 260, h: 60, flat: true, scale: 1.4 },
-            { src: "/?bare", x: 40, y: 560, w: 1520, h: 300, scale: 1 },
+            { src: "/draw.html?bare&scene=sketch", x: 640, y: 400, w: 760, h: 580, scale: 0.7 },
+            { src: "/?bare", x: 1090, y: 96, w: 400, h: 620, scale: 1.2 },
+            { src: "/pill.html?bare&scene=copied", x: 74, y: 440, w: 470, h: 70, flat: true, scale: 1.2 },
           ],
         },
         capture: {
           tone: "link",
           eyebrow: ["clipboard", "Clipboard"],
-          headline: "Everything you copy, one keystroke away.",
-          subline: "Bard keeps what you copy and select on one searchable shelf. Enter pastes it straight back where you were.",
-          keys: [["Left Shift", "×2"], "to keep a selection"],
-          copyTop: true,
-          windows: [{ src: "/?bare", x: 40, y: 560, w: 1520, h: 300, scale: 1 }],
+          headline: "Nothing you copy gets lost.",
+          subline: "Every copy and cut is kept while Bard runs, with a soft pop to say so. Pick one and it is back on your clipboard.",
+          keys: chord(["Alt", "Shift", "V"], "opens Bard anywhere"),
+          windows: [
+            { src: "/?bare", x: 930, y: 112, w: 400, h: 620, scale: 1.2 },
+            { src: "/pill.html?bare&scene=copied", x: 536, y: 16, w: 480, h: 80, flat: true, scale: 1.1 },
+          ],
         },
-        shelf: {
-          tone: "link",
-          eyebrow: ["clipboard", "Clipboard"],
-          headline: "Your clipboard, one shelf away.",
-          subline: "Bard docks to the edge of your screen and floats over your work: every capture in reach, and one Enter puts it back.",
-          keys: [["Right Shift", "×2"], "to open the shelf"],
-          copyTop: true,
-          doc: { x: 210, y: 70, w: 1180, h: 620 },
-          windows: [{ src: "/?bare", x: 40, y: 560, w: 1520, h: 300, scale: 1 }],
+        slots: {
+          dark: true,
+          eyebrow: ["layers", "Three slots"],
+          headline: "Your top three, one chord away.",
+          subline: "Pin what you reuse. Copy item 1, 2 or 3, or cycle through them, from any app, without opening a window.",
+          keys: chord(["Alt", "Shift", "1–3"], "or C to cycle"),
+          windows: [
+            { src: "/?bare&theme=dark", x: 930, y: 112, w: 400, h: 620, scale: 1.2 },
+            { src: "/pill.html?bare&scene=selected", x: 536, y: 16, w: 480, h: 80, flat: true, scale: 1.1 },
+          ],
         },
         dictate: {
           tone: "dictation",
           eyebrow: ["mic", "Dictate"],
-          headline: "Speak. It's typed where you were.",
-          subline: "Offline dictation with a local speech model. Your voice never leaves your PC, and it works in any app.",
-          keys: [["Ctrl", "×2"], "to dictate"],
-          doc: { x: 760, y: 150, w: 740, h: 560 },
-          windows: [{ src: "/overlay.html?bare&scene=recording", x: 960, y: 610, w: 260, h: 60, flat: true, scale: 1.5 }],
+          headline: "Hold a key. Talk. It's on your clipboard.",
+          subline: "Offline dictation with a local speech model. Your voice never leaves your PC, and the words are kept in Bard too.",
+          keys: chord(["Alt", "Shift", "Space"], "hold to talk"),
+          doc: { x: 760, y: 190, w: 740, h: 560 },
+          windows: [{ src: "/pill.html?bare&scene=listening", x: 488, y: 16, w: 480, h: 70, flat: true, scale: 1.3 }],
         },
         draw: {
           tone: "draw",
           eyebrow: ["pen", "Draw"],
           headline: "Sketch it faster than you can say it.",
-          subline: "Pen, arrows, shapes and text on a page that opens beside your notes. Copy it as an image in one keystroke.",
-          keys: [["Left Alt", "×2"], "to draw"],
+          subline: "Pen, arrows, shapes and text on a page of its own. Copy it as an image in one keystroke.",
+          keys: chord(["Alt", "Shift", "D"], "to draw"),
           windows: [{ src: "/draw.html?bare&scene=sketch", x: 760, y: 150, w: 740, h: 600 }],
         },
         models: {
           tone: "image",
           eyebrow: ["cpu", "Models"],
-          headline: "Two models. Nothing uploaded.",
+          headline: "Your voice stays on your PC.",
           subline: "Choose fast or general. Transcription runs entirely on this PC, with no account and no analytics.",
           keys: [],
           windows: [{ src: "/settings.html?bare&pane=models", x: 780, y: 150, w: 720, h: 600 }],
-        },
-        dark: {
-          dark: true,
-          eyebrow: ["moon", "Light and dark"],
-          headline: "Quiet by design.",
-          subline: "A calm, keyboard-first shelf in light or dark that stays out of the way until you need it.",
-          keys: [["Right Shift", "×2"], "to open Bard"],
-          copyTop: true,
-          windows: [{ src: "/?bare&theme=dark", x: 40, y: 560, w: 1520, h: 300, scale: 1 }],
         },
       };
       const name = new URLSearchParams(location.search).get("shot") ?? "capture";
@@ -261,7 +256,8 @@
         if (Array.isArray(part)) {
           const k = document.createElement("kbd");
           k.textContent = part[0];
-          keys.append(k, part[1]);
+          keys.append(k);
+          if (part[1]) keys.append(part[1]);
         } else {
           const span = document.createElement("span");
           span.textContent = part;

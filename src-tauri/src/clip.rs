@@ -1,29 +1,31 @@
+//! Bard's one door to the system clipboard. Every action ends here: Bard
+//! never types into another application, it only fills the clipboard and
+//! says so.
+
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use base64::Engine;
 use tauri::AppHandle;
 
-/// Send one native paste chord to the currently focused application. The
-/// caller has already written and verified the clipboard payload.
-pub fn send_paste(_app: &AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    if crate::desktop::is_wayland() {
-        return crate::linux_portal::send_chord('v');
+/// One clipboard handle for the life of the process.
+///
+/// On X11 (and XWayland) the clipboard is a conversation, not a buffer: the
+/// owner has to stay alive to answer every later paste. A handle opened and
+/// dropped per write hands its content to a clipboard manager if there is one
+/// and loses it if there is not, so a copied slot could vanish the moment the
+/// write returned. Keeping one handle keeps the server thread answering.
+pub(crate) fn handle() -> Result<MutexGuard<'static, arboard::Clipboard>, String> {
+    static CLIPBOARD: OnceLock<Mutex<arboard::Clipboard>> = OnceLock::new();
+    if CLIPBOARD.get().is_none() {
+        let clipboard = arboard::Clipboard::new().map_err(|e| format!("clipboard open: {e}"))?;
+        let _ = CLIPBOARD.set(Mutex::new(clipboard));
     }
-    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-    let _synthetic_input = crate::capture::SyntheticInputGuard::enter();
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|_| {
-        "Bard could not reach the focused app. Your content is on the clipboard.".to_string()
-    })?;
-    let _ = enigo.key(Key::Control, Direction::Press);
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let _ = enigo.key(Key::Unicode('v'), Direction::Click);
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let _ = enigo.key(Key::Control, Direction::Release);
-    // Let the low-level hook drain Bard's synthetic events before the guard
-    // re-enables gesture recognition.
-    std::thread::sleep(std::time::Duration::from_millis(40));
-    Ok(())
+    Ok(CLIPBOARD
+        .get()
+        .expect("clipboard initialised above")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()))
 }
 
 pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {
@@ -34,6 +36,9 @@ pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {
     // verification is retried with a fresh write a few times before it is
     // reported, so a passing collision does not surface as a failed copy,
     // while a clipboard that genuinely refuses the text still does.
+    // Recorded before the write: the watcher can wake on this change before
+    // the read-back returns, and it must already know the text is Bard's own.
+    crate::monitor::note_own_text(text);
     let mut last = String::new();
     for attempt in 0..CLIPBOARD_ATTEMPTS {
         if attempt > 0 {
@@ -50,10 +55,117 @@ pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {
     Err(last)
 }
 
+/// Put a list of files on the clipboard, as a file manager would.
+pub fn set_files(app: &AppHandle, paths: &[String]) -> Result<(), String> {
+    let existing: Vec<&String> = paths.iter().filter(|p| Path::new(p).exists()).collect();
+    if existing.is_empty() {
+        return Err("Those files are no longer where they were copied from.".into());
+    }
+    crate::monitor::note_own_text(
+        &existing
+            .iter()
+            .map(|p| p.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    let mut clipboard = handle()?;
+    clipboard
+        .set()
+        .file_list(&existing)
+        .map_err(|e| format!("clipboard write: {e}"))?;
+    drop(clipboard);
+    crate::monitor::note_own_write(app);
+    Ok(())
+}
+
+/// What is on the clipboard right now, for the preview shortcut. Read-only:
+/// previewing never stores anything.
+#[derive(serde::Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    /// "text", "image", "files" or "empty".
+    pub kind: String,
+    pub text: Option<String>,
+    /// A small PNG data URL for an image.
+    pub image: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub files: Vec<String>,
+    /// Characters in a text payload, before the excerpt was cut.
+    pub length: Option<usize>,
+}
+
+const PREVIEW_TEXT_CHARS: usize = 600;
+const PREVIEW_IMAGE_EDGE: u32 = 320;
+
+pub fn preview() -> Preview {
+    let Ok(mut clipboard) = handle() else {
+        return Preview {
+            kind: "empty".into(),
+            ..Preview::default()
+        };
+    };
+    if let Ok(files) = clipboard.get().file_list() {
+        if !files.is_empty() {
+            return Preview {
+                kind: "files".into(),
+                files: files
+                    .iter()
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .collect(),
+                ..Preview::default()
+            };
+        }
+    }
+    if let Ok(text) = clipboard.get_text() {
+        if !text.trim().is_empty() {
+            let length = text.chars().count();
+            let excerpt: String = text.chars().take(PREVIEW_TEXT_CHARS).collect();
+            return Preview {
+                kind: "text".into(),
+                text: Some(excerpt),
+                length: Some(length),
+                ..Preview::default()
+            };
+        }
+    }
+    if let Ok(image) = clipboard.get_image() {
+        let (width, height) = (image.width as u32, image.height as u32);
+        let thumbnail = image::RgbaImage::from_raw(width, height, image.bytes.into_owned())
+            .map(|rgba| {
+                let scale = (PREVIEW_IMAGE_EDGE as f32 / width.max(height).max(1) as f32).min(1.0);
+                let w = ((width as f32 * scale).round() as u32).max(1);
+                let h = ((height as f32 * scale).round() as u32).max(1);
+                image::imageops::thumbnail(&rgba, w, h)
+            })
+            .and_then(|small| {
+                let mut png = Vec::new();
+                image::DynamicImage::ImageRgba8(small)
+                    .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                    .ok()?;
+                Some(format!(
+                    "data:image/png;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(png)
+                ))
+            });
+        return Preview {
+            kind: "image".into(),
+            image: thumbnail,
+            width: Some(width),
+            height: Some(height),
+            ..Preview::default()
+        };
+    }
+    Preview {
+        kind: "empty".into(),
+        ..Preview::default()
+    }
+}
+
 const CLIPBOARD_ATTEMPTS: usize = 4;
 
 fn write_and_verify_text(text: &str) -> Result<(), String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| format!("clipboard open: {e}"))?;
+    let mut cb = handle()?;
     cb.set_text(text.to_string())
         .map_err(|e| format!("clipboard write: {e}"))?;
     match cb.get_text() {
@@ -161,7 +273,6 @@ pub fn image_url(path: &str) -> Option<String> {
 }
 
 pub fn set_image(app: &AppHandle, path: &str) -> Result<(), String> {
-    crate::monitor::note_own_write(app);
     let bytes = owned_image_bytes(path).ok_or("That image is no longer available.")?;
     let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
     let rgba = img.to_rgba8();
@@ -171,7 +282,8 @@ pub fn set_image(app: &AppHandle, path: &str) -> Result<(), String> {
         height: h as usize,
         bytes: rgba.into_raw().into(),
     };
-    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    crate::monitor::note_own_image(&data.bytes);
+    let mut cb = handle()?;
     let expected = data.clone();
     cb.set_image(data).map_err(|e| e.to_string())?;
     let actual = cb.get_image().map_err(|e| e.to_string())?;

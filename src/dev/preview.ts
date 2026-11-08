@@ -7,24 +7,23 @@
   a shelf that is DWM-composited and always on top is awkward to capture, and a
   fixture is reproducible where a person's live data is neither.
 
-  Query parameters: theme=light|dark, scene=empty|trial|restricted|recording|review,
-  pane=<settings section>, edge=bottom|top|left|right, review=error (scene=review
-  only, to open the sheet in its refused state).
+  Query parameters: theme=light|dark, scene=empty|trial|restricted|onboarding
+  (main), scene=copied|selected|listening|working|done|preview|error|paused
+  (pill), pane=<settings section>, dock=float|left|right, platform=linux.
 */
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { Shape } from "../draw/shapes";
 import catalog from "../../src-tauri/src/catalog/catalog.json";
 import { version as appVersion } from "../../package.json";
-import type { AppState, Item, ModelInfo, PackSummary } from "../types";
+import type { AppState, Item, ModelInfo, PackSummary, PillNote, ShortcutState } from "../types";
 import "./preview.css";
 
 const params = new URLSearchParams(location.search);
 const scene = params.get("scene") ?? "";
 const theme = params.get("theme") ?? "light";
-const edgeParam = params.get("edge");
-const shelfEdge: AppState["shelfEdge"] =
-  edgeParam === "top" || edgeParam === "left" || edgeParam === "right" ? edgeParam : "bottom";
+const dockParam = params.get("dock");
+const dock: AppState["dock"] = dockParam === "left" || dockParam === "right" ? dockParam : "float";
 const now = Date.now();
 const minutes = (n: number) => now - n * 60_000;
 /** Licence timestamps are Unix seconds. */
@@ -74,6 +73,10 @@ const items: Item[] = [
   text(8, "hello@miiso.dev", "clipboard", 320),
   text(9, "Book the Cape Town venue for the twelfth", "dictation", 400),
   text(10, "https://github.com/miisodev/bard-releases", "clipboard", 520),
+  {
+    ...text(14, "/home/you/Documents/Launch brief.pdf\n/home/you/Documents/Pricing.xlsx", "clipboard", 22),
+    kind: "file",
+  },
 ];
 
 function text(
@@ -158,7 +161,7 @@ const state: AppState = {
   appVersion,
   onboardingCompleted: scene !== "onboarding",
   autostartEnabled: true,
-  captureDoubleShift: true,
+  capturePaused: scene === "paused",
   modelId: "parakeet-tdt-0.6b-v3",
   modelReady: true,
   micReady: true,
@@ -166,12 +169,44 @@ const state: AppState = {
   license,
   channel: params.get("channel") === "flatpak" ? "flatpak" : params.get("channel") === "store" ? "store" : "direct",
   platform: params.get("platform") ?? "windows",
-  desktop: { session: params.get("platform") === "linux" ? "wayland" : "windows", shortcutsReady: false, inputReady: false },
+  desktop: { session: params.get("platform") === "linux" ? "wayland" : "windows", shortcutsReady: params.get("platform") === "linux" },
   background: "theme",
   backgroundColor: "#e6e7ea",
   sort: "newest",
-  shelfEdge,
+  dock,
 };
+
+const SHORTCUT_ROWS: [string, string, string][] = [
+  ["main", "Show or hide Bard", "Alt+Shift+V"],
+  ["dictate", "Dictate (hold to talk, tap to toggle)", "Alt+Shift+Space"],
+  ["slot-1", "Copy item 1", "Alt+Shift+1"],
+  ["slot-2", "Copy item 2", "Alt+Shift+2"],
+  ["slot-3", "Copy item 3", "Alt+Shift+3"],
+  ["cycle", "Cycle through items 1–3", "Alt+Shift+C"],
+  ["preview", "Preview the clipboard", "Alt+Shift+P"],
+  ["pause", "Pause or resume clipboard capture", "Alt+Shift+X"],
+  ["draw", "Open Draw", "Alt+Shift+D"],
+  ["settings", "Open Settings", "Alt+Shift+Comma"],
+  ["guide", "Show the shortcut guide", "Alt+Shift+Slash"],
+];
+
+const chords = new Map(SHORTCUT_ROWS.map(([id, , chord]) => [id, chord]));
+
+function shown(chord: string): string {
+  return chord.replace("Comma", ",").replace("Slash", "/");
+}
+
+function shortcutState(): ShortcutState {
+  const portal = params.get("platform") === "linux";
+  return {
+    backend: portal ? "portal" : "windows",
+    editable: !portal,
+    rows: SHORTCUT_ROWS.map(([id, label, defaultChord]) => {
+      const chord = chords.get(id) ?? "";
+      return { id, label, chord, display: shown(chord), defaultChord, status: chord ? "ready" : "off" };
+    }),
+  };
+}
 
 interface CatalogRow {
   id: string;
@@ -264,25 +299,10 @@ function requirePack(id: unknown): FixturePack {
 }
 
 const settings: Record<string, string> = {
-  dictation_overlay_position: "bottom-middle",
   microphone: "",
-  // Only the review scene turns the sheet on; every other scene shows the
-  // shipped default, paste directly.
-  dictation_review: scene === "review" ? "1" : "0",
 };
 
-/*
-  The take the review scene opens: Rust would have inserted it when the
-  transcript landed, and each command writes the edited body back onto it.
-*/
-const REVIEW_TEXT =
-  "Dictation is local. The audio never leaves this computer, and Refine only ever sees the finished text.";
-let reviewTake: Item | null = null;
-
-/** The clipboard when the browser allows it; the preview does not design the refusal. */
-function writeClipboard(text: string) {
-  void navigator.clipboard?.writeText(text).catch(() => undefined);
-}
+const feedback = { pill: true, sound: true };
 
 function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
   if (params.get("fail") === cmd) throw "Couldn’t save. Your changes are still here. Try again.";
@@ -337,14 +357,37 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
       return args.origin === "dictation" ? 30 : 90;
     case "get_export_dir":
       return "C:\\Users\\you\\Documents\\Bard";
-    case "get_sound_on_capture":
-      return true;
+    case "get_feedback":
+      return { ...feedback };
+    case "set_feedback":
+      feedback.pill = Boolean(args.pill);
+      feedback.sound = Boolean(args.sound);
+      return { ...feedback };
+    case "get_shortcuts":
+      return shortcutState();
+    case "set_shortcut":
+      chords.set(String(args.id), String(args.chord ?? ""));
+      return shortcutState();
+    case "reset_shortcuts":
+      for (const [id, , chord] of SHORTCUT_ROWS) chords.set(id, chord);
+      return shortcutState();
+    case "set_dock":
+      state.dock = args.dock as AppState["dock"];
+      void emit("panel-shown", state.dock);
+      return null;
+    case "set_capture_paused":
+      state.capturePaused = Boolean(args.paused);
+      void emit("refresh");
+      return state.capturePaused;
+    case "copy_item":
+      state.activeItemId = Number(args.id);
+      void emit("refresh");
+      return null;
     // The v2.1 Draw commands the preview cannot honestly run: no native
     // Save-As dialog, no paste into another app, no clipboard pixels. The
     // chrome around them is what the preview is for, and every one is a
     // no-op here rather than a fake.
     case "set_draw_prefs":
-    case "send_drawing":
     case "save_svg":
     case "open_draw_with_image":
     case "clipboard_image_data":
@@ -415,11 +458,6 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
       pack.itemIds = ids;
       return null;
     }
-    case "set_shelf_edge": {
-      state.shelfEdge = args.edge as AppState["shelfEdge"];
-      void emit("shelf-edge", args.edge);
-      return null;
-    }
     case "clear_captures": {
       // The Rust semantics: clipboard and dictation history go, favourites and
       // hand-made items stay.
@@ -428,9 +466,8 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     }
     // Rust hides the window when this arrives. The preview cannot, and must
     // not: the shelf is the whole surface being looked at.
-    case "shelf_hidden":
     case "hide_panel":
-    case "paste_back":
+    case "notify_error":
       return null;
     case "get_crash_report":
     case "check_for_update":
@@ -485,80 +522,59 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "set_active_item":
       state.activeItemId = (args.id as number | null) ?? null;
       return null;
-    // The review sheet, as Rust runs it: every command carries the edited
-    // body back onto the take. Rust hides the overlay when one lands; the
-    // preview cannot hide its own window, so the sheet stays put to be
-    // looked at, which is what this scene is for.
-    case "dictation_confirm":
-    case "dictation_copy":
-    case "dictation_dismiss": {
-      const body = String(args.text ?? "");
-      if (reviewTake) reviewTake.content = body;
-      if (cmd === "dictation_copy") writeClipboard(body);
-      if (cmd === "dictation_confirm") void emit("dictation-pasted");
-      if (cmd === "dictation_dismiss") void emit("dictation-cancelled");
-      return null;
-    }
-    case "set_dictation_review":
-      settings.dictation_review = args.enabled ? "1" : "0";
-      return null;
     default:
       return null;
   }
 }
 
-export function install(label: "main" | "settings" | "draw" | "overlay") {
-  mockWindows(label, "main", "settings", "draw", "overlay");
+export function install(label: "main" | "settings" | "draw" | "pill") {
+  mockWindows(label, "main", "settings", "draw", "pill");
   mockIPC((cmd, payload) => handle(cmd, (payload ?? {}) as Record<string, unknown>), {
     shouldMockEvents: true,
   });
   document.documentElement.dataset.theme = theme;
   document.documentElement.dataset.preview = label;
   if (params.has("bare")) document.documentElement.dataset.bare = "";
-  if (label === "overlay" && scene === "recording") playRecording();
-  if (label === "overlay" && scene === "review") playReview();
+  if (label === "pill") playPill();
   if (label === "draw" && scene === "sketch") {
     (window as { __bardPreviewShapes?: Shape[] }).__bardPreviewShapes = SKETCH;
   }
 }
 
-/** A take in progress: the pill listening, its meter moving like speech. */
-function playRecording() {
-  let t = 0;
-  window.setTimeout(() => {
-    void emit("dictation-overlay", "listening");
-    // A meter already mid-sentence, so a still frame shows speech.
-    for (let i = 0; i < 12; i += 1) {
-      void emit("mic-level", [0.35 + 0.55 * Math.abs(Math.sin(i * 0.9) * Math.cos(i * 0.37)), 0.9]);
-    }
-  }, 150);
-  window.setInterval(() => {
-    t += 1;
-    const level = 0.35 + 0.45 * Math.abs(Math.sin(t / 2.3) * Math.cos(t / 5.1)) + 0.15 * Math.random();
-    void emit("mic-level", [level, 0.9]);
-  }, 60);
-}
+const PILL_SCENES: Record<string, PillNote> = {
+  copied: { kind: "copy", text: "Copied", detail: "https://handy.computer/docs/models", sticky: true, holdMs: 0 },
+  selected: { kind: "select", text: "On your clipboard", detail: "ffmpeg -i take.wav -ar 16000 -ac 1…", slot: 2, slots: 3, sticky: true, holdMs: 0 },
+  listening: { kind: "listen", text: "Listening", sticky: true, holdMs: 0 },
+  working: { kind: "work", text: "Transcribing", sticky: true, holdMs: 0 },
+  done: { kind: "done", text: "Transcript copied", detail: "Book the Cape Town venue for the twelfth", sticky: true, holdMs: 0 },
+  paused: { kind: "pause", text: "Clipboard capture paused", sticky: true, holdMs: 0 },
+  error: { kind: "error", text: "Nothing in slot 3 yet", sticky: true, holdMs: 0 },
+  preview: {
+    kind: "preview",
+    text: "Clipboard",
+    sticky: true,
+    holdMs: 0,
+    preview: {
+      kind: "text",
+      text: "Dictation is local. The audio never leaves this computer, and Refine only ever sees the finished text.\n\nKeep the release notes under 150 words, and lead with what changed for the person using it.",
+      length: 214,
+      files: [],
+    },
+  },
+};
 
-/** A finished take, opening the review sheet the way Rust does. */
-function playReview() {
-  window.setTimeout(() => {
-    const take = text(nextId++, REVIEW_TEXT, "dictation", 0);
-    reviewTake = take;
-    state.items.unshift(take);
-    void emit("dictation-review", { text: REVIEW_TEXT });
-    // `review=error` opens the sheet already refused, for designing retry.
-    if (params.get("review") === "error") {
-      window.setTimeout(
-        () => void emit("dictation-review-error", "Bard couldn't reach the app it started in."),
-        400,
-      );
-    }
-  }, 150);
-  // Escape is Rust's, globally; the preview stands that hook in so the
-  // sheet's close path is real in the browser.
-  window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") void emit("dictation-cancelled");
-  });
+/** One pill note, as Rust would send it; listening also moves the meter. */
+function playPill() {
+  const note = PILL_SCENES[scene] ?? PILL_SCENES.copied;
+  window.setTimeout(() => void emit("pill", note), 150);
+  if (note.kind === "listen") {
+    let t = 0;
+    window.setInterval(() => {
+      t += 1;
+      const level = 0.12 + 0.18 * Math.abs(Math.sin(t / 2.3) * Math.cos(t / 5.1)) + 0.05 * Math.random();
+      void emit("mic-level", [level, 0.9]);
+    }, 60);
+  }
 }
 
 const INK = "#1d1d1f";
@@ -574,7 +590,7 @@ const SKETCH: Shape[] = [
   { kind: "text", id: 5, color: INK, size: 20, at: { x: 450, y: 122 }, text: "One timeline" },
   { kind: "arrow", id: 6, color: BLUE, width: 3, a: { x: 498, y: 182 }, b: { x: 498, y: 282 } },
   { kind: "rect", id: 7, color: INK, width: 2.5, a: { x: 400, y: 292 }, b: { x: 600, y: 362 } },
-  { kind: "text", id: 8, color: INK, size: 20, at: { x: 432, y: 330 }, text: "Paste anywhere" },
+  { kind: "text", id: 8, color: INK, size: 20, at: { x: 432, y: 330 }, text: "On your clipboard" },
   {
     kind: "pen",
     id: 9,
@@ -585,5 +601,5 @@ const SKETCH: Shape[] = [
       y: 192 + Math.sin(i / 3.2) * 5 + (i > 40 ? (i - 40) * -1.5 : 0),
     })),
   },
-  { kind: "text", id: 10, color: RED, size: 16, at: { x: 96, y: 236 }, text: "Left Shift ×2  ·  Ctrl ×2" },
+  { kind: "text", id: 10, color: RED, size: 16, at: { x: 96, y: 236 }, text: "Alt+Shift+V  ·  Alt+Shift+Space" },
 ];

@@ -5,6 +5,9 @@ test.afterEach(async ({ page }, info) => {
   await page.screenshot({ path: info.outputPath("window.png") });
 });
 
+const serious = (violations: { impact?: string | null }[]) =>
+  violations.filter((v) => v.impact === "critical" || v.impact === "serious");
+
 for (const theme of ["light", "dark"]) {
   for (const size of [{ width: 620, height: 640 }, { width: 480, height: 440 }]) {
     test(`${theme} onboarding keeps each step above its actions at ${size.width}×${size.height}`, async ({ page }, info) => {
@@ -24,7 +27,7 @@ for (const theme of ["light", "dark"]) {
         expect(layout.footBottom).toBeLessThanOrEqual(layout.height);
         expect(layout.width).toBeLessThanOrEqual(layout.viewport);
         const { violations } = await new AxeBuilder({ page }).analyze();
-        expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious")).toEqual([]);
+        expect(serious(violations)).toEqual([]);
         await page.screenshot({ path: info.outputPath(`step-${step + 1}.png`) });
         if (step < 3) await page.getByRole("button", { name: step === 1 ? "Skip for now" : "Continue", exact: true }).click();
       }
@@ -35,16 +38,99 @@ for (const theme of ["light", "dark"]) {
   }
 }
 
-test("Wayland shortcut help describes desktop permissions", async ({ page }) => {
-  await page.goto("/?platform=linux&bare=1");
-  await page.getByRole("listbox", { name: "Cards" }).waitFor();
+for (const theme of ["light", "dark"]) {
+  for (const dock of ["float", "right"]) {
+    test(`${theme} ${dock} main window has no serious accessibility violations`, async ({ page }) => {
+      await page.setViewportSize({ width: 400, height: 620 });
+      await page.goto(`/?theme=${theme}&dock=${dock}&bare=1`);
+      await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
+      const { violations } = await new AxeBuilder({ page }).analyze();
+      expect(serious(violations)).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    });
+  }
+}
+
+test("clicking an item puts it on the clipboard and marks it current", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 620 });
+  await page.goto("/?bare=1");
+  const link = page.getByRole("option", { name: /handy\.computer/ });
+  await link.click();
+  await expect(page.getByRole("option", { name: /handy\.computer.*on the clipboard/ })).toBeVisible();
+});
+
+test("the first three items carry their slot numbers", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 620 });
+  await page.goto("/?bare=1");
+  const slots = page.locator(".badge.slot");
+  await expect(slots).toHaveText(["1", "2", "3"]);
+});
+
+test("search and the kind filter narrow the list, and Escape clears the search", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 620 });
+  await page.goto("/?bare=1");
+  const list = page.getByRole("listbox", { name: "Clipboard history" });
+  await page.getByRole("tab", { name: "Links" }).click();
+  await expect(list.getByRole("option")).toHaveCount(2);
+  await page.getByRole("tab", { name: "All" }).click();
+  const search = page.getByRole("searchbox", { name: "Search the clipboard history" });
+  await search.fill("venue");
+  await expect(list.getByRole("option")).toHaveCount(2);
+  await search.press("Escape");
+  await expect(search).toHaveValue("");
+});
+
+test("pinning moves an item into the pinned group, by pointer or keyboard", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 620 });
+  await page.goto("/?bare=1");
+  const row = page.getByRole("option", { name: /hello@miiso\.dev/ });
+  await row.hover();
+  // A pointer shortcut kept out of the accessibility tree; Ctrl+P is the
+  // keyboard route, checked below.
+  await row.locator("[data-action='pin']").click({ force: true });
+  await expect(page.getByRole("option", { name: /hello@miiso\.dev.*pinned/ })).toBeVisible();
+  const search = page.getByRole("searchbox", { name: "Search the clipboard history" });
+  await search.fill("Cape Town venue for");
+  await search.press("ArrowDown");
+  await page.getByRole("listbox", { name: "Clipboard history" }).focus();
+  await page.keyboard.press("Control+p");
+  await search.fill("");
+  await expect(page.getByRole("option", { name: /Book the Cape Town venue.*pinned/ })).toBeVisible();
+});
+
+test("the shortcut guide lists the global chords and closes with Escape", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 620 });
+  await page.goto("/?bare=1");
+  await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
   await page.keyboard.press("Control+/");
   const guide = page.getByRole("dialog", { name: "Shortcuts" });
   await expect(guide).toBeVisible();
-  await expect(guide).toContainText("Your desktop assigns the global shortcuts");
+  await expect(guide).toContainText("Show or hide Bard");
+  await expect(guide).toContainText("Space");
   await expect(guide).not.toContainText("Left Shift");
+  await expect(guide).not.toContainText("paste");
   await page.keyboard.press("Escape");
   await expect(guide).not.toBeVisible();
+});
+
+test("on Wayland the guide says the desktop owns the shortcuts", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 620 });
+  await page.goto("/?platform=linux&bare=1");
+  await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
+  await page.keyboard.press("Control+/");
+  await expect(page.getByRole("dialog", { name: "Shortcuts" })).toContainText("Your desktop owns these shortcuts");
+});
+
+test("a shortcut can be recorded, refused when taken, and turned off", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 620 });
+  await page.goto("/settings.html?pane=shortcuts&bare=1");
+  const draw = page.getByRole("button", { name: /^Open Draw:/ });
+  await draw.click();
+  await page.keyboard.press("Control+Alt+KeyN");
+  await expect(draw).toContainText("N");
+  await draw.click();
+  await page.keyboard.press("Backspace");
+  await expect(draw).toContainText("Off");
 });
 
 test("startup permission failure is visible and recoverable", async ({ page }) => {
@@ -56,29 +142,21 @@ test("startup permission failure is visible and recoverable", async ({ page }) =
   await expect(toggle).toBeEnabled();
 });
 
-test("a refused note creation preserves its draft", async ({ page }) => {
-  await page.goto("/?bare=1&fail=add_item");
-  const draft = page.getByRole("textbox", { name: "New note" });
-  await draft.fill("Keep this draft when the disk refuses a write");
-  await page.getByRole("button", { name: "Add note", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Couldn’t save" })).toBeVisible();
-  await expect(draft).toHaveValue("Keep this draft when the disk refuses a write");
-  await expect(draft).toBeEditable();
+test("feedback channels switch independently", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 620 });
+  await page.goto("/settings.html?pane=general&bare=1");
+  const pill = page.getByRole("switch", { name: "Status pill" });
+  const sounds = page.getByRole("switch", { name: "Sounds" });
+  await sounds.click();
+  await expect(sounds).toHaveAttribute("aria-checked", "false");
+  await expect(pill).toHaveAttribute("aria-checked", "true");
 });
 
-test("a refused edit keeps the editor open and Escape returns to the shelf", async ({ page }) => {
-  await page.goto("/?bare=1&fail=update_item");
-  const card = page.getByRole("option").first();
-  await card.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Edit note" });
-  await dialog.getByRole("textbox").fill("Keep the edited draft");
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toBeVisible();
-  await expect(dialog.getByRole("textbox")).toHaveValue("Keep the edited draft");
-  await page.keyboard.press("Escape");
-  await expect(dialog).not.toBeVisible();
-  await expect(page.getByRole("listbox", { name: "Cards" })).toBeVisible();
+test("Refine lives under Models", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 620 });
+  await page.goto("/settings.html?pane=models&bare=1");
+  await expect(page.getByRole("heading", { name: "Refine", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Refine" })).toHaveCount(0);
 });
 
 for (const theme of ["light", "dark"]) {
@@ -87,18 +165,28 @@ for (const theme of ["light", "dark"]) {
     await page.goto(`/settings.html?theme=${theme}&bare=1`);
     await page.getByRole("heading", { name: "General" }).waitFor();
     const { violations } = await new AxeBuilder({ page }).analyze();
-    expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious")).toEqual([]);
+    expect(serious(violations)).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
 
-for (const pane of ["capture", "dictation", "models", "postprocessing", "shortcuts", "data", "about"]) {
+for (const pane of ["clipboard", "dictation", "models", "shortcuts", "data", "about"]) {
   test(`${pane} settings are accessible on Linux at minimum size`, async ({ page }) => {
     await page.setViewportSize({ width: 600, height: 440 });
     await page.goto(`/settings.html?pane=${pane}&platform=linux&bare=1`);
     await page.getByRole("tabpanel").waitFor();
     const { violations } = await new AxeBuilder({ page }).analyze();
-    expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious")).toEqual([]);
+    expect(serious(violations)).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+for (const scene of ["copied", "selected", "listening", "done", "error", "preview"]) {
+  test(`the ${scene} pill has no serious accessibility violations`, async ({ page }) => {
+    await page.setViewportSize({ width: 480, height: 300 });
+    await page.goto(`/pill.html?scene=${scene}&bare=1`);
+    await page.getByRole("status").waitFor();
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(serious(violations)).toEqual([]);
   });
 }

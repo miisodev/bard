@@ -104,7 +104,7 @@ const TOOL_KEYS: Record<string, Tool> = {
 };
 
 /** The three ways a finished drawing leaves the window. */
-type SaveAction = "send" | "keep" | "copy";
+type SaveAction = "keep" | "copy";
 
 const CURSORS: Record<HandleId, string> = {
   nw: "nwse-resize",
@@ -274,8 +274,8 @@ export default function DrawWindow() {
 
   /**
    * Anything that changes the page un-saves it. The id remembered from the last
-   * save no longer describes what is on the page, so a Send that reused it
-   * would paste the drawing as it was, not as it is — and a close would stop
+   * save no longer describes what is on the page, so a Copy that reused it
+   * would copy the drawing as it was, not as it is — and a close would stop
    * having to ask, throwing the change away. Every mutation calls this, and a
    * save only marks the page clean once Bard has answered with an id.
    */
@@ -876,10 +876,9 @@ export default function DrawWindow() {
   }, [addImageFromSource]);
 
   /**
-   * The three ways out. Send also pastes into the app behind Bard, Keep only
-   * leaves the drawing in Bard, Copy only puts it on the clipboard. Every one
-   * first saves, and none of them closes on a failure: the real reason stays
-   * on screen with the drawing still on the page.
+   * The two ways out. Copy saves the drawing to Bard and puts it on the
+   * clipboard; Keep only saves it. Neither closes on a failure: the real
+   * reason stays on screen with the drawing still on the page.
    */
   const save = async (action: SaveAction) => {
     const canvas = canvasRef.current;
@@ -911,22 +910,14 @@ export default function DrawWindow() {
         // closing stops having to ask before throwing it away.
         setSavedOnce(true);
       }
-      if ((action === "copy" || action === "send") && id) {
+      if (action === "copy" && id) {
         try {
           await api.copyItem(id);
         } catch {
           // In Bard, not on the clipboard. Worth saying, and not worth a
-          // second copy of the same drawing in the timeline if Send is pressed
+          // second copy of the same drawing in the timeline if Copy is pressed
           // again — hence the id remembered above.
           setSaveError("Saved to Bard, but Bard could not copy it to the clipboard.");
-          return;
-        }
-      }
-      if (action === "send") {
-        try {
-          await api.sendDrawing();
-        } catch (reason) {
-          setSaveError(reasonText(reason, "Saved to Bard, but Bard couldn't paste it."));
           return;
         }
       }
@@ -1036,7 +1027,7 @@ export default function DrawWindow() {
         void pasteImage();
       } else if (key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        void save("send");
+        void save("copy");
       } else if (key === "Delete" || key === "Backspace") {
         if (selected != null) {
           e.preventDefault();
@@ -1377,14 +1368,6 @@ export default function DrawWindow() {
 
           <button
             className="draw-text-btn"
-            onClick={() => void save("copy")}
-            disabled={empty || saving}
-            title="Save to Bard and copy to the clipboard · Ctrl+C"
-          >
-            Copy
-          </button>
-          <button
-            className="draw-text-btn"
             onClick={() => void save("keep")}
             disabled={empty || saving}
             title="Save to Bard · Ctrl+S"
@@ -1393,11 +1376,11 @@ export default function DrawWindow() {
           </button>
           <button
             className="draw-primary"
-            onClick={() => void save("send")}
+            onClick={() => void save("copy")}
             disabled={empty || saving}
-            title="Save to Bard and paste it into the app behind · Enter"
+            title="Save to Bard and copy it to the clipboard · Enter"
           >
-            Send
+            Copy
           </button>
         </div>
       </div>

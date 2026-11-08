@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../store";
 import { CANVAS, isHexColor, resolvedTheme, applyAppearance } from "../../appearance";
 import type { PaneProps } from "../SettingsWindow";
+import type { FeedbackChannels } from "../../types";
 import { Button, Group, Note, Pane, Row, Segmented, Toggle } from "../ui";
 
 export default function GeneralPane({ state, refresh }: PaneProps) {
@@ -28,6 +29,23 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
 
   useEffect(() => setColor(current), [current]);
 
+  const [feedback, setFeedback] = useState<FeedbackChannels>({ pill: true, sound: true });
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  useEffect(() => {
+    void api.getFeedback().then(setFeedback).catch(() => undefined);
+  }, []);
+  const changeFeedback = async (next: FeedbackChannels) => {
+    setFeedback(next);
+    setFeedbackSaving(true);
+    try {
+      setFeedback(await api.setFeedback(next.pill, next.sound));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setFeedbackSaving(false);
+    }
+  };
+
   // The picker previews live in this window as it moves, and is saved — and
   // sent to every other window — once, when the picker closes.
   useEffect(() => {
@@ -39,7 +57,7 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
   }, [save]);
 
   return (
-    <Pane title="General" description="Appearance and how Bard fits into your day.">
+    <Pane title="General" description="How Bard looks, where it sits and how it tells you things.">
       {error ? <Note tone="danger">{error}</Note> : null}
       <Group title="Appearance">
         <Row label="Theme" hint="System follows your desktop appearance.">
@@ -86,22 +104,40 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
         </Row>
       </Group>
 
-      <Group title="Shelf">
-        <Row
-          label="Dock edge"
-          hint="Where the shelf appears on your screen."
-        >
+      <Group title="Main window">
+        <Row label="Position" hint="Float it anywhere, or dock it to the side of the screen. Docked, it tucks away when you click elsewhere.">
           <Segmented
-            label="Dock edge"
-            value={state.shelfEdge ?? "bottom"}
+            label="Main window position"
+            value={state.dock}
             disabled={saving}
-            onChange={(edge) => void save(() => api.setShelfEdge(edge))}
+            onChange={(dock) => void save(() => api.setDock(dock))}
             options={[
-              { value: "bottom", label: "Bottom" },
-              { value: "top", label: "Top" },
+              { value: "float", label: "Float" },
               { value: "left", label: "Left" },
               { value: "right", label: "Right" },
             ]}
+          />
+        </Row>
+      </Group>
+
+      <Group
+        title="Feedback"
+        note="Every copy, shortcut and error is told to you this way. A live microphone always shows its pill."
+      >
+        <Row label="Status pill" hint="A small pill at the top middle of your screen.">
+          <Toggle
+            label="Status pill"
+            checked={feedback.pill}
+            disabled={feedbackSaving}
+            onChange={(pill) => void changeFeedback({ ...feedback, pill })}
+          />
+        </Row>
+        <Row label="Sounds" hint="Soft pops and clicks.">
+          <Toggle
+            label="Sounds"
+            checked={feedback.sound}
+            disabled={feedbackSaving}
+            onChange={(sound) => void changeFeedback({ ...feedback, sound })}
           />
         </Row>
       </Group>

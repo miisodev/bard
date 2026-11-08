@@ -12,7 +12,6 @@ import type {
   ModelInfo,
   ModelProgress,
   ModelStatus,
-  OverlayPosition,
   CrashReport,
   PackDetail,
   PackSummary,
@@ -21,14 +20,16 @@ import type {
   RestoreOutcome,
   SavePostprocessingInput,
   LicenseStatus,
-  ShelfEdge,
   SortOrder,
   UpdateInfo,
+  Dock,
+  FeedbackChannels,
+  ShortcutState,
 } from "./types";
 
 export const api = {
   getState: () => invoke<AppState>("get_state"),
-  configureDesktop: (feature: "shortcuts" | "input") => invoke<void>("configure_desktop", { feature }),
+  configureDesktop: (feature: "shortcuts" | "edit-shortcuts") => invoke<void>("configure_desktop", { feature }),
   getSettingStr: (key: string) => invoke<string>("get_setting_str", { key }),
   addItem: (content: string) => invoke<void>("add_item", { content }),
   openDraw: () => invoke<void>("open_draw"),
@@ -51,8 +52,6 @@ export const api = {
   deleteAllData: () => invoke<void>("delete_all_data"),
   copyText: (text: string) => invoke<unknown>("copy_text", { text }),
   copyItem: (id: number) => invoke<unknown>("copy_item", { id }),
-  /** Hide the panel, refocus the app it was opened over, and paste. */
-  pasteBack: () => invoke<void>("paste_back"),
   copyAttachment: (id: number) => invoke<unknown>("copy_attachment", { id }),
   itemImageData: (id: number) => invoke<string | null>("item_image_data", { id }),
   attachmentImageData: (id: number) =>
@@ -62,10 +61,6 @@ export const api = {
   attachmentCoverUrl: (id: number) =>
     invoke<string | null>("attachment_cover_url", { id }),
   setActiveItem: (id: number | null) => invoke<void>("set_active_item", { id }),
-  /** Dock the shelf to another edge. Rust re-anchors and echoes `shelf-edge`. */
-  setShelfEdge: (edge: ShelfEdge) => invoke<void>("set_shelf_edge", { edge }),
-  /** The slide-out is over; Rust may hide and park the window now. */
-  shelfHidden: () => invoke<void>("shelf_hidden"),
   attachImage: (itemId: number, dataBase64: string, ext: string) =>
     invoke<number>("attach_image", { itemId, dataBase64, ext }),
   detachAttachment: (id: number) => invoke<void>("detach_attachment", { id }),
@@ -86,8 +81,6 @@ export const api = {
   // Draw (v2.1). The Rust lane owns these commands; the names and argument
   // keys here are the merge contract. `get_appearance` returns the saved
   // drawTool / drawColor / drawWidth alongside the page settings.
-  /** Save to Bard and paste it into the app behind — Send. */
-  sendDrawing: () => invoke<void>("send_drawing"),
   /** The SVG goes to the native Save-As dialog; null means it was dismissed. */
   saveSvg: (svg: string, suggestedName: string) =>
     invoke<string | null>("save_svg", { svg, suggestedName }),
@@ -107,12 +100,6 @@ export const api = {
 
   setBackground: (mode: BackgroundMode, color?: string) =>
     invoke<void>("set_background", { mode, color: color ?? null }),
-  setCaptureDoubleShift: (enabled: boolean) =>
-    invoke<void>("set_capture_double_shift", { enabled }),
-  setSoundOnCapture: (enabled: boolean) =>
-    invoke<void>("set_sound_on_capture", { enabled }),
-  getSoundOnCapture: () => invoke<boolean>("get_sound_on_capture"),
-  captureNow: () => invoke<void>("capture_now"),
   showPanel: () => invoke<void>("show_panel"),
   hidePanel: () => invoke<void>("hide_panel"),
   togglePanel: () => invoke<void>("toggle_panel"),
@@ -201,21 +188,22 @@ export const api = {
 
   getMicrophones: () => invoke<string[]>("get_microphones"),
   setMicrophone: (name: string) => invoke<void>("set_microphone", { name }),
-  setDictationOverlayPosition: (position: OverlayPosition) =>
-    invoke<void>("set_dictation_overlay_position", { position }),
   dictateStart: () => invoke<void>("dictate_start"),
   dictateStop: () => invoke<void>("dictate_stop"),
   dictateCancel: () => invoke<void>("dictate_cancel"),
 
-  // The review sheet. Every command carries the body as it stands — the edits
-  // travel with the action — and Rust owns the window, so a resolved command
-  // needs no reply beyond its promise.
-  dictationConfirm: (text: string) => invoke<void>("dictation_confirm", { text }),
-  dictationCopy: (text: string) => invoke<void>("dictation_copy", { text }),
-  dictationDismiss: (text: string) => invoke<void>("dictation_dismiss", { text }),
-  /** Off pastes when a take finishes; on opens the review sheet first. */
-  setDictationReview: (enabled: boolean) =>
-    invoke<void>("set_dictation_review", { enabled }),
+  // v3: dock, feedback channels, capture pause and global shortcuts.
+  setDock: (dock: Dock) => invoke<void>("set_dock", { dock }),
+  getFeedback: () => invoke<FeedbackChannels>("get_feedback"),
+  setFeedback: (pill: boolean, sound: boolean) =>
+    invoke<FeedbackChannels>("set_feedback", { pill, sound }),
+  setCapturePaused: (paused: boolean) => invoke<boolean>("set_capture_paused", { paused }),
+  /** Show an error in the status pill (and sound it, if sounds are on). */
+  notifyError: (text: string) => invoke<void>("notify_error", { text }),
+  getShortcuts: () => invoke<ShortcutState>("get_shortcuts"),
+  setShortcut: (id: string, chord: string) =>
+    invoke<ShortcutState>("set_shortcut", { id, chord }),
+  resetShortcuts: () => invoke<ShortcutState>("reset_shortcuts"),
 };
 
 export type { ModelProgress };

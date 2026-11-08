@@ -23,9 +23,9 @@ pub struct DbNotice(pub Mutex<Option<String>>);
 
 /// Milliseconds since the Unix epoch, or 0 if the system clock is before it.
 ///
-/// Never unwraps. `overlay::holding_clicks` calls this from the mouse hook
-/// thread, so under `panic = "abort"` a clock set earlier than 1970 would kill
-/// the whole process and take the click guard with it. A wrong timestamp is
+/// Never unwraps. It is called from background threads, so under
+/// `panic = "abort"` a clock set earlier than 1970 would kill the whole
+/// process. A wrong timestamp is
 /// recoverable; a dead process is not.
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -131,7 +131,8 @@ pub struct AppState {
     pub desktop: crate::desktop::DesktopStatus,
     pub onboarding_completed: bool,
     pub autostart_enabled: bool,
-    pub capture_double_shift: bool,
+    /// The person's pause switch: nothing copied is kept while it is on.
+    pub capture_paused: bool,
     pub model_id: String,
     pub model_ready: bool,
     pub mic_ready: bool,
@@ -145,8 +146,8 @@ pub struct AppState {
     pub background_color: String,
     /// The timeline's order: one of `SORT_ORDERS`.
     pub sort: String,
-    /// The screen edge the shelf is docked to: one of `geometry::Edge`'s strings.
-    pub shelf_edge: String,
+    /// Where the main window lives: "float", "left" or "right".
+    pub dock: String,
     /// A storage problem the person should know about — a damaged history file
     /// set aside, a file that could not be opened. `None` when opening was
     /// quiet; never invented.
@@ -755,6 +756,13 @@ pub fn set_setting(app: &AppHandle, key: &str, value: &str) {
 
 /// Fallible counterpart for load-bearing writes such as model activation. A
 /// verified model must not be reported as active when the setting did not save.
+/// Remove a setting so its default applies again.
+pub fn delete_setting(app: &AppHandle, key: &str) {
+    let _ = with_conn(app, |c| {
+        c.execute("DELETE FROM settings WHERE key = ?1", params![key])
+    });
+}
+
 pub fn set_setting_checked(app: &AppHandle, key: &str, value: &str) -> Result<(), String> {
     set_settings_checked(app, &[(key, value)])
 }
@@ -840,6 +848,51 @@ pub fn insert_item_with_origin(
             INSERT_FAILED
         }
     }
+}
+
+/// Resolve a fresh copy of something Bard already holds (text or files).
+///
+/// A kept copy (pinned, starred, dictated or added by hand) is never
+/// duplicated: its id comes back and nothing is inserted. Plain clipboard
+/// copies of the same text, with nothing attached to them, are removed so the
+/// new capture takes their place at the top. `None` means insert as new.
+pub fn take_duplicate(app: &AppHandle, content: &str, kind: &str) -> Option<i64> {
+    let rows: Vec<(i64, String, bool, bool, bool)> = with_conn(app, |c| {
+        let mut statement = c
+            .prepare(
+                "SELECT i.id, i.origin, i.favorite != 0, i.pinned_at IS NOT NULL,
+                        EXISTS(SELECT 1 FROM attachments a WHERE a.item_id = i.id)
+                          OR EXISTS(SELECT 1 FROM pack_items p WHERE p.item_id = i.id)
+                 FROM items i WHERE i.kind = ?2 AND i.content = ?1",
+            )
+            .ok()?;
+        let rows = statement
+            .query_map(params![content, kind], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .ok()?
+            .flatten()
+            .collect::<Vec<_>>();
+        Some(rows)
+    })
+    .unwrap_or_default();
+    if let Some((id, ..)) = rows.iter().find(|(_, origin, favorite, pinned, linked)| {
+        *favorite || *pinned || *linked || origin != "clipboard"
+    }) {
+        return Some(*id);
+    }
+    let plain: Vec<i64> = rows.iter().map(|(id, ..)| *id).collect();
+    if !plain.is_empty() && delete_items_with_files(app, &plain).is_err() {
+        // Could not remove the older copy; keep it rather than adding another.
+        return plain.first().copied();
+    }
+    None
 }
 
 pub fn get_active_section(app: &AppHandle) -> Option<i64> {
@@ -1297,7 +1350,7 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
 /// while a shelf that silently hides one of them — an old pin especially,
 /// which is also a Right Shift × 2 paste slot — would be worse than any
 /// amount of reading.
-fn list_items_windowed(app: &AppHandle, limit: i64) -> Vec<Item> {
+pub(crate) fn list_items_windowed(app: &AppHandle, limit: i64) -> Vec<Item> {
     with_conn(app, |c| {
         let mut stmt = c
             .prepare(&format!(
@@ -2195,7 +2248,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
             desktop: crate::desktop::status(),
             onboarding_completed: false,
             autostart_enabled: false,
-            capture_double_shift: true,
+            capture_paused: false,
             model_id: String::new(),
             model_ready: false,
             mic_ready: false,
@@ -2205,7 +2258,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
             background: "theme".into(),
             background_color: String::new(),
             sort: SORT_ORDERS[0].into(),
-            shelf_edge: "bottom".into(),
+            dock: "float".into(),
             storage_notice: None,
         };
     }
@@ -2220,7 +2273,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
         desktop: crate::desktop::status(),
         onboarding_completed: get_setting(app, "onboarding_completed") == Some("1".into()),
         autostart_enabled: get_setting(app, "autostart_enabled") == Some("1".into()),
-        capture_double_shift: get_setting(app, "capture_double_shift") != Some("0".into()),
+        capture_paused: crate::monitor::is_paused(),
         model_id: get_setting(app, "model_id").unwrap_or_default(),
         model_ready: crate::dictation::model_ready(app),
         mic_ready: crate::dictation::mic_ready(),
@@ -2230,7 +2283,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
         background: get_setting(app, "background").unwrap_or_else(|| "theme".into()),
         background_color: get_setting(app, "background_color").unwrap_or_default(),
         sort: sort_order(app),
-        shelf_edge: crate::geometry::shelf_edge(app).as_str().into(),
+        dock: crate::panel::dock(app).name().into(),
         storage_notice: storage_notice(app),
     }
 }

@@ -12,6 +12,7 @@ import type {
   ModelProgress,
 } from "../../types";
 import type { PaneProps } from "../SettingsWindow";
+import { RefineSection } from "./Refine";
 import {
   Button,
   Group,
@@ -849,6 +850,8 @@ export default function ModelsPane({
           ) : null}
         </div>
       </details>
+
+      <RefineSection />
 
       <p className="pane-footnote">
         Bard's models are open-weight speech models, converted and hosted by Bard.{" "}
