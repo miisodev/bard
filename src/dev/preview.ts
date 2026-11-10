@@ -60,6 +60,7 @@ function shot(id: number, origin: Item["origin"], age: number, caption = ""): It
   command, a link, a colour, a captured image, a drawing and a dictation.
 */
 const items: Item[] = [
+
   text(5, "ffmpeg -i take.wav -ar 16000 -ac 1 take-16k.wav", "clipboard", 41, { favorite: 1, pinnedAt: minutes(30) }),
   text(2, "https://handy.computer/docs/models", "clipboard", 8),
   text(13, "#6f4a4a", "clipboard", 60),
@@ -78,6 +79,39 @@ const items: Item[] = [
     kind: "file",
   },
 ];
+
+/**
+ * A long history, for the browser preview only.
+ *
+ * The shelf draws a screenful at a time and its row height is measured, so
+ * the interesting question about a five hundred item history is how the list
+ * behaves when it is scrolled and searched. `?stress=500` builds one, with
+ * the same shapes the real fixture carries, so the cost of the window and of
+ * the filter can be measured rather than assumed.
+ */
+const stress = Number(params.get("stress") ?? "0");
+if (Number.isFinite(stress) && stress > 0) {
+  const shapes = [
+    (n: number) => `https://example.test/releases/v${n}.0/download`,
+    (n: number) => `cargo build --release --package workspace-${n}`,
+    (n: number) => `The quick brown fox jumps over the lazy dog, number ${n}`,
+    (n: number) => `#${(n * 2654435761 % 0xffffff).toString(16).padStart(6, "0")}`,
+  ];
+  for (let n = 0; n < stress; n++) {
+    items.push({
+      id: 1000 + n,
+      sectionId: null,
+      content: shapes[n % shapes.length](n),
+      kind: "text",
+      origin: "clipboard",
+      favorite: 0,
+      done: 0,
+      createdAt: now - n * 60_000,
+      updatedAt: now - n * 60_000,
+      pinnedAt: null,
+    });
+  }
+}
 
 function text(
   id: number,

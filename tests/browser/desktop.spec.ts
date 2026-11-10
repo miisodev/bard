@@ -190,3 +190,41 @@ for (const scene of ["copied", "selected", "listening", "done", "error", "previe
     expect(serious(violations)).toEqual([]);
   });
 }
+
+test("a long history is drawn a screenful at a time and can be jumped to", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 620 });
+  await page.goto("/?bare=1&stress=500");
+  await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
+
+  const drawn = async () => page.locator(".clip-list .item").count();
+  expect(await drawn()).toBeLessThan(60);
+
+  // The scrollbar still measures the whole history, not the slice that is
+  // drawn, so the person can see how much is there.
+  const height = await page.evaluate(() => {
+    const scroll = document.querySelector(".clip-scroll") as HTMLElement;
+    return scroll.scrollHeight;
+  });
+  expect(height).toBeGreaterThan(20_000);
+
+  // End must reach the last item even though it is nowhere near the window
+  // that is on the page.
+  await page.getByRole("listbox", { name: "Clipboard history" }).focus();
+  await page.keyboard.press("End");
+  await page.waitForTimeout(300);
+  const atEnd = await page.evaluate(() => {
+    const scroll = document.querySelector(".clip-scroll") as HTMLElement;
+    return {
+      top: Math.round(scroll.scrollTop),
+      drawn: document.querySelectorAll(".clip-list .item").length,
+      active: document.querySelector(".item.is-active")?.getAttribute("id"),
+    };
+  });
+  expect(atEnd.top).toBeGreaterThan(15_000);
+  expect(atEnd.drawn).toBeLessThan(60);
+
+  await page.keyboard.press("Home");
+  await page.waitForTimeout(300);
+  const atHome = await page.evaluate(() => Math.round((document.querySelector(".clip-scroll") as HTMLElement).scrollTop));
+  expect(atHome).toBeLessThan(200);
+});

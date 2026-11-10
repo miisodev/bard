@@ -504,8 +504,33 @@ export default function Clipboard({
 
   useEffect(() => {
     if (cursor < 0) return;
-    document.getElementById(`item-${visible[cursor]?.id}`)?.scrollIntoView({ block: "nearest" });
-  }, [cursor, visible]);
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+    // The cursor's row may not be on the page: End on a five hundred item
+    // history moves the selection to the far end, which is nowhere near the
+    // window that is drawn. So the scroll is moved first, by the row's own
+    // offset, and the window is then recomputed from where the scroll is.
+    // Doing it by offset rather than by looking the row up in the DOM is
+    // deliberate: a row that is not drawn yet cannot be scrolled to, and
+    // waiting for it to be drawn is a frame the person can see.
+    const target = offsets[cursor];
+    if (target === undefined) return;
+    const view = scroll.clientHeight;
+    const viewTop = scroll.scrollTop;
+    const viewBottom = viewTop + view;
+    let next = viewTop;
+    if (target < viewTop) {
+      next = target - 8;
+    } else if (target + rowHeight > viewBottom) {
+      next = target + rowHeight - view + 8;
+    }
+    const max = Math.max(0, scroll.scrollHeight - view);
+    next = Math.max(0, Math.min(next, max));
+    if (Math.abs(next - viewTop) > 1) {
+      scroll.scrollTop = next;
+    }
+    setWindow(windowFor(next, view));
+  }, [cursor, visible, offsets, rowHeight, windowFor]);
 
   const refresh = useCallback(() => {
     void api.getState().then(onState).catch(() => undefined);
