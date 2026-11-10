@@ -22,7 +22,10 @@ tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.31", features = ["bundled"] }
+# 0.41 is the first rusqlite that pulls libsqlite3-sys 0.39, which carries the
+# fix for RUSTSEC-2026-0459 (CVE-2026-119375 in C SQLite). The advisory
+# landed after 2.2.0 shipped, so the audit gate caught it on the way to 3.0.0.
+rusqlite = { version = "0.41", features = ["bundled"] }
 arboard = "3"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }

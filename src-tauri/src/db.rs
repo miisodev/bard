@@ -2240,12 +2240,17 @@ const CUSTOM_MODEL_COLUMNS: &str =
 fn custom_model_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CustomModel> {
     let ownership: String = row.get(7)?;
     let compatibility: String = row.get(8)?;
+    // SQLite's integers are signed, so the byte count is read as the signed
+    // type it is stored as and widened here. Reading it as `u64` was never
+    // supported by the driver and rusqlite 0.41 stopped pretending otherwise.
+    let size_bytes: i64 = row.get(4)?;
+    let size_mb: i64 = row.get(3)?;
     Ok(CustomModel {
         id: row.get(0)?,
         repo: row.get(1)?,
         file: row.get(2)?,
-        size_mb: row.get(3)?,
-        size_bytes: row.get(4)?,
+        size_mb: size_mb.max(0) as u64,
+        size_bytes: size_bytes.max(0) as u64,
         sha256: row.get(5)?,
         local_path: row.get(6)?,
         ownership: if ownership.eq_ignore_ascii_case("app") {
