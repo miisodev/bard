@@ -246,6 +246,13 @@ summary:focus-visible {
   box-shadow: var(--focus-ring);
 }
 
+/* A button filled with the accent colour cannot carry an accent-coloured
+   ring: the two would merge into one shape. The ring gets a gap of the
+   surface behind it, so it reads as a ring around the button. */
+.btn.primary:focus-visible {
+  box-shadow: var(--focus-ring-on-accent);
+}
+
 /* `.btn.danger` and `.segmented button:focus-visible` live in styles.css,
 beside
    the primitives they modify,
@@ -744,4 +751,104 @@ because the panel and the Draw window both render
 .about-copyright {
   margin-left: auto;
   color: var(--on-canvas-3);
+}
+
+/* ── A feature that lives inside another pane (Refine under Models) ── */
+
+.pane-section {
+  margin-top: var(--sp-10);
+  padding-top: var(--sp-9);
+  border-top: 1px solid var(--canvas-rule);
+}
+
+.pane-section-head {
+  margin-bottom: var(--sp-7);
+}
+
+.pane-section-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-tight);
+  color: var(--on-canvas);
+}
+
+.pane-section-head p {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  color: var(--on-canvas-2);
+}
+
+/* ── Shortcut recording ── */
+
+.shortcut-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.shortcut-record {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 132px;
+  min-height: 32px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
+}
+
+.shortcut-record:hover {
+  background: var(--surface-2);
+}
+
+.shortcut-record:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.shortcut-record.recording {
+  justify-content: center;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+.recording-hint {
+  color: var(--accent-text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.shortcut-record .keys.static {
+  min-width: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.keys-off {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.shortcut-status {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+}
+
+.shortcut-status.taken {
+  color: var(--danger-text);
+}
+
+.group-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--sp-5) var(--sp-6);
 }

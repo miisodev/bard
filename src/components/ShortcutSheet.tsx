@@ -26,6 +26,15 @@ export default function ShortcutSheet({
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const restoreFocusTo = useRef<HTMLElement | null>(null);
+  // Read through a ref so the modal's effect runs once, on mount.
+  //
+  // It used to depend on `onClose`, and every caller passes an inline arrow —
+  // a new identity on every parent render. The effect then tore itself down
+  // and set itself up again: the cleanup put focus back where it came from
+  // and the setup moved it to the close button, so a parent re-render (the
+  // panel re-renders on every capture) threw away the reader's place.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     restoreFocusTo.current = document.activeElement as HTMLElement | null;
@@ -37,7 +46,7 @@ export default function ShortcutSheet({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        onClose();
+        closeRef.current();
         return;
       }
       const card = cardRef.current;
@@ -68,7 +77,7 @@ export default function ShortcutSheet({
       window.removeEventListener("keydown", onKey, true);
       if (restoreFocusTo.current?.isConnected) restoreFocusTo.current.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="sheet" onClick={onClose}>

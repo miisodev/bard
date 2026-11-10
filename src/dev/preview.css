@@ -27,32 +27,27 @@ html[data-preview="settings"] #root,
 html[data-preview="draw"] #root {
   --preview-w: 720px;
 }
-/* The shelf is an edge band: wide and short, like the window Rust anchors —
-   1280 × SHELF_THICKNESS_H (src-tauri/src/geometry.rs), so a band laid out
-   here measures what the real one does. */
+/* The main window floats at its first size, or docks as a full-height band. */
 html[data-preview="main"] #root {
-  --preview-w: 1280px;
-  --preview-h: 292px;
+  --preview-w: 400px;
+  --preview-h: 620px;
 }
-/* Left and right docks are tall, narrow bands — size the frame to match. */
-html[data-preview="main"] #root:has(.app[data-edge="left"]),
-html[data-preview="main"] #root:has(.app[data-edge="right"]) {
-  --preview-w: 440px;
-  --preview-h: 820px;
+html[data-preview="main"] #root:has(.app[data-dock="left"]),
+html[data-preview="main"] #root:has(.app[data-dock="right"]) {
+  --preview-w: 380px;
+  --preview-h: 860px;
+  border-radius: 0;
 }
 html[data-preview="main"] #root:has(.app.setup) {
   --preview-w: 620px;
   --preview-h: 680px;
 }
-html[data-preview="overlay"] #root {
-  --preview-w: 260px;
-  --preview-h: 60px;
-  box-shadow: none;
-}
-/* The review sheet is the pill grown: the same window at its review size. */
-html[data-preview="overlay"] #root:has(.overlay-sheet) {
-  --preview-w: 420px;
+/* The pill window is a transparent canvas; the pill draws at its top. */
+html[data-preview="pill"] #root {
+  --preview-w: 480px;
   --preview-h: 300px;
+  box-shadow: none;
+  border-radius: 0;
 }
 
 /* Inside the screenshot stage: no desktop, the window fills its frame. */

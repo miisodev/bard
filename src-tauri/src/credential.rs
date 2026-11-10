@@ -170,7 +170,7 @@ fn serve(request: &Request) {
         }
         Request::Write(username, value, reply, _) => {
             let outcome = match keyring::Entry::new(SERVICE, username) {
-                Ok(entry) => match entry.set_password(value.trim()) {
+                Ok(entry) => match entry.set_password(value) {
                     Ok(()) => Done::Ok,
                     Err(_) => Done::Unavailable,
                 },

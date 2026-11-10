@@ -7,15 +7,15 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AlertCircle, LoaderCircle, RotateCcw, X, SlidersHorizontal, Clipboard, Mic, Cpu, Wand2, Keyboard, HardDrive, Info } from "lucide-react";
+import { AlertCircle, LoaderCircle, RotateCcw, X, SlidersHorizontal, Clipboard, Mic, Cpu, Keyboard, HardDrive, Info } from "lucide-react";
 import ResizeHandles from "../components/ResizeHandles";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
 import type { AppState, ModelProgress } from "../types";
 
 import GeneralPane from "./panes/General";
-import CapturePane from "./panes/Capture";
-import DictationPane, { PostprocessingPane } from "./panes/Dictation";
+import ClipboardPane from "./panes/Clipboard";
+import DictationPane from "./panes/Dictation";
 import ModelsPane from "./panes/Models";
 import ShortcutsPane from "./panes/Shortcuts";
 import DataPane from "./panes/Data";
@@ -28,16 +28,15 @@ import AboutPane from "./panes/About";
   settings — and Bard owes the surface of two apps. It now docks beside the
   panel as a frameless surface of the same material, at the panel's height.
   The sections are ordered the way the product is used rather than the way it
-  is built: what the app does at rest, then each of its two halves, models,
-  optional cloud refinement, then keys, data and provenance.
+  is built: how it looks and talks, then the clipboard, dictation and its
+  models (with optional Refine), then keys, data and provenance.
 */
 
 const SECTIONS = [
   { id: "general", icon: SlidersHorizontal, label: "General" },
-  { id: "capture", icon: Clipboard, label: "Capture" },
+  { id: "clipboard", icon: Clipboard, label: "Clipboard" },
   { id: "dictation", icon: Mic, label: "Dictation" },
   { id: "models", icon: Cpu, label: "Models" },
-  { id: "postprocessing", icon: Wand2, label: "Refine" },
   { id: "shortcuts", icon: Keyboard, label: "Shortcuts" },
   { id: "data", icon: HardDrive, label: "Data" },
   { id: "about", icon: Info, label: "About" },
@@ -239,8 +238,8 @@ export default function SettingsWindow() {
 
   const panes: Record<SectionId, JSX.Element> = {
     general: <GeneralPane state={state} refresh={refresh} />,
-    capture: <CapturePane state={state} refresh={refresh} />,
-    dictation: <DictationPane state={state} refresh={refresh} />,
+    clipboard: <ClipboardPane state={state} refresh={refresh} />,
+    dictation: <DictationPane />,
     models: (
       <ModelsPane
         state={state}
@@ -249,7 +248,6 @@ export default function SettingsWindow() {
         inventoryVersion={inventoryVersion}
       />
     ),
-    postprocessing: <PostprocessingPane state={state} refresh={refresh} />,
     shortcuts: <ShortcutsPane state={state} refresh={refresh} />,
     data: <DataPane state={state} refresh={refresh} />,
     about: <AboutPane state={state} refresh={refresh} />,

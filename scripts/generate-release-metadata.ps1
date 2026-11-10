@@ -28,7 +28,7 @@ $provenance = [ordered]@{
   artifacts = $artifacts
   signing = [ordered]@{
     authenticode = [ordered]@{ required = $false; status = "unsigned by decision; SmartScreen shows its notice once" }
-    microsoft_store = [ordered]@{ public_asset = $false; status = "MSIX submitted through Partner Center; Microsoft signs it after certification" }
+    microsoft_store = [ordered]@{ public_asset = $false; status = "MSIX package prepared for owner submission through Partner Center; not yet submitted. Microsoft signs it after certification." }
     tauri_updater = [ordered]@{ required = $true; envelope = $signature }
   }
 }
@@ -64,8 +64,22 @@ $crates = @($cargo.packages | Sort-Object { "pkg:cargo/$($_.name)@$($_.version)"
 if (-not (Test-Path node_modules)) {
   throw "node_modules is missing; the SBOM needs the installed frontend dependencies. Run bun install --frozen-lockfile first."
 }
-$npm = @($package.dependencies.PSObject.Properties.Name | Sort-Object | ForEach-Object {
-  $name = $_
+
+# The whole installed production closure, not only the packages the manifest
+# names directly. An SBOM whose component list is the product's own manifest
+# cannot answer the question it exists to answer — which is what is actually
+# inside the shipped binary — and the Linux generator has always walked the
+# closure. The two generators now produce the same inventory from the same
+# installed tree.
+$seen = @{}
+$queue = [System.Collections.Generic.Queue[string]]::new()
+foreach ($property in $package.dependencies.PSObject.Properties) { $queue.Enqueue($property.Name) }
+foreach ($property in $package.optionalDependencies.PSObject.Properties) { $queue.Enqueue($property.Name) }
+$npm = @()
+while ($queue.Count -gt 0) {
+  $name = $queue.Dequeue()
+  if ($seen.ContainsKey($name)) { continue }
+  $seen[$name] = $true
   $installed = Join-Path "node_modules" (Join-Path $name "package.json")
   if (-not (Test-Path $installed)) { throw "node_modules/$name is missing; run bun install --frozen-lockfile first." }
   $entry = Get-Content $installed -Raw | ConvertFrom-Json
@@ -78,8 +92,11 @@ $npm = @($package.dependencies.PSObject.Properties.Name | Sort-Object | ForEach-
   $component = [ordered]@{ type = "library"; name = $name; version = $entry.version; purl = "pkg:npm/$name@$($entry.version)" }
   $licenses = @(Get-Licenses $license)
   if ($licenses.Count -gt 0) { $component["licenses"] = $licenses }
-  $component
-})
+  $npm += $component
+  foreach ($property in $entry.dependencies.PSObject.Properties) { $queue.Enqueue($property.Name) }
+  foreach ($property in $entry.optionalDependencies.PSObject.Properties) { $queue.Enqueue($property.Name) }
+}
+$npm = @($npm | Sort-Object { $_.name })
 
 $components = @($crates) + @($npm) + @(
   [ordered]@{ type = "application"; name = $package.name; version = $package.version; purl = "pkg:npm/$($package.name)@$($package.version)" }

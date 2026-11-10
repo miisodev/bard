@@ -106,27 +106,6 @@
   --icon-control: 32px;
   --composer-action-h: 26px;
   --preview-width: 560px;
-
-  /* ─── Shelf ───────────────────────────────────────────────────────────── */
-  /*
-     The edge-docked shelf. The window itself is anchored and sized by Rust;
-     these are what the cards, the rail and the zones are laid out from, and
-     the page size is measured against them at runtime. The band is as deep as
-     one card plus its chrome on a horizontal edge — the arithmetic is in
-     `SHELF_THICKNESS_H` (src-tauri/src/geometry.rs), which has to move with
-     `--shelf-card-h`.
-  */
-  --shelf-rail-h: 48px;
-  --shelf-card-w: 224px;      /* horizontal bands: one card's width */
-  --shelf-card-h: 148px;      /* vertical bands: one card's height */
-  --shelf-card-gap: 12px;
-  --shelf-card-head: 32px;
-  --shelf-card-foot: 28px;
-  --shelf-pager-h: 24px;
-  --shelf-packs-w: 264px;     /* bottom/top: the packs pane's width */
-  --shelf-packs-h: 148px;     /* left/right: the packs pane's height */
-  --shelf-pack-card-w: 196px; /* left/right: one pack card's width in the row */
-  --shelf-pack-card-h: 84px;  /* bottom/top: one pack card's height in the column */
 }
 
 /* ══ Light ═══════════════════════════════════════════════════════════════ */
@@ -183,7 +162,13 @@
 
   --scrim: rgba(12, 12, 20, 0.28);
   --scrollbar: rgba(0, 0, 0, 0.22);
-  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
+  /* The focus ring is one 2px outline in the accent. It is the same on every
+     surface, so a keyboard user sees one thing wherever the focus is. */
+  --focus-ring: 0 0 0 2px var(--ring);
+  /* A control filled with the accent colour needs the ring to separate from
+     itself: a canvas-coloured gap and the ring outside it. Only the filled
+     accent button uses this one. */
+  --focus-ring-on-accent: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
 
   /* ══ Kind tones ══════════════════════════════════════════════════════════
      Each kind's glyph sits in a small tonal circle of its own colour — the
@@ -201,6 +186,8 @@
   --kind-dictation-ink: #8e3f20;
   --kind-draw: #fbefd5;
   --kind-draw-ink: #744e0c;
+  --kind-file: #e3eef0;
+  --kind-file-ink: #1d5560;
 
   --keycap-bg: #ffffff;
   --keycap-ink: #3d4553;
@@ -251,7 +238,8 @@
 
   --scrim: rgba(0, 0, 0, 0.5);
   --scrollbar: rgba(255, 255, 255, 0.22);
-  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
+  --focus-ring: 0 0 0 2px var(--ring);
+  --focus-ring-on-accent: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
 
   --kind-text: #383a42;
   --kind-text-ink: #d6dbe5;
@@ -265,6 +253,8 @@
   --kind-dictation-ink: #f0bea9;
   --kind-draw: #40331d;
   --kind-draw-ink: #ebcf95;
+  --kind-file: #1f363a;
+  --kind-file-ink: #a8d8e0;
 
   --keycap-bg: rgba(255, 255, 255, 0.08);
   --keycap-ink: #eef1f7;

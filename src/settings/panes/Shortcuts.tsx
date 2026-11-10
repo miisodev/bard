@@ -1,124 +1,226 @@
-import { useState } from "react";
-import { Group, Pane, Row, Button } from "../ui";
-import type { PaneProps } from "../SettingsWindow";
+import { listen } from "@tauri-apps/api/event";
+import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
 import { api } from "../../store";
+import type { ShortcutRow, ShortcutState } from "../../types";
+import type { PaneProps } from "../SettingsWindow";
+import { Button, Group, Note, Pane, Row } from "../ui";
 
-export default function ShortcutsPane({ state, refresh }: PaneProps) {
-  const wayland = state.desktop?.session === "wayland";
-  const [working, setWorking] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const configure = async (feature: "shortcuts" | "input") => {
-    setWorking(feature);
-    setError(null);
-    try { await api.configureDesktop(feature); refresh(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setWorking(null); }
+/** Browser key names → the names Bard's shortcut table uses. */
+const KEY_NAMES: Record<string, string> = {
+  " ": "Space",
+  ",": "Comma",
+  ".": "Period",
+  "/": "Slash",
+  ";": "Semicolon",
+  "'": "Quote",
+  "[": "BracketLeft",
+  "]": "BracketRight",
+  "\\": "Backslash",
+  "`": "Backquote",
+  "-": "Minus",
+  "=": "Equal",
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+};
+
+/** The physical key, so Shift+1 records as 1 rather than "!". */
+function keyFromCode(code: string): string | null {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  const byCode: Record<string, string> = {
+    Space: "Space",
+    Comma: "Comma",
+    Period: "Period",
+    Slash: "Slash",
+    Semicolon: "Semicolon",
+    Quote: "Quote",
+    BracketLeft: "BracketLeft",
+    BracketRight: "BracketRight",
+    Backslash: "Backslash",
+    Backquote: "Backquote",
+    Minus: "Minus",
+    Equal: "Equal",
   };
-  return (
-    <Pane
-      title="Shortcuts"
-      description={wayland ? "Your desktop controls global shortcuts and permission to type into other apps." : "A few taps of keys you already rest on. Available from any app."}
-    >
-      {wayland ? (
-        <Group title="Desktop integration" note="Wayland protects other apps from global input hooks. Enable each integration through your desktop’s permission dialog.">
-          <Row label="Global shortcuts" hint={state.desktop?.shortcutsReady ? "Connected. Your desktop owns the assigned shortcuts." : "Choose shortcuts for the shelf, capture, dictation, Draw and Settings. Double-tap modifier gestures are Windows and X11 shortcuts."}>
-            <Button disabled={!!working || state.desktop?.shortcutsReady} ariaBusy={working === "shortcuts"} onClick={() => void configure("shortcuts")}>
-              {working === "shortcuts" ? "Waiting for desktop…" : state.desktop?.shortcutsReady ? "Connected" : "Set up shortcuts"}
-            </Button>
-          </Row>
-          <Row label="Capture and paste-back" hint={state.desktop?.inputReady ? "Keyboard access is enabled for this session. You can revoke it from your desktop." : "Allow Bard to send Copy and Paste to your focused app. Only keyboard access is requested; no screen or pointer is shared. Without it, copy items and paste them yourself."}>
-            <Button disabled={!!working || state.desktop?.inputReady} ariaBusy={working === "input"} onClick={() => void configure("input")}>
-              {working === "input" ? "Waiting for desktop…" : state.desktop?.inputReady ? "Connected" : "Enable keyboard access"}
-            </Button>
-          </Row>
-          {error ? <div className="row"><p className="form-error" role="alert">{error}</p></div> : null}
-        </Group>
-      ) : <Group title="From any app">
-        <Row label="Capture" hint="Tap Left Shift twice to grab the current selection.">
-          <Keycaps keys={["Left Shift"]} twice />
-        </Row>
-        <Row
-          label="Paste item"
-          hint="Tap Right Shift twice, then quickly press 1, 2 or 3 to paste one of the first three items into the focused app."
-        >
-          <Keycaps keys={["Right Shift"]} twice then="1 2 3" />
-        </Row>
-        <Row label="Shelf" hint="Tap Right Shift twice to show or hide Bard.">
-          <Keycaps keys={["Right Shift"]} twice />
-        </Row>
-        <Row label="Settings" hint="Tap Right Alt twice to open Settings as a single window.">
-          <Keycaps keys={["Right Alt"]} twice />
-        </Row>
-        <Row label="Draw" hint="Tap Left Alt twice to open Draw as a single window.">
-          <Keycaps keys={["Left Alt"]} twice />
-        </Row>
-        <Row label="Fullscreen Draw" hint="While Draw is focused, toggle its native fullscreen state.">
-          <Keycaps keys={["F11"]} />
-        </Row>
-        <Row
-          label="Dictate"
-          hint="Hold the same Ctrl key to talk, or tap it twice to start and twice to stop. Esc cancels."
-        >
-          <Keycaps keys={["Ctrl"]} twice />
-        </Row>
-      </Group>}
+  return byCode[code] ?? null;
+}
 
-      <Group title="Inside the shelf">
-        <Row label="Paste" hint="Paste the selected item into the app you opened Bard over.">
-          <Keycaps keys={["Enter"]} />
-        </Row>
-        <Row
-          label="Paste by position"
-          hint="Paste a card by where it sits on the page. The digits reach as many cards as the page holds."
-        >
-          <Keycaps keys={["Ctrl", "1–9"]} />
-        </Row>
-        <Row label="Preview" hint="Read the full capture before copying or pasting it.">
-          <Keycaps keys={["Alt", "Enter"]} />
-        </Row>
-        <Row label="Copy" hint="Copy the selected item without leaving Bard.">
-          <Keycaps keys={["Ctrl", "C"]} />
-        </Row>
-        <Row label="Copy as list" hint="Copy the selected items as a Markdown list.">
-          <Keycaps keys={["Ctrl", "Shift", "M"]} />
-        </Row>
-        <Row label="Sections" hint="Open the section switcher.">
-          <Keycaps keys={["Ctrl", "K"]} />
-        </Row>
-        <Row label="Shortcut guide" hint="Show this list without leaving the shelf.">
-          <Keycaps keys={["Ctrl", "/"]} />
-        </Row>
-        <Row label="Done" hint="Mark the selected item complete.">
-          <Keycaps keys={["Space"]} />
-        </Row>
-        <Row label="Close" hint="Clear search, then selection, then close the shelf.">
-          <Keycaps keys={["Esc"]} />
-        </Row>
-      </Group>
-    </Pane>
+export function chordFromEvent(event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey">): string | null {
+  if (["Control", "Alt", "Shift", "Meta", "OS", "AltGraph"].includes(event.key)) return null;
+  const key = keyFromCode(event.code) ?? KEY_NAMES[event.key] ?? (/^F([1-9]|1[0-2])$/.test(event.key) ? event.key : null) ??
+    (["Enter", "Tab", "Insert", "Delete", "Home", "End", "PageUp", "PageDown"].includes(event.key) ? event.key : null);
+  if (!key) return null;
+  const parts: string[] = [];
+  if (event.ctrlKey) parts.push("Ctrl");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
+  if (event.metaKey) parts.push("Super");
+  parts.push(key);
+  return parts.join("+");
+}
+
+function Keys({ display }: { display: string }) {
+  if (!display) return <span className="keys-off">Off</span>;
+  return (
+    <span className="keys static">
+      {display.split("+").map((key, index) => (
+        <kbd key={`${key}-${index}`}>{key}</kbd>
+      ))}
+    </span>
   );
 }
 
-/**
- * A chord, or a key tapped twice. A doubled gesture reads as one keycap and
- * "×2" rather than the same cap drawn twice, which looked like a two-key chord.
- */
-function Keycaps({ keys, twice = false, then }: { keys: string[]; twice?: boolean; then?: string }) {
-  const spoken = `${keys.join(" plus ")}${twice ? ", tapped twice" : ""}${then ? `, then ${then.split(" ").join(" or ")}` : ""}`;
+function StatusNote({ row }: { row: ShortcutRow }) {
+  if (row.status === "taken") return <span className="shortcut-status taken">Used by another app</span>;
+  if (row.status === "pending") return <span className="shortcut-status">Waiting for your desktop</span>;
+  return null;
+}
+
+export default function ShortcutsPane({ state }: PaneProps) {
+  const [shortcuts, setShortcuts] = useState<ShortcutState | null>(null);
+  const [recording, setRecording] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+
+  const load = useCallback(() => {
+    void api.getShortcuts().then(setShortcuts).catch((reason) => setError(String(reason)));
+  }, []);
+
+  useEffect(() => {
+    load();
+    const off = listen("shortcuts-changed", load);
+    return () => {
+      void off.then((fn) => fn());
+    };
+  }, [load]);
+
+  const save = async (id: string, chord: string) => {
+    setError(null);
+    try {
+      setShortcuts(await api.setShortcut(id, chord));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRecording(null);
+    }
+  };
+
+  const onRecordKey = (id: string) => (event: KeyboardEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      setRecording(null);
+      return;
+    }
+    if (event.key === "Backspace" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      void save(id, "");
+      return;
+    }
+    const chord = chordFromEvent(event);
+    if (chord) void save(id, chord);
+  };
+
+  const portal = shortcuts?.backend === "portal";
+  const connectDesktop = async (feature: "shortcuts" | "edit-shortcuts") => {
+    setWorking(true);
+    setError(null);
+    try {
+      await api.configureDesktop(feature);
+      load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setWorking(false);
+    }
+  };
+
   return (
-    <span className="keys static" aria-label={spoken}>
-      {keys.map((key, index) => (
-        <kbd key={`${key}-${index}`}>{key}</kbd>
-      ))}
-      {twice ? <span className="keys-times" aria-hidden="true">×2</span> : null}
-      {then ? (
-        <>
-          <span className="keys-then" aria-hidden="true">then</span>
-          {then.split(" ").map((key) => (
-            <kbd key={key} aria-hidden="true">{key}</kbd>
-          ))}
-        </>
+    <Pane
+      title="Shortcuts"
+      description="Work with Bard from any app. Every shortcut puts things on your clipboard; you paste."
+    >
+      {error ? <Note tone="danger">{error}</Note> : null}
+      {portal ? (
+        <Group
+          title="Your desktop"
+          note="On Wayland your desktop owns global shortcuts: it asks once, and you change them in its own dialog."
+        >
+          <Row
+            label="Global shortcuts"
+            hint={
+              state.desktop?.shortcutsReady
+                ? "Connected. The keys below are what your desktop assigned."
+                : "Not connected yet. Bard proposes the keys below; your desktop confirms them."
+            }
+          >
+            <Button
+              disabled={working}
+              ariaBusy={working}
+              onClick={() => void connectDesktop(state.desktop?.shortcutsReady ? "edit-shortcuts" : "shortcuts")}
+            >
+              {working ? "Waiting for desktop…" : state.desktop?.shortcutsReady ? "Change keys" : "Connect"}
+            </Button>
+          </Row>
+        </Group>
       ) : null}
-    </span>
+
+      <Group
+        title="From any app"
+        note={
+          portal
+            ? undefined
+            : "Click a shortcut, then press the keys you want. Backspace turns it off, Escape keeps it as it is."
+        }
+      >
+        {(shortcuts?.rows ?? []).map((row) => (
+          <Row key={row.id} label={row.label} hint={undefined}>
+            <span className="shortcut-cell">
+              <StatusNote row={row} />
+              {shortcuts?.editable ? (
+                <button
+                  type="button"
+                  className={`shortcut-record${recording === row.id ? " recording" : ""}`}
+                  aria-label={`${row.label}: ${row.display || "off"}. Press to change.`}
+                  onClick={() => setRecording(recording === row.id ? null : row.id)}
+                  onKeyDown={recording === row.id ? onRecordKey(row.id) : undefined}
+                  onBlur={() => setRecording((current) => (current === row.id ? null : current))}
+                >
+                  {recording === row.id ? <span className="recording-hint">Press keys…</span> : <Keys display={row.display} />}
+                </button>
+              ) : (
+                <Keys display={row.display} />
+              )}
+            </span>
+          </Row>
+        ))}
+        {shortcuts?.editable ? (
+          <div className="group-actions">
+            <Button onClick={() => void api.resetShortcuts().then(setShortcuts)}>Restore defaults</Button>
+          </div>
+        ) : null}
+      </Group>
+
+      <Group title="In the main window">
+        <Row label="Copy" hint="Enter copies and closes a docked window; Shift+Enter copies and stays.">
+          <Keys display="Enter" />
+        </Row>
+        <Row label="Pin to slots 1–3" hint="Pinned items lead the list and answer the slot shortcuts.">
+          <Keys display="Ctrl+P" />
+        </Row>
+        <Row label="Keep forever" hint="Kept items are never removed by the history lifespan.">
+          <Keys display="Ctrl+S" />
+        </Row>
+        <Row label="Delete">
+          <Keys display="Delete" />
+        </Row>
+        <Row label="Search" hint="Or just start typing.">
+          <Keys display="Ctrl+F" />
+        </Row>
+        <Row label="Guide" hint="The shortcut guide, over the list.">
+          <Keys display="?" />
+        </Row>
+      </Group>
+    </Pane>
   );
 }

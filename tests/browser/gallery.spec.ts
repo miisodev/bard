@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const shots = ["hero", "capture", "dictate", "draw", "models", "dark"];
+const shots = ["hero", "capture", "slots", "dictate", "draw", "models"];
 
 /** Wait until the stage and every window inside it have painted with their fonts. */
 async function staged(page: Page, shot: string) {

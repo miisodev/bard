@@ -30,7 +30,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(root, "index.html"),
-        overlay: resolve(root, "overlay.html"),
+        pill: resolve(root, "pill.html"),
         draw: resolve(root, "draw.html"),
         settings: resolve(root, "settings.html"),
       },

@@ -134,9 +134,14 @@
 /* The tools ride a tonal floating toolbar, as Material's and Apple's drawing
    tools do: one rounded tray under the page, its corners concentric with the
    window's. */
+/* A single floating palette: one row that wraps at the window's 480px floor, so
+   no control is ever pushed out of reach. The surface stays quiet (--surface on
+   --canvas) with the card elevation, so it reads as a tray above the page rather
+   than a second layer of chrome. */
 .draw-toolbar {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  flex-wrap: wrap;
   gap: var(--sp-3);
   margin: var(--sp-5) var(--sp-6) var(--sp-6);
   padding: var(--sp-3) var(--sp-4);
@@ -144,13 +149,8 @@
   background: var(--surface);
   box-shadow: var(--el-card);
   color: var(--text);
-}
-
-.draw-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-3);
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .draw-group {
@@ -166,7 +166,99 @@
   background: var(--rule);
 }
 
+/* The separator that introduces the page actions belongs to them, not to the
+   bar: when the bar wraps, a separator left at the end of the first line
+   reads as a stray hairline with nothing after it. */
+.draw-actions > .draw-sep {
+  align-self: center;
+  height: 20px;
+  margin: 0 var(--sp-2) 0 0;
+}
+
 .draw-spacer { flex: 1; }
+
+/* The two page actions sit at the end of the bar. `margin-left: auto` keeps
+   them at the right whether the bar is on one line or has wrapped, so they
+   never end up stranded in a corner. */
+.draw-actions {
+  margin-left: auto;
+  gap: var(--sp-3);
+}
+
+/* The style control: one button that carries the current colour and stroke
+   width, so the state is visible while its popover is closed. */
+.draw-style {
+  position: relative;
+  display: inline-flex;
+}
+
+.draw-style-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 32px;
+  padding: 0 var(--sp-4);
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
+}
+
+.draw-style-btn:hover { background: color-mix(in srgb, var(--surface-2) 82%, var(--text)); }
+
+.draw-style-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.draw-style-width {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+}
+
+.draw-style-width span {
+  display: block;
+  width: 16px;
+  border-radius: var(--r-pill);
+  background: var(--text-2);
+}
+
+.draw-style-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The popover holds the swatches and the widths; it is a surface-3 sheet like
+   the canvas choice, anchored above the button. */
+.draw-style-pop {
+  position: absolute;
+  bottom: calc(100% + var(--sp-3));
+  left: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-card);
+  background: var(--surface-3);
+  color: var(--text);
+  box-shadow: var(--el-pop);
+  animation: fade-in var(--t-fast) var(--ease-out);
+}
+
+.draw-style-pop .draw-sep {
+  height: 24px;
+  align-self: center;
+}
 
 .draw-tool {
   display: grid;
@@ -311,6 +403,12 @@
 .draw-primary:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+/* The filled accent button cannot carry an accent ring: the two merge into
+   one shape. It gets the gap of the surface behind it instead. */
+.draw-primary:focus-visible {
+  box-shadow: var(--focus-ring-on-accent);
 }
 
 /* ---------- header: canvas choice ---------- */

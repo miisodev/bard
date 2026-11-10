@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { ArrowRight, ChevronLeft, ClipboardList, Download, LoaderCircle, Mic, PenTool, RotateCcw } from "lucide-react";
 import { api } from "../store";
 import LicenseCard from "./LicenseCard";
-import type { AppState, ModelInfo, ModelProgress } from "../types";
+import type { AppState, ModelInfo, ModelProgress, ShortcutState } from "../types";
 
 const WAVE = (
   <svg viewBox="0 0 42 42" aria-hidden="true">
@@ -13,6 +13,16 @@ const WAVE = (
 );
 
 const STEPS = 4;
+
+/** Short names for the shortcuts setup lists. */
+const SHORT_LABELS: Record<string, string> = {
+  main: "Show Bard",
+  dictate: "Dictate — hold to talk",
+  "slot-1": "Copy item 1 (2, 3)",
+  cycle: "Cycle items 1–3",
+  preview: "Preview clipboard",
+  pause: "Pause capture",
+};
 
 /** What each step calls itself, for the announcement when it arrives. */
 const STEP_TITLES = [
@@ -55,6 +65,24 @@ export default function Onboarding({
   onDone: () => void | Promise<void>;
 }) {
   const [step, setStep] = useState(0);
+  const [shortcuts, setShortcuts] = useState<ShortcutState | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  useEffect(() => {
+    void api.getShortcuts().then(setShortcuts).catch(() => undefined);
+  }, []);
+  const connectShortcuts = async () => {
+    setConnecting(true);
+    setConnectError(null);
+    try {
+      await api.configureDesktop("shortcuts");
+      setShortcuts(await api.getShortcuts());
+    } catch (reason) {
+      setConnectError(errorText(reason));
+    } finally {
+      setConnecting(false);
+    }
+  };
   const [model, setModel] = useState<ModelInfo | null>(null);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -206,9 +234,9 @@ export default function Onboarding({
             {/* The brand is the mark above this. The headline is the promise. */}
             <h1>Clipboard, Draw and Dictate.</h1>
             <p>
-              Bard catches anything you copy, turns your voice into text without
-              sending audio anywhere, and keeps both on this machine. Refine is
-              always opt-in.
+              Bard keeps everything you copy, turns your voice into text without
+              sending audio anywhere, and keeps both on this machine. Whatever
+              you pick lands on your clipboard; you paste it.
             </p>
           </>
         ) : step === 1 ? (
@@ -223,7 +251,7 @@ export default function Onboarding({
         ) : step === 2 ? (
           <>
             <h1>Make it yours</h1>
-            <p>{state.desktop?.session === "wayland" ? "Connect Bard to your desktop for shortcuts, capture and paste-back. You control each permission." : "Two taps of a modifier do the everyday work, in any app. These gestures are fixed and always available."}</p>
+            <p>{state.desktop?.session === "wayland" ? "A few shortcuts reach Bard from any app. Your desktop asks once before they work." : "A few shortcuts reach Bard from any app. You can change any of them in Settings."}</p>
           </>
         ) : (
           <>
@@ -242,21 +270,21 @@ export default function Onboarding({
               <span className="onb-feature-glyph"><ClipboardList size={18} aria-hidden="true" /></span>
               <span>
                 <strong>Clipboard</strong>
-                <span>Everything you copy waits on one searchable shelf. Enter pastes it back where you were.</span>
+                <span>Everything you copy or cut is kept, newest first, with a soft pop to say so. Pick one and it is back on your clipboard.</span>
               </span>
             </li>
             <li data-kind="draw">
               <span className="onb-feature-glyph"><PenTool size={18} aria-hidden="true" /></span>
               <span>
                 <strong>Draw</strong>
-                <span>Sketch a diagram or a note by hand, and keep it on the shelf beside everything else.</span>
+                <span>Sketch a diagram or a note by hand, then copy it like anything else.</span>
               </span>
             </li>
             <li data-kind="dictation">
               <span className="onb-feature-glyph"><Mic size={18} aria-hidden="true" /></span>
               <span>
                 <strong>Dictate</strong>
-                <span>Speak in any app and Bard types it. Transcription runs on this computer.</span>
+                <span>Hold a shortcut and talk. The words go to your clipboard, transcribed on this computer.</span>
               </span>
             </li>
           </ul>
@@ -321,20 +349,29 @@ export default function Onboarding({
           </div>
         ) : null}
 
-        {step === 2 && state.desktop?.session === "wayland" ? (
-          <div className="shortcut-list">
-            <p>Your desktop manages global shortcuts. Set them up in Settings › Shortcuts, then enable keyboard access for capture and paste-back.</p>
-            <button className="btn" onClick={() => void api.openSettings()}>Open Settings</button>
-            <p>You can keep using Bard without these permissions: copy an item, then paste it into your app.</p>
-          </div>
-        ) : step === 2 ? (
+        {step === 2 ? (
           <div className="shortcut-list" aria-label="Bard keyboard shortcuts">
-            <div><kbd>Left Shift</kbd><kbd>Left Shift</kbd><span>Capture</span></div>
-            <div><kbd>Right Shift</kbd><kbd>Right Shift</kbd><kbd>1 / 2 / 3</kbd><span>Paste item</span></div>
-            <div><kbd>Right Shift</kbd><kbd>Right Shift</kbd><span>Panel</span></div>
-            <div><kbd>Right Alt</kbd><kbd>Right Alt</kbd><span>Settings</span></div>
-            <div><kbd>Left Alt</kbd><kbd>Left Alt</kbd><span>Draw</span></div>
-            <div><kbd>Ctrl</kbd><kbd>Ctrl</kbd><span>Dictate — hold to talk</span></div>
+            {(shortcuts?.rows ?? [])
+              .filter((row) => ["main", "dictate", "slot-1", "cycle", "preview", "pause"].includes(row.id))
+              .map((row) => (
+                <div key={row.id}>
+                  {(row.display || "Off").split("+").map((key, index) => (
+                    <kbd key={`${row.id}-${index}`}>{key}</kbd>
+                  ))}
+                  <span>{SHORT_LABELS[row.id] ?? row.label}</span>
+                </div>
+              ))}
+            {state.desktop?.session === "wayland" ? (
+              <button
+                className="btn"
+                disabled={connecting || state.desktop?.shortcutsReady}
+                aria-busy={connecting}
+                onClick={() => void connectShortcuts()}
+              >
+                {state.desktop?.shortcutsReady ? "Shortcuts connected" : connecting ? "Waiting for your desktop…" : "Allow shortcuts"}
+              </button>
+            ) : null}
+            {connectError ? <p className="onb-error" role="alert">{connectError}</p> : null}
           </div>
         ) : null}
 

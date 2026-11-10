@@ -14,7 +14,61 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{commands::ImagesDir, db};
 
-static LAST_IMAGE_HASH: Mutex<Option<u64>> = Mutex::new(None);
+/// What Bard has just written itself, and what it has just captured, for text
+/// and for images. A change matching Bard's own write is never a capture; a
+/// change matching the last capture within a moment is the same copy reported
+/// twice (apps often set the clipboard in several steps). Anything else — even
+/// the same text copied again a few seconds later — is a fresh copy, kept and
+/// confirmed with a pop.
+struct Seen {
+    own: Option<(u64, std::time::Instant)>,
+    last: Option<(u64, std::time::Instant)>,
+}
+
+/// How long Bard's own write is remembered.
+const OWN_WINDOW: Duration = Duration::from_secs(5);
+/// How close together two reports of one copy arrive.
+const ECHO_WINDOW: Duration = Duration::from_millis(1500);
+
+impl Seen {
+    const fn new() -> Seen {
+        Seen {
+            own: None,
+            last: None,
+        }
+    }
+
+    fn mark_own(&mut self, digest: u64) {
+        self.own = Some((digest, std::time::Instant::now()));
+    }
+
+    /// True when `digest` is a copy worth capturing; records it as the last.
+    fn fresh(&mut self, digest: u64) -> bool {
+        let recent = |entry: Option<(u64, std::time::Instant)>, window: Duration| {
+            entry.is_some_and(|(seen, at)| seen == digest && at.elapsed() < window)
+        };
+        if recent(self.own, OWN_WINDOW) || recent(self.last, ECHO_WINDOW) {
+            return false;
+        }
+        self.last = Some((digest, std::time::Instant::now()));
+        true
+    }
+
+    /// Let a capture that failed to store be tried again.
+    fn forget(&mut self, digest: u64) {
+        if self.last.is_some_and(|(seen, _)| seen == digest) {
+            self.last = None;
+        }
+    }
+}
+
+static SEEN_TEXT: Mutex<Seen> = Mutex::new(Seen::new());
+static SEEN_IMAGE: Mutex<Seen> = Mutex::new(Seen::new());
+
+fn seen(slot: &'static Mutex<Seen>) -> std::sync::MutexGuard<'static, Seen> {
+    // A poisoned lock must not kill capture for the rest of the session.
+    slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 static LAST_OWN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(windows)]
@@ -130,6 +184,61 @@ struct Msg {
     point: [i32; 2],
 }
 
+/// Record an image Bard put on the clipboard itself.
+pub fn note_own_image(bytes: &[u8]) {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    seen(&SEEN_IMAGE).mark_own(hasher.finish());
+}
+
+/// The person's pause switch. While it is on, nothing copied is stored.
+static PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub const PAUSED_SETTING: &str = "capture_paused";
+
+pub fn is_paused() -> bool {
+    PAUSED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Turn capture on or off, persist it, and say so. Returns the new state.
+pub fn set_paused(app: &AppHandle, paused: bool) -> bool {
+    PAUSED.store(paused, std::sync::atomic::Ordering::SeqCst);
+    db::set_setting(app, PAUSED_SETTING, if paused { "1" } else { "0" });
+    if !paused {
+        // Whatever was copied while paused is not captured on resume: the
+        // switch means "do not keep this", including the last thing copied.
+        forget_current_clipboard();
+    }
+    crate::feedback::notify(
+        app,
+        if paused {
+            crate::feedback::Note::info("pause", "Clipboard capture paused")
+        } else {
+            crate::feedback::Note::info("resume", "Clipboard capture on")
+        },
+    );
+    let _ = app.emit("capture-paused", paused);
+    crate::tray::sync(app);
+    crate::commands::refresh(app);
+    paused
+}
+
+pub fn toggle_paused(app: &AppHandle) -> bool {
+    set_paused(app, !is_paused())
+}
+
+/// Mark the clipboard's current text and image as seen, so they are not
+/// captured later as if they had just been copied.
+fn forget_current_clipboard() {
+    if let Ok(mut clipboard) = crate::clip::handle() {
+        if let Ok(text) = clipboard.get_text() {
+            // Hashed untrimmed, exactly as capture_text hashes what the
+            // watcher reads back: what was copied is what is kept.
+            note_own_text(&text);
+        }
+    }
+}
+
 pub fn note_own_write(app: &AppHandle) {
     #[cfg(windows)]
     {
@@ -149,15 +258,6 @@ pub fn note_own_write(app: &AppHandle) {
 /// refused with a visible reason rather than absorbed.
 pub const MAX_CAPTURE_TEXT_BYTES: usize = 256 * 1024;
 
-/// Hash of the last captured text, rather than the text itself.
-///
-/// The previous code kept a full `String` copy of the most recent payload alive
-/// for the lifetime of the process, purely to compare against the next one. A
-/// 64-bit hash answers the same question — has this exact text been captured
-/// already — without retaining a user's clipboard contents in memory
-/// indefinitely.
-static LAST_CONTENT_HASH: Mutex<Option<u64>> = Mutex::new(None);
-
 fn content_hash(text: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
@@ -172,43 +272,46 @@ fn content_hash(text: &str) -> u64 {
 /// `capture_text`. Without this the watcher had never seen that text, so every
 /// dictated line came back a moment later as a second `clipboard` row.
 pub fn note_own_text(text: &str) {
-    let digest = content_hash(text);
-    let mut guard = LAST_CONTENT_HASH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *guard = Some(digest);
+    // Hashed exactly as the watcher hashes what it reads back: `set_text`
+    // verifies the clipboard round-trip byte for byte, so the written text
+    // and the read-back text are the same and their hashes match. Trimming
+    // here would make Bard's own write describe a different event than the
+    // watcher reads back, and the same dictated line would be captured twice.
+    seen(&SEEN_TEXT).mark_own(content_hash(text));
 }
 
 pub fn capture_text(app: &AppHandle, text: &str) {
     if crate::license::require(app).is_err() {
         return;
     }
-    let digest = content_hash(text);
-    {
-        // A poisoned lock must not kill capture for the rest of the session, so
-        // degrade to "have not seen this" rather than panicking the monitor.
-        let mut guard = LAST_CONTENT_HASH
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *guard == Some(digest) {
-            return;
-        }
-        *guard = Some(digest);
+    // The duplicate check hashes what the watcher reads back, untrimmed:
+    // " foo " and "foo" are different copies, and the same copy is not
+    // captured twice.
+    if !seen(&SEEN_TEXT).fresh(content_hash(text)) {
+        return;
     }
 
     if text.len() > MAX_CAPTURE_TEXT_BYTES {
         crate::crash::record_event("capture:text-too-large");
-        let _ = app.emit(
-            "capture-failed",
-            format!(
-                "That selection is {} KB. Bard keeps items up to {} KB.",
+        crate::feedback::notify(
+            app,
+            crate::feedback::Note::error(format!(
+                "Too large to keep ({} KB; the limit is {} KB)",
                 text.len() / 1024,
                 MAX_CAPTURE_TEXT_BYTES / 1024
-            ),
+            )),
         );
         return;
     }
 
+    // Copying something Bard already keeps moves it to the top rather than
+    // filing a second copy; a pinned or kept copy simply becomes current.
+    if let Some(kept) = db::take_duplicate(app, text, "text") {
+        db::set_active_item(app, Some(kept));
+        crate::commands::refresh(app);
+        crate::feedback::notify(app, crate::feedback::Note::copied(text));
+        return;
+    }
     let id = db::insert_item_with_origin(app, text, "text", None, "clipboard");
     if id == db::INSERT_FAILED {
         // The write did not happen. `insert_item_with_origin` has already
@@ -221,6 +324,7 @@ pub fn capture_text(app: &AppHandle, text: &str) {
     // `capture:no-selection` was written to close, still open here.
     crate::crash::record_event("capture:stored");
     db::set_active_item(app, Some(id));
+    crate::feedback::notify(app, crate::feedback::Note::copied(text));
     // Age-based retention is the only automatic deletion. The old call to
     // `prune_history` here deleted the oldest automatic items past 5,000 on
     // every single capture, including when the user had chosen Forever.
@@ -286,10 +390,20 @@ struct Captured {
 /// `CreateWindowExW`) the loop falls back to [`FALLBACK_POLL_MS`], which is the
 /// interval a build without any of this machinery would have.
 pub fn start(app: AppHandle) {
+    PAUSED.store(
+        db::get_setting(&app, PAUSED_SETTING).as_deref() == Some("1"),
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    // Whatever is on the clipboard at launch was copied before Bard was
+    // watching; it is not a new copy.
+    forget_current_clipboard();
     thread::spawn(move || {
         let mut last_seq = clip_seq();
         let mut ticks: u64 = 0;
         let listener = ClipboardListener::install();
+        if listener.is_none() {
+            crate::crash::record_event("monitor:no-change-listener");
+        }
         let poll_ms = if listener.is_some() {
             SAFETY_POLL_MS
         } else {
@@ -305,42 +419,77 @@ pub fn start(app: AppHandle) {
                 crate::crash::record_event("monitor:alive");
             }
             let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let seq = clip_seq();
-                if seq == last_seq {
+                // With a change listener the sequence says whether anything
+                // happened. Without one (no X server on Linux) every tick reads
+                // the text and lets the content hash decide.
+                // The flag and the sequence describe the same event: read them
+                // together so a new sequence is never paired with a stale
+                // exclusion flag.
+                let (seq, excluded) = clip_state();
+                if listener.is_some() || cfg!(windows) {
+                    if seq == last_seq {
+                        return;
+                    }
+                    last_seq = seq;
+                    if seq as u64 == LAST_OWN_SEQ.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                }
+                if is_paused() || excluded {
                     return;
                 }
-                last_seq = seq;
-                if seq as u64 == LAST_OWN_SEQ.load(std::sync::atomic::Ordering::SeqCst) {
-                    return;
-                }
-                if clip_excluded() {
-                    return;
-                }
-                let mut cb = match arboard::Clipboard::new() {
-                    Ok(c) => c,
-                    Err(_) => return,
+                let watched = listener.is_some() || cfg!(windows);
+                let (files, text, image) = {
+                    let Ok(mut cb) = crate::clip::handle() else {
+                        return;
+                    };
+                    // On Windows the exclusion lives in the clipboard's own
+                    // formats, and a format can only be read while the
+                    // clipboard is open. So the question is asked here, with
+                    // the clipboard open, rather than before the read: asked
+                    // with the clipboard closed, every format reads as absent
+                    // and nothing is ever excluded.
+                    #[cfg(windows)]
+                    {
+                        let _open = cb.get();
+                        if clip_excluded() {
+                            return;
+                        }
+                    }
+                    let files = if watched {
+                        cb.get().file_list().ok().filter(|f| !f.is_empty())
+                    } else {
+                        None
+                    };
+                    let text = if files.is_none() {
+                        cb.get_text().ok()
+                    } else {
+                        None
+                    };
+                    let image = if files.is_none() && text.is_none() && watched {
+                        cb.get_image().ok()
+                    } else {
+                        None
+                    };
+                    (files, text, image)
                 };
-                if let Ok(text) = cb.get_text() {
-                    let t = text.trim().to_string();
-                    if t.is_empty() || t.contains(crate::capture::SENTINEL) {
+                if let Some(files) = files {
+                    capture_files(&app, files);
+                } else if let Some(text) = text {
+                    // Whitespace-only copies are dropped explicitly: there is
+                    // nothing to keep, and an empty row is not how Bard says so.
+                    if text.trim().is_empty() {
                         return;
                     }
-                    // Re-read the sequence number *after* taking the content. The
-                    // first read and the content read are not atomic, so a write
-                    // landing between them — which is exactly what a dictation
-                    // finishing does — made the own-write guard miss, and the
-                    // clipboard watcher then captured Bard's own transcript as if
-                    // the person had copied it. Every dictated line appeared twice
-                    // in the timeline.
-                    let after = clip_seq();
-                    if after != seq {
-                        // Something wrote while we were reading. The value in hand
-                        // is already the newer one, so re-evaluate it on the next
-                        // poll rather than deciding on a torn pair.
+                    // A change that landed while the text was being read is
+                    // the next tick's to capture, not this one's.
+                    if cfg!(windows) && clip_seq() != seq {
                         return;
                     }
-                    capture_text(&app, &t);
-                } else if let Ok(img) = cb.get_image() {
+                    // Store what was copied: the hash covers the untrimmed
+                    // text so it matches what the watcher reads back.
+                    capture_text(&app, &text);
+                } else if let Some(img) = image {
                     let _ = capture_image(&app, img);
                 }
             }));
@@ -351,11 +500,6 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// How long the loop waits between safety polls when the clipboard listener is
-/// installed. The listener is what wakes it on a copy; this is the net that
-/// keeps a listener which silently stopped working from being a silent stop in
-/// capture, and 250 ms is well under the old 150 ms poll plus its 50 ms
-/// debounce, so the worst case is no worse than the best case used to be.
 const SAFETY_POLL_MS: u64 = 250;
 
 /// The interval used when there is no listener to wait on. 75 ms, not 150: the
@@ -363,7 +507,7 @@ const SAFETY_POLL_MS: u64 = 250;
 /// allocation that runs before any clipboard read, so the poll is a heartbeat
 /// rather than work; and halving it halves the one delay the user can feel,
 /// between the copy and the item appearing.
-const FALLBACK_POLL_MS: u64 = 75;
+const FALLBACK_POLL_MS: u64 = 500;
 
 /// Roughly every two and a half minutes at the safety-poll interval, and sooner
 /// under real use. An idle install writes one line; this is a liveness marker,
@@ -469,22 +613,291 @@ impl ClipboardListener {
 #[cfg(not(windows))]
 struct ClipboardListener;
 
-/// No clipboard notification exists on this platform's build, so the poll is
-/// the whole loop and none of the listener's surface is called. The methods
-/// stay so the call site above is one shape on every platform.
 #[cfg(not(windows))]
-#[allow(dead_code)]
 impl ClipboardListener {
     fn install() -> Option<ClipboardListener> {
+        #[cfg(target_os = "linux")]
+        if x11watch::spawn() {
+            return Some(ClipboardListener);
+        }
         None
     }
 
-    fn wait(&self, _timeout_ms: u64) {}
+    fn wait(&self, timeout_ms: u64) {
+        #[cfg(target_os = "linux")]
+        x11watch::wait(Duration::from_millis(timeout_ms));
+        #[cfg(not(target_os = "linux"))]
+        thread::sleep(Duration::from_millis(timeout_ms));
+    }
 }
 
-/// The event `WM_CLIPBOARDUPDATE` sets. A static because the window procedure
-/// is a real callback with no context pointer to hand it: the listener lives on
-/// the monitor thread, and this is written once before the window exists.
+/// Clipboard ownership changes on X11 and XWayland, through XFixes.
+///
+/// GNOME on Wayland mirrors every Wayland copy into XWayland's CLIPBOARD
+/// selection, so one X11 watcher hears copies from native Wayland apps and X11
+/// apps alike. Each change also reads the offered TARGETS once: a password
+/// manager marks a secret with `x-kde-passwordManagerHint`, and that copy is
+/// never stored.
+#[cfg(target_os = "linux")]
+mod x11watch {
+    use std::sync::{Condvar, Mutex};
+    use std::time::{Duration, Instant};
+
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xfixes::{ConnectionExt as _, SelectionEventMask};
+    use x11rb::protocol::xproto::{
+        Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, Window, WindowClass,
+    };
+    use x11rb::protocol::Event;
+
+    struct Changes {
+        seq: u32,
+        excluded: bool,
+    }
+
+    static CHANGES: Mutex<Changes> = Mutex::new(Changes {
+        seq: 0,
+        excluded: false,
+    });
+    static CHANGED: Condvar = Condvar::new();
+
+    pub fn seq() -> u32 {
+        CHANGES.lock().map(|c| c.seq).unwrap_or(0)
+    }
+
+    /// The sequence and the exclusion flag for the same event, read together
+    /// so the monitor can never pair a new sequence with a stale flag. On a
+    /// poisoned lock the unknown case fails safe: excluded.
+    pub fn state() -> (u32, bool) {
+        CHANGES
+            .lock()
+            .map(|c| (c.seq, c.excluded))
+            .unwrap_or((0, true))
+    }
+
+    pub fn wait(timeout: Duration) {
+        let Ok(guard) = CHANGES.lock() else {
+            std::thread::sleep(timeout);
+            return;
+        };
+        let seen = guard.seq;
+        let _ = CHANGED.wait_timeout_while(guard, timeout, |c| c.seq == seen);
+    }
+
+    struct Atoms {
+        clipboard: Atom,
+        targets: Atom,
+        property: Atom,
+        secret_hint: Atom,
+    }
+
+    fn intern(conn: &impl Connection, name: &[u8]) -> Option<Atom> {
+        Some(conn.intern_atom(false, name).ok()?.reply().ok()?.atom)
+    }
+
+    /// True when the watcher is running. Fails closed to polling when there
+    /// is no X server, no XFixes, or the window cannot be made.
+    pub fn spawn() -> bool {
+        let Ok((conn, screen)) = x11rb::connect(None) else {
+            return false;
+        };
+        let has_xfixes = conn
+            .xfixes_query_version(5, 0)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .is_some();
+        if !has_xfixes {
+            return false;
+        }
+        let root = conn.setup().roots[screen].root;
+        let Ok(window) = conn.generate_id() else {
+            return false;
+        };
+        let made = conn
+            .create_window(
+                0,
+                window,
+                root,
+                -10,
+                -10,
+                1,
+                1,
+                0,
+                WindowClass::INPUT_ONLY,
+                0,
+                &CreateWindowAux::new()
+                    .override_redirect(1)
+                    .event_mask(EventMask::PROPERTY_CHANGE),
+            )
+            .ok()
+            .and_then(|cookie| cookie.check().ok())
+            .is_some();
+        if !made {
+            return false;
+        }
+        let atoms = match (
+            intern(&conn, b"CLIPBOARD"),
+            intern(&conn, b"TARGETS"),
+            intern(&conn, b"BARD_TARGETS"),
+            intern(&conn, b"x-kde-passwordManagerHint"),
+        ) {
+            (Some(clipboard), Some(targets), Some(property), Some(secret_hint)) => Atoms {
+                clipboard,
+                targets,
+                property,
+                secret_hint,
+            },
+            _ => return false,
+        };
+        let selected = conn
+            .xfixes_select_selection_input(
+                window,
+                atoms.clipboard,
+                SelectionEventMask::SET_SELECTION_OWNER,
+            )
+            .ok()
+            .and_then(|cookie| cookie.check().ok())
+            .is_some();
+        if !selected || conn.flush().is_err() {
+            return false;
+        }
+        std::thread::spawn(move || run(conn, window, atoms));
+        true
+    }
+
+    /// The result of asking the new clipboard owner what it offers.
+    enum Inspection {
+        /// This event was inspected: `excluded` is its answer.
+        Decided { excluded: bool },
+        /// A newer selection event arrived while this one was being asked
+        /// about. The sequence was advanced for the newer event and it was
+        /// marked excluded: unknown until inspected, so fail safe. This
+        /// event's result must not be written over it.
+        Superseded,
+    }
+
+    fn run(conn: impl Connection, window: Window, atoms: Atoms) {
+        loop {
+            let event = match conn.wait_for_event() {
+                Ok(event) => event,
+                Err(_) => {
+                    crate::crash::record_event("monitor:x11-connection-lost");
+                    return;
+                }
+            };
+            if let Event::XfixesSelectionNotify(notify) = event {
+                match offers_secret(&conn, window, &atoms, notify.timestamp) {
+                    Inspection::Decided { excluded } => {
+                        if let Ok(mut changes) = CHANGES.lock() {
+                            changes.seq = changes.seq.wrapping_add(1);
+                            changes.excluded = excluded;
+                        }
+                    }
+                    Inspection::Superseded => {
+                        // `offers_secret` already advanced the sequence for
+                        // the newer event and marked it excluded: the flag and
+                        // the sequence describe the same event, and the
+                        // unknown case fails safe.
+                    }
+                }
+                CHANGED.notify_all();
+            }
+        }
+    }
+
+    /// Ask the new owner what it offers and look for the password hint. A slow
+    /// or silent owner is given 250 ms and then treated as an ordinary copy.
+    ///
+    /// If a newer selection event arrives while this one is being asked about,
+    /// the newer event's exclusion is not yet known: the sequence is advanced
+    /// for it, it is marked excluded (fail safe), and [`Inspection::Superseded`]
+    /// is returned so this inspection's stale result is never written over
+    /// the newer event's sequence.
+    fn offers_secret(
+        conn: &impl Connection,
+        window: Window,
+        atoms: &Atoms,
+        time: u32,
+    ) -> Inspection {
+        let asked = conn
+            .convert_selection(window, atoms.clipboard, atoms.targets, atoms.property, time)
+            .is_ok()
+            && conn.flush().is_ok();
+        if !asked {
+            return Inspection::Decided { excluded: false };
+        }
+        let deadline = Instant::now() + Duration::from_millis(250);
+        loop {
+            match conn.poll_for_event() {
+                Ok(Some(Event::SelectionNotify(reply))) if reply.selection == atoms.clipboard => {
+                    if reply.property == x11rb::NONE {
+                        return Inspection::Decided { excluded: false };
+                    }
+                    let Some(property) = conn
+                        .get_property(true, window, atoms.property, AtomEnum::ATOM, 0, 4096)
+                        .ok()
+                        .and_then(|cookie| cookie.reply().ok())
+                    else {
+                        return Inspection::Decided { excluded: false };
+                    };
+                    return Inspection::Decided {
+                        excluded: property
+                            .value32()
+                            .map(|mut targets| targets.any(|t| t == atoms.secret_hint))
+                            .unwrap_or(false),
+                    };
+                }
+                Ok(Some(Event::XfixesSelectionNotify(_))) => {
+                    // A newer copy arrived while this one was being asked
+                    // about. This event and the newer one are both counted,
+                    // and the newer one is marked excluded until it has been
+                    // inspected. The result of this inspection is discarded so
+                    // the flag and the sequence always describe the same event.
+                    if let Ok(mut changes) = CHANGES.lock() {
+                        changes.seq = changes.seq.wrapping_add(2);
+                        changes.excluded = true;
+                    }
+                    CHANGED.notify_all();
+                    return Inspection::Superseded;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        return Inspection::Decided { excluded: false };
+                    }
+                    std::thread::sleep(Duration::from_millis(4));
+                }
+                Err(_) => return Inspection::Decided { excluded: false },
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod x11_integration {
+        /// Run under a real X server (CI: xvfb-run): a change of clipboard
+        /// owner is heard, which is what Linux capture depends on.
+        #[test]
+        #[ignore = "needs an X server"]
+        fn x11_integration_clipboard_changes_are_heard() {
+            assert!(super::spawn(), "XFixes watcher starts");
+            let before = super::seq();
+            let mut clipboard = arboard::Clipboard::new().expect("clipboard");
+            clipboard
+                .set_text("bard x11 integration".to_string())
+                .expect("write");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while super::seq() == before && std::time::Instant::now() < deadline {
+                super::wait(std::time::Duration::from_millis(100));
+            }
+            assert_ne!(super::seq(), before, "the ownership change was heard");
+            assert!(
+                !super::state().1,
+                "an ordinary copy is not treated as secret"
+            );
+        }
+    }
+}
+
 #[cfg(windows)]
 static CLIPBOARD_EVENT: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
@@ -525,14 +938,8 @@ pub fn capture_image(app: &AppHandle, img: arboard::ImageData<'static>) -> bool 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     img.bytes.hash(&mut hasher);
     let hash = hasher.finish();
-    {
-        let mut guard = LAST_IMAGE_HASH
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *guard == Some(hash) {
-            return true;
-        }
-        *guard = Some(hash);
+    if !seen(&SEEN_IMAGE).fresh(hash) {
+        return true;
     }
     let job = ImageJob {
         app: app.clone(),
@@ -602,12 +1009,7 @@ fn image_jobs() -> &'static std::sync::mpsc::SyncSender<ImageJob> {
 /// Only when the stored hash is still `hash`: a failure in the worker must not
 /// erase a *newer* capture's hash and let that picture be stored twice.
 fn forget_image_hash(hash: u64) {
-    let mut guard = LAST_IMAGE_HASH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if *guard == Some(hash) {
-        *guard = None;
-    }
+    seen(&SEEN_IMAGE).forget(hash);
 }
 
 /// Encode, write, file and announce one clipboard image — off the monitor
@@ -656,6 +1058,48 @@ fn store_image(job: ImageJob) {
     // Stored: the dedupe keeps the job's hash, so the same picture copied
     // again is recognised rather than written a second time.
     announce_captured(&app, id, removed);
+    crate::feedback::notify(&app, crate::feedback::Note::info("copy", "Image copied"));
+}
+
+/// Files copied in a file manager are kept as file items.
+fn capture_files(app: &AppHandle, files: Vec<std::path::PathBuf>) {
+    if crate::license::require(app).is_err() {
+        return;
+    }
+    let paths: Vec<String> = files
+        .iter()
+        .map(|f| f.to_string_lossy().into_owned())
+        .collect();
+    if !seen(&SEEN_TEXT).fresh(content_hash(paths.join("\n").trim())) {
+        return;
+    }
+    // A reference, not a copy: Bard keeps where the files are, so copying the
+    // item later hands the same files back to a file manager. It never owns
+    // or deletes them.
+    let joined = paths.join("\n");
+    let id = match db::take_duplicate(app, &joined, "file") {
+        Some(kept) => kept,
+        None => db::insert_item_with_origin(app, &joined, "file", None, "clipboard"),
+    };
+    if id == db::INSERT_FAILED {
+        return;
+    }
+    db::set_active_item(app, Some(id));
+    let _ = db::cleanup_origin(app, "clipboard");
+    crate::commands::refresh(app);
+    crate::crash::record_event("capture:files-stored");
+    let label = if paths.len() == 1 {
+        std::path::Path::new(&paths[0])
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "File copied".into())
+    } else {
+        format!("{} files copied", paths.len())
+    };
+    crate::feedback::notify(
+        app,
+        crate::feedback::Note::info("copy", "Copied").with_detail(label),
+    );
 }
 
 /// The largest image Bard will store, by pixel count and by encoded size.
@@ -730,7 +1174,12 @@ fn clip_seq() -> u32 {
     unsafe { GetClipboardSequenceNumber() }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn clip_seq() -> u32 {
+    x11watch::seq()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn clip_seq() -> u32 {
     0
 }
@@ -790,14 +1239,51 @@ fn clip_excluded() -> bool {
     )
 }
 
-#[cfg(not(windows))]
-fn clip_excluded() -> bool {
-    false
+/// The sequence and the exclusion flag for the same event, read together so
+/// the caller can never pair a new sequence with a stale flag. On a poisoned
+/// lock the unknown case fails safe: excluded.
+#[cfg(target_os = "linux")]
+fn clip_state() -> (u32, bool) {
+    x11watch::state()
+}
+
+/// The sequence on Windows.
+///
+/// The exclusion is not answered here: on Windows it lives in the clipboard's
+/// own formats, which can only be read while the clipboard is open, so it is
+/// read at the point of the read. Asking it here would mean asking four times
+/// a second, and every ask touches the clipboard.
+#[cfg(windows)]
+fn clip_state() -> (u32, bool) {
+    (clip_seq(), false)
+}
+
+/// The sequence and the exclusion flag together on the platforms that have
+/// neither: there is nothing to exclude and nothing to pair.
+#[cfg(not(any(windows, target_os = "linux")))]
+fn clip_state() -> (u32, bool) {
+    (clip_seq(), false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::should_exclude_clipboard;
+
+    #[test]
+    fn bards_own_write_is_never_a_capture_but_a_later_recopy_is() {
+        let mut seen = super::Seen::new();
+        seen.mark_own(7);
+        assert!(!seen.fresh(7), "Bard's own write");
+        assert!(seen.fresh(8), "a new copy");
+        assert!(!seen.fresh(8), "the same copy reported twice");
+        seen.last = Some((
+            8,
+            std::time::Instant::now() - std::time::Duration::from_secs(3),
+        ));
+        assert!(seen.fresh(8), "the same text copied again later");
+        seen.forget(8);
+        assert!(seen.fresh(8), "a failed store can be retried");
+    }
 
     #[test]
     fn clipboard_exclusion_flags_are_fail_closed() {

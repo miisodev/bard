@@ -7,7 +7,8 @@ export interface Item {
   id: number;
   sectionId: number | null;
   content: string;
-  kind: "text" | "image";
+  /** A file item's content is its paths, one per line. */
+  kind: "text" | "image" | "file";
   origin: "manual" | "clipboard" | "dictation";
   favorite: number;
   done: number;
@@ -184,7 +185,62 @@ export type SortOrder = "newest" | "oldest" | "favorites" | "completed";
  * this only drives the frontend's layout, so an older payload that does not
  * carry it still lays out — as `bottom`.
  */
-export type ShelfEdge = "bottom" | "top" | "left" | "right";
+export type Dock = "float" | "left" | "right";
+
+export interface FeedbackChannels {
+  pill: boolean;
+  sound: boolean;
+}
+
+export type ShortcutStatus = "ready" | "taken" | "off" | "pending";
+
+export interface ShortcutRow {
+  id: string;
+  label: string;
+  /** Stored chord, e.g. "Alt+Shift+V"; empty when cleared. */
+  chord: string;
+  /** How people read it (or the desktop's own description on Wayland). */
+  display: string;
+  defaultChord: string;
+  status: ShortcutStatus;
+}
+
+export interface ShortcutState {
+  backend: "windows" | "x11" | "portal";
+  editable: boolean;
+  rows: ShortcutRow[];
+}
+
+/** What the status pill shows. */
+export interface PillNote {
+  kind: "copy" | "select" | "preview" | "listen" | "work" | "done" | "pause" | "resume" | "error" | "info";
+  text: string;
+  detail?: string | null;
+  slot?: number | null;
+  slots?: number | null;
+  preview?: ClipboardPreview | null;
+  sticky: boolean;
+  holdMs: number;
+}
+
+export interface ClipboardPreview {
+  kind: "text" | "image" | "files" | "empty";
+  text?: string | null;
+  image?: string | null;
+  width?: number | null;
+  height?: number | null;
+  files: string[];
+  length?: number | null;
+}
+
+export interface TranscriptOptions {
+  /** End the transcript with a space, so it never fuses with what is typed next. */
+  trailingSpace: boolean;
+  /** Take the filler words out of the transcript. */
+  fillers: boolean;
+  /** How long a silence has to last before the take ends on its own. */
+  silenceMs: number;
+}
 
 export interface AppState {
   sections: Section[];
@@ -196,7 +252,8 @@ export interface AppState {
   platform?: string;
   onboardingCompleted: boolean;
   autostartEnabled: boolean;
-  captureDoubleShift: boolean;
+  /** Nothing copied is kept while this is on. */
+  capturePaused: boolean;
   modelId: string;
   modelReady: boolean;
   micReady: boolean;
@@ -204,13 +261,19 @@ export interface AppState {
   license: LicenseStatus;
   /** "direct" for the miiso.dev download, "store" for the Microsoft Store copy. */
   channel: "direct" | "store" | "flatpak";
-  desktop?: { session: "windows" | "x11" | "wayland"; shortcutsReady: boolean; inputReady: boolean };
+  desktop?: { session: "windows" | "x11" | "wayland"; shortcutsReady: boolean };
   /** "theme" follows Light/Dark; "light", "dark" and "custom" are chosen. */
   background: "theme" | "light" | "dark" | "custom";
   backgroundColor: string;
   sort: SortOrder;
-  /** Absent on a build before the shelf; the shell then reads it as `bottom`. */
-  shelfEdge?: ShelfEdge;
+  /**
+   * The ids the slot shortcuts copy, in slot order — the pins first, then the
+   * most recent. Published by the backend so the number on a row and the
+   * shortcut that copies it are the same fact.
+   */
+  slotIds: number[];
+  /** Where the main window lives. */
+  dock: Dock;
   /**
    * A storage problem worth telling the person about — a damaged history file
    * set aside, or a file that could not be opened so Bard is running

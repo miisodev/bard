@@ -39,6 +39,17 @@ export default function Menu({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  // The close handler is read through a ref so the effect below runs once.
+  //
+  // It used to depend on `onClose` directly, and every caller passes an
+  // inline arrow. A new identity on every parent render tore the effect down
+  // and set it up again: the cleanup restored focus to the control that
+  // opened the menu, the setup moved it to the first entry, and the person
+  // who had arrowed down to the third row was thrown back to the first. The
+  // panel re-renders on every `refresh` event — that is, on every capture —
+  // so this was not a corner case.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     // Focus comes back to the control that opened the menu when it closes —
@@ -51,7 +62,7 @@ export default function Menu({
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        onClose();
+        closeRef.current();
         return;
       }
       if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
@@ -69,7 +80,7 @@ export default function Menu({
       window.removeEventListener("keydown", onKey, true);
       if (previousFocus.current?.isConnected) previousFocus.current.focus();
     };
-  }, [onClose]);
+  }, []);
 
   // A point-anchored menu opens whichever way has room: below the point when
   // it is in the upper half of the window, above it otherwise. That is what

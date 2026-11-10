@@ -1,6 +1,6 @@
 [package]
 name = "bard"
-version = "2.2.0"
+version = "3.0.0"
 description = "Clipboard, Draw and Dictate."
 authors = ["miiso"]
 edition = "2021"
@@ -22,11 +22,13 @@ tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.31", features = ["bundled"] }
+# 0.41 is the first rusqlite that pulls libsqlite3-sys 0.39, which carries the
+# fix for RUSTSEC-2026-0459 (CVE-2026-119375 in C SQLite). The advisory
+# landed after 2.2.0 shipped, so the audit gate caught it on the way to 3.0.0.
+rusqlite = { version = "0.41", features = ["bundled"] }
 arboard = "3"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
-rdev = "0.5"
 cpal = "0.16"
 rubato = "0.16"
 earshot = "1.2"
@@ -69,20 +71,17 @@ uuid = { version = "1", features = ["v4"] }
 # `credential.rs` speaks.
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "4.2", default-features = false, features = ["v1", "windows-native-keyring-store"] }
-# Windows synthesises input through its native APIs; the Linux copy uses the
-# X11 XTEST extension through x11rb. The default `xdo` backend links libxdo,
-# which the Linux packages should not carry.
-enigo = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Bard's own StatusNotifierItem tray: libappindicator never reports a left
 # click, so the shelf could not be opened from the icon. Uses the zbus stack
 # the portals already depend on.
 ksni = { version = "=0.3.6", default-features = false, features = ["tokio"] }
-ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast", "background"] }
+ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "global_shortcuts", "background"] }
 keyring = { version = "4.2", default-features = false, features = ["v1", "zbus-secret-service-keyring-store"] }
-enigo = { version = "0.2", default-features = false, features = ["x11rb"] }
-x11rb = "=0.13.2"
+# Clipboard change notifications (XFixes) and global shortcut grabs on X11
+# and XWayland. Protocol features only; they add no crates.
+x11rb = { version = "=0.13.2", features = ["xfixes", "xkb", "xtest"] }
 # Metadata-only creation time recovers an interrupted legacy Linux trial
 # without granting a fresh trial or reading unrelated keyring items.
 secret-service = { version = "=5.2.0", default-features = false, features = ["rt-tokio-crypto-rust"] }

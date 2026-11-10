@@ -3,7 +3,8 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 
-/// The tray entry. Left click opens the shelf; the menu holds everything else.
+/// The tray entry. Left click opens the main window; the menu holds
+/// everything else.
 ///
 /// On Linux the entry is a StatusNotifierItem of Bard's own (`linux_tray`).
 /// Tauri's Linux tray goes through libappindicator, which opens the menu on
@@ -40,10 +41,22 @@ fn run_action(app: &tauri::AppHandle, id: &str) {
         "show" => crate::panel::show_now(app),
         "settings" => crate::commands::open_settings(app.clone()),
         "draw" => crate::commands::open_draw(app.clone()),
-        "capture" => crate::capture::capture_selection(app),
-        "capture-clipboard" => crate::capture::capture_clipboard(app),
+        "guide" => crate::panel::show_guide(app),
+        "capture" => {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                crate::monitor::toggle_paused(&app);
+            });
+        }
         "dictate" => {
-            let _ = crate::dictation::start(app);
+            let app = app.clone();
+            std::thread::spawn(move || {
+                if crate::dictation::is_recording() {
+                    crate::dictation::stop(&app);
+                } else {
+                    let _ = crate::dictation::start(&app);
+                }
+            });
         }
         "autostart" => {
             let next = !db_autostart_handle(app);
@@ -66,19 +79,50 @@ fn run_action(app: &tauri::AppHandle, id: &str) {
 }
 
 fn tooltip() -> &'static str {
-    if crate::desktop::is_wayland() {
-        "Bard — clipboard, draw and dictate"
+    if crate::monitor::is_paused() {
+        "Bard — clipboard capture paused"
     } else {
-        "Bard — double-tap Right Shift to open"
+        "Bard — clipboard, draw and dictate"
     }
 }
 
-fn create_menu_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIcon> {
+/// The Tauri tray's capture checkmark, kept to follow the pause switch.
+static CAPTURE_ITEM: std::sync::OnceLock<CheckMenuItem<tauri::Wry>> = std::sync::OnceLock::new();
+
+/// Bring the tray in line with the pause switch after it changed anywhere.
+pub fn sync(app: &tauri::AppHandle) {
+    if let Some(item) = CAPTURE_ITEM.get() {
+        let _ = item.set_checked(!crate::monitor::is_paused());
+    }
+    if let Some(tray) = app.tray_by_id("bard-tray") {
+        let _ = tray.set_tooltip(Some(tooltip()));
+    }
+    #[cfg(target_os = "linux")]
+    linux_tray::refresh();
+}
+
+fn create_menu_tray(app: &tauri::AppHandle) -> tauri::Result<Option<tauri::tray::TrayIcon>> {
+    // A missing or undecodable icon degrades to running without a tray icon:
+    // the bundled icons make this rare, but under `panic = "abort"` an
+    // unwrap here ends the process instead of letting Bard run. Say so in a
+    // lifecycle event rather than exiting.
+    let Some(icon) = app.default_window_icon().cloned() else {
+        crate::crash::record_event("tray:no-window-icon");
+        return Ok(None);
+    };
     let show = MenuItem::with_id(app, "show", "Show Bard", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let draw = MenuItem::with_id(app, "draw", "Draw", true, None::<&str>)?;
-    let capture = MenuItem::with_id(app, "capture", "Capture selection", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+    let guide = MenuItem::with_id(app, "guide", "Shortcuts", true, None::<&str>)?;
     let dictate = MenuItem::with_id(app, "dictate", "Dictate", true, None::<&str>)?;
+    let capture = CheckMenuItem::with_id(
+        app,
+        "capture",
+        "Keep what I copy",
+        true,
+        !crate::monitor::is_paused(),
+        None::<&str>,
+    )?;
     let autostart = CheckMenuItem::with_id(
         app,
         "autostart",
@@ -88,28 +132,23 @@ fn create_menu_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIc
         None::<&str>,
     )?;
     let quit = MenuItem::with_id(app, "quit", "Quit Bard", true, None::<&str>)?;
-    let capture_clip = MenuItem::with_id(
-        app,
-        "capture-clipboard",
-        "Capture clipboard",
-        true,
-        None::<&str>,
-    )?;
+    let separator = || tauri::menu::PredefinedMenuItem::separator(app);
     let menu = Menu::with_items(
         app,
         &[
             &show,
-            &settings,
             &draw,
-            &capture,
-            &capture_clip,
+            &settings,
+            &guide,
+            &separator()?,
             &dictate,
+            &capture,
+            &separator()?,
             &autostart,
             &quit,
         ],
     )?;
-
-    let icon = app.default_window_icon().cloned().unwrap();
+    let _ = CAPTURE_ITEM.set(capture.clone());
 
     let builder = TrayIconBuilder::with_id("bard-tray")
         .icon(icon)
@@ -128,7 +167,7 @@ fn create_menu_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIc
         })
         .on_menu_event(|app, event| run_action(app, event.id().as_ref()));
 
-    builder.build(app)
+    Ok(Some(builder.build(app)?))
 }
 
 fn db_autostart_handle(app: &tauri::AppHandle) -> bool {
@@ -197,11 +236,18 @@ mod linux_tray {
         fn menu(&self) -> Vec<MenuItem<Self>> {
             vec![
                 Self::item("Show Bard", "show"),
-                Self::item("Settings", "settings"),
                 Self::item("Draw", "draw"),
-                Self::item("Capture selection", "capture"),
-                Self::item("Capture clipboard", "capture-clipboard"),
+                Self::item("Settings", "settings"),
+                Self::item("Shortcuts", "guide"),
+                MenuItem::Separator,
                 Self::item("Dictate", "dictate"),
+                CheckmarkItem {
+                    label: "Keep what I copy".into(),
+                    checked: !crate::monitor::is_paused(),
+                    activate: Box::new(|tray: &mut Self| tray.act("capture")),
+                    ..Default::default()
+                }
+                .into(),
                 MenuItem::Separator,
                 CheckmarkItem {
                     label: "Start at login".into(),
@@ -232,6 +278,16 @@ mod linux_tray {
             height: image.height() as i32,
             data,
         }]
+    }
+
+    /// Re-read the menu and tooltip after the pause switch changed.
+    pub fn refresh() {
+        if let Some(handle) = HANDLE.get() {
+            let handle = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = handle.update(|_| {}).await;
+            });
+        }
     }
 
     pub async fn spawn(app: tauri::AppHandle) -> Result<(), ksni::Error> {

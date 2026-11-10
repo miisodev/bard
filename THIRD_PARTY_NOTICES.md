@@ -21,8 +21,10 @@ components are used or offered by the product and retain their own notices.
   dependency lock are retained in the release source archive
 
 The complete dependency licence and SBOM report is generated with the release
-candidate and published alongside the installer. A source archive containing
-the exact Cargo.lock and build inputs accompanies the release notices.
+candidate and published alongside the installer. The exact `Cargo.lock` and the
+build inputs are recorded in the published SBOM and provenance document, which
+are generated from the same release commit; no source archive is published with
+the release.
 
 ## Bundled and downloadable transcription models
 

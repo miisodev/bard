@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::Ordering;
 
 use image::GenericImageView;
 use std::time::Duration;
@@ -293,7 +293,7 @@ pub fn get_crash_report() -> Result<Option<CrashReport>, String> {
 #[tauri::command]
 pub async fn copy_diagnostic_report(app: AppHandle) -> Result<(), String> {
     let report = diagnostic_report(&app);
-    crate::paste::set_text(&app, &report)
+    crate::clip::set_text(&app, &report)
 }
 
 fn diagnostic_report(app: &AppHandle) -> String {
@@ -397,21 +397,13 @@ pub async fn clear_license(app: AppHandle) -> Result<crate::license::LicenseStat
 pub async fn get_setting_str(app: AppHandle, key: String) -> String {
     const PUBLIC_SETTING_KEYS: &[&str] = &[
         "selected_microphone",
-        "dictation_overlay_position",
-        // The review sheet's switch, single-sourced with the take path so the
-        // public read and the delivery decision cannot name different keys.
-        crate::dictation::REVIEW_SETTING_KEY,
         "openrouter_postprocess_enabled",
         "openrouter_postprocess_model_ids",
         "openrouter_postprocess_model_id",
         "theme",
-        "capture_double_shift",
-        "sound_on_capture",
         "clipboard_retention_days",
         "dictation_retention_days",
-        // The shelf's edge, so both the panel (its `data-edge` layout) and the
-        // Settings selector can read which edge it is docked to.
-        "shelf_edge",
+        "main_dock",
     ];
     if !PUBLIC_SETTING_KEYS.contains(&key.as_str()) {
         return String::new();
@@ -573,6 +565,70 @@ pub fn update_item(app: AppHandle, id: i64, content: String) -> Result<(), Strin
     Ok(())
 }
 
+/// The largest file intake will read at all. This is a sanity bound on the
+/// copy, not the text limit below.
+const MAX_INGEST_FILE_BYTES: u64 = 25 * 1024 * 1024;
+
+/// Extensions stored as an image item, by copying the file into Bard's images
+/// folder.
+const INGEST_IMAGE_EXTENSIONS: [&str; 9] = [
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "avif",
+];
+
+/// Extensions read as text and stored as a text item.
+const INGEST_TEXT_EXTENSIONS: [&str; 13] = [
+    "txt", "md", "markdown", "json", "csv", "log", "rs", "ts", "tsx", "js", "jsx", "html", "css",
+];
+
+/// What file intake will do with one file, decided from its extension and size
+/// before anything is read or copied.
+#[derive(Debug, PartialEq, Eq)]
+enum IngestKind {
+    Image,
+    Text,
+    /// A text file over the capture cap. Refused with a reason, never
+    /// truncated and never stored whole.
+    TextTooLarge,
+    /// Not an image or a text file: its name is stored as a note.
+    FileName,
+    /// Not something Bard stores.
+    Unsupported,
+}
+
+fn ingest_kind(extension: &str, bytes: u64) -> IngestKind {
+    if bytes > MAX_INGEST_FILE_BYTES {
+        return IngestKind::Unsupported;
+    }
+    if INGEST_IMAGE_EXTENSIONS.contains(&extension) {
+        return IngestKind::Image;
+    }
+    if INGEST_TEXT_EXTENSIONS.contains(&extension) {
+        // The same cap the clipboard watcher applies. Without it a 25 MB log
+        // opened with Bard became a 25 MB row in every state payload, while
+        // the same text copied from another app was refused at 256 KB.
+        return if bytes > crate::monitor::MAX_CAPTURE_TEXT_BYTES as u64 {
+            IngestKind::TextTooLarge
+        } else {
+            IngestKind::Text
+        };
+    }
+    IngestKind::FileName
+}
+
+/// Paths are compared the way the filesystem under them compares them: exactly
+/// on Linux, where two names that differ only in case are two files, and
+/// without case on Windows and macOS, where they are one. Lowercasing every
+/// path on every platform used to make one of two case-distinct files vanish
+/// from an import on Linux.
+fn path_key(path: &Path) -> String {
+    let key = path.to_string_lossy().into_owned();
+    if cfg!(any(windows, target_os = "macos")) {
+        key.to_lowercase()
+    } else {
+        key
+    }
+}
+
 /// Native-only file intake used by the Windows Explorer verb and first launch.
 /// It is deliberately not a Tauri command: a renderer can read a File object
 /// it owns, but it cannot ask Rust to copy an arbitrary path by name.
@@ -582,13 +638,22 @@ pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
         return 0;
     }
     let images = app.state::<ImagesDir>().0.clone();
+    // The duplicate check reads the library once. It used to call `list_items`
+    // inside the loop, so importing n text files scanned the whole table n
+    // times. New text is added to the set as it lands, so two files with the
+    // same contents in one import still produce one row.
+    let mut known_text: std::collections::HashSet<String> = db::list_items(app)
+        .into_iter()
+        .filter(|item| item.origin == "clipboard" && item.kind == "text")
+        .map(|item| item.content)
+        .collect();
     let mut added = 0;
     let mut seen = std::collections::HashSet::new();
     for p in paths {
-        if !seen.insert(Path::new(&p).to_string_lossy().to_ascii_lowercase()) {
+        let path = Path::new(&p);
+        if !seen.insert(path_key(path)) {
             continue;
         }
-        let path = Path::new(&p);
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -597,57 +662,56 @@ pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
         let Ok(metadata) = std::fs::metadata(path) else {
             continue;
         };
-        if !metadata.is_file() || metadata.len() > 25 * 1024 * 1024 {
+        if !metadata.is_file() {
             continue;
         }
-        if [
-            "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "avif",
-        ]
-        .contains(&ext.as_str())
-        {
-            let dest = unique_image_path(&images, &ext);
-            if std::fs::copy(path, &dest).is_ok() {
-                let id = db::insert_item_with_origin(
+        match ingest_kind(&ext, metadata.len()) {
+            IngestKind::Unsupported => {}
+            IngestKind::TextTooLarge => {
+                // Say so rather than truncating or silently dropping it. This
+                // is the clipboard path's message, because it is the same cap.
+                crate::crash::record_event("intake:text-too-large");
+                crate::feedback::notify(
                     app,
-                    "",
-                    "image",
-                    Some(&dest.to_string_lossy()),
-                    "clipboard",
+                    crate::feedback::Note::error(format!(
+                        "Too large to keep ({} KB; the limit is {} KB)",
+                        metadata.len().div_ceil(1024),
+                        crate::monitor::MAX_CAPTURE_TEXT_BYTES / 1024
+                    ))
+                    .with_detail(source_name(&p)),
                 );
-                if id == db::INSERT_FAILED {
-                    // The copy landed but the row did not, so nothing references
-                    // this file and no sweep will ever collect it. Undo the copy
-                    // rather than leak it, and do not count it as added — the
-                    // Explorer verb and the first-launch intake both report this
-                    // number back to the person.
-                    let _ = std::fs::remove_file(&dest);
-                    continue;
-                }
-                db::set_active_item(app, Some(id));
-                added += 1;
             }
-        } else if matches!(
-            ext.as_str(),
-            "txt"
-                | "md"
-                | "markdown"
-                | "json"
-                | "csv"
-                | "log"
-                | "rs"
-                | "ts"
-                | "tsx"
-                | "js"
-                | "jsx"
-                | "html"
-                | "css"
-        ) {
-            if let Ok(text) = std::fs::read_to_string(path) {
+            IngestKind::Image => {
+                let dest = unique_image_path(&images, &ext);
+                if std::fs::copy(path, &dest).is_ok() {
+                    let id = db::insert_item_with_origin(
+                        app,
+                        "",
+                        "image",
+                        Some(&dest.to_string_lossy()),
+                        "clipboard",
+                    );
+                    if id == db::INSERT_FAILED {
+                        // The copy landed but the row did not, so nothing references
+                        // this file and no sweep will ever collect it. Undo the copy
+                        // rather than leak it, and do not count it as added — the
+                        // Explorer verb and the first-launch intake both report this
+                        // number back to the person.
+                        let _ = std::fs::remove_file(&dest);
+                        continue;
+                    }
+                    db::set_active_item(app, Some(id));
+                    added += 1;
+                }
+            }
+            IngestKind::Text => {
+                let Ok(text) = std::fs::read_to_string(path) else {
+                    continue;
+                };
                 let text = text.trim();
-                if db::list_items(app)
-                    .iter()
-                    .any(|item| item.origin == "clipboard" && item.content == text)
-                {
+                // A blank file has nothing to keep, and an empty row would sit
+                // in every state payload saying nothing.
+                if text.is_empty() || known_text.contains(text) {
                     continue;
                 }
                 let id = db::insert_item_with_origin(app, text, "text", None, "clipboard");
@@ -657,16 +721,25 @@ pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
                 if id == db::INSERT_FAILED {
                     continue;
                 }
+                known_text.insert(text.to_string());
                 db::set_active_item(app, Some(id));
                 added += 1;
             }
-        } else if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-            let id = db::insert_item_with_origin(app, name, "text", None, "clipboard");
-            if id == db::INSERT_FAILED {
-                continue;
+            IngestKind::FileName => {
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                let name = name.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                let id = db::insert_item_with_origin(app, name, "text", None, "clipboard");
+                if id == db::INSERT_FAILED {
+                    continue;
+                }
+                db::set_active_item(app, Some(id));
+                added += 1;
             }
-            db::set_active_item(app, Some(id));
-            added += 1;
         }
     }
     refresh(app);
@@ -732,7 +805,9 @@ pub fn detach_attachment(app: AppHandle, id: i64) -> Result<(), String> {
         return Err(error);
     }
     if let Some(path) = db::delete_attachment(&app, id)? {
-        db::remove_owned_image_file(&app, &path);
+        // The row is gone; a file that cannot be unlinked is reported rather
+        // than silently left behind.
+        db::remove_owned_image_file(&app, &path)?;
     }
     refresh(&app);
     Ok(())
@@ -750,10 +825,15 @@ pub fn add_note_to_image(app: AppHandle, id: i64) {
 
 #[tauri::command]
 pub async fn export_markdown(app: AppHandle) -> Result<String, String> {
-    let state = db::get_state(&app);
+    // The export is the portability promise, so it reads every row the person
+    // kept rather than the windowed timeline the shelf paints from. A failed
+    // read is an error: a shorter export that looks complete is exactly the
+    // data loss the promise rules out.
+    let items = db::all_items(&app)?;
+    let sections = db::list_sections(&app);
     let mut attachments: std::collections::HashMap<i64, Vec<String>> =
         std::collections::HashMap::new();
-    for attachment in &state.attachments {
+    for attachment in db::list_all_attachments(&app) {
         attachments
             .entry(attachment.item_id)
             .or_default()
@@ -773,7 +853,7 @@ pub async fn export_markdown(app: AppHandle) -> Result<String, String> {
     if !dir.is_dir() {
         return Err("Choose a folder to export to in Data › Export folder.".into());
     }
-    export_markdown_into(&dir, &state.sections, &state.items, &attachments)?;
+    export_markdown_into(&dir, &sections, &items, &attachments)?;
     Ok(dir.join("bard-export.md").to_string_lossy().to_string())
 }
 
@@ -794,30 +874,27 @@ fn export_markdown_into(
     let mut out = String::from(
         "# Bard export\n\nImages are written into `images/` and attached files into `files/`, beside this file.\n",
     );
-    let mut unfiled: Vec<&db::Item> = vec![];
-    let mut by_section: Vec<(i64, &db::Item)> = vec![];
+    // An item belongs to a section only when that section was read. Everything
+    // else is written unfiled instead of being dropped: a failed section read
+    // used to make every sectioned item vanish from the export, which is the
+    // one thing an export must never do.
+    let known: std::collections::HashSet<i64> = sections.iter().map(|section| section.id).collect();
+    let mut unfiled: Vec<&db::Item> = Vec::new();
+    let mut by_section: std::collections::HashMap<i64, Vec<&db::Item>> =
+        std::collections::HashMap::new();
     for item in items {
-        match item.section_id {
+        match item.section_id.filter(|id| known.contains(id)) {
+            Some(section) => by_section.entry(section).or_default().push(item),
             None => unfiled.push(item),
-            Some(section) => by_section.push((section, item)),
         }
     }
     for item in &unfiled {
         out.push_str(&format!("- {}\n", item.content.replace('\n', "\n  ")));
     }
     for section in sections {
-        if !unfiled.is_empty() {
-            out.push('\n');
-            unfiled.clear();
-        }
-        let section_items: Vec<_> = by_section
-            .iter()
-            .filter(|(id, _)| *id == section.id)
-            .map(|(_, item)| *item)
-            .collect();
-        if section_items.is_empty() {
+        let Some(section_items) = by_section.get(&section.id) else {
             continue;
-        }
+        };
         out.push_str(&format!("\n## {}\n\n", section.name));
         for item in section_items {
             if item.kind == "image" {
@@ -925,40 +1002,69 @@ pub async fn get_export_dir(app: AppHandle) -> String {
 }
 
 #[tauri::command]
-pub fn set_sound_on_capture(app: AppHandle, enabled: bool) {
-    db::set_setting(&app, "sound_on_capture", if enabled { "1" } else { "0" });
-}
-
-#[tauri::command]
-pub async fn get_sound_on_capture(app: AppHandle) -> bool {
-    db::get_setting(&app, "sound_on_capture") != Some("0".into())
-}
-
-#[tauri::command]
 pub fn get_microphones() -> Vec<String> {
     crate::dictation::list_input_devices()
+}
+
+/// The choices that shape the finished transcript.
+///
+/// They are one command rather than three settings the renderer can poke at
+/// freely: these are the only three knobs the transcription pipeline reads,
+/// and keeping them together means the webview cannot write a setting the
+/// pipeline never looks at.
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptOptions {
+    /// End the transcript with a space, so it never fuses with what is typed
+    /// next.
+    pub trailing_space: bool,
+    /// Take the filler words out.
+    pub fillers: bool,
+    /// How long a silence has to last before the take ends on its own. Zero
+    /// means never: the take ends when the person stops it.
+    pub silence_ms: u64,
+}
+
+/// The silence window the person may choose, in milliseconds. The first entry
+/// is the default; the last means the take never ends on silence.
+pub const SILENCE_CHOICES_MS: [u64; 4] = [1600, 1200, 2400, 0];
+
+#[tauri::command]
+pub fn get_dictation_options(app: AppHandle) -> TranscriptOptions {
+    let options = crate::dictation::transcript_options(&app);
+    TranscriptOptions {
+        trailing_space: options.trailing_space,
+        fillers: options.fillers,
+        silence_ms: crate::dictation::silence_auto_stop_ms(&app),
+    }
+}
+
+#[tauri::command]
+pub fn set_dictation_options(app: AppHandle, options: TranscriptOptions) -> Result<(), String> {
+    if !SILENCE_CHOICES_MS.contains(&options.silence_ms) {
+        return Err("That is not a silence length Bard can use.".into());
+    }
+    crate::db::set_setting_checked(
+        &app,
+        "dictation_trailing_space",
+        if options.trailing_space { "1" } else { "0" },
+    )?;
+    crate::db::set_setting_checked(
+        &app,
+        "dictation_fillers",
+        if options.fillers { "1" } else { "0" },
+    )?;
+    crate::db::set_setting_checked(
+        &app,
+        "dictation_silence_ms",
+        &options.silence_ms.to_string(),
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
 pub fn set_microphone(app: AppHandle, name: String) {
     db::set_setting(&app, "selected_microphone", &name);
-}
-
-#[tauri::command]
-pub fn save_window_geometry(app: AppHandle, x: i32, y: i32, width: u32, height: u32) {
-    // The panel reports its own resize; what is stored is read back from the
-    // window itself, so a minimised or off-screen rectangle is never kept.
-    let _ = (x, y, width, height);
-    if let Some(win) = app.get_webview_window("main") {
-        crate::geometry::remember(&app, &win);
-    }
-}
-
-#[tauri::command]
-pub fn minimize_panel(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.minimize();
-    }
 }
 
 /// The panel's whole world, re-read on every refresh and after every capture.
@@ -1161,14 +1267,6 @@ fn flush_draw_seed(app: &AppHandle) {
 /// Both are ordinary windows now: movable, resizable, on the taskbar, and
 /// independent of the panel and of each other.
 pub fn show_secondary(app: &AppHandle, label: &str, _center: bool) {
-    if label == "draw" {
-        // Draw's delivery target, remembered as it opens. A panel button runs
-        // this with the panel in front, so the app the panel was summoned over
-        // stands in for a foreground that is one of ours; the gesture path has
-        // already recorded the person's own app, and sees the same foreground
-        // again here.
-        remember_draw_target();
-    }
     with_companion(app, label, |app, win| show_secondary_window(app, &win));
 }
 
@@ -1228,47 +1326,32 @@ pub fn set_sort(app: AppHandle, order: String) -> Result<(), String> {
     Ok(())
 }
 
-fn hide_panel_for_secondary(app: &AppHandle) {
-    use tauri::Manager;
-    if let Some(panel) = app.get_webview_window("main") {
-        let _ = panel.hide();
-    }
-}
-
 fn toggle_secondary_alone(app: &AppHandle, label: &str) {
-    if label == "draw" {
-        remember_draw_target();
-    }
     with_companion(app, label, |app, win| {
         if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
             crate::panel::hide_companion(app, &win);
             return;
         }
-        // A gesture opens that one window; the panel steps aside for it.
-        hide_panel_for_secondary(app);
         show_secondary_window(app, &win);
     });
 }
 
 /// Left Alt × 2 opens Draw as a single window. It runs from the raw-input
 /// worker, so every native window operation is queued onto the main thread.
-pub fn draw_gesture(app: &AppHandle) {
+pub fn draw_shortcut(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Err(error) = crate::license::require(&handle) {
             license_blocked(&handle, error);
             return;
         }
-        // The person is still in their own app here: this is the window the
-        // finished sketch goes back to.
-        remember_draw_target();
         toggle_secondary_alone(&handle, "draw");
     });
 }
 
 /// Right Alt × 2 opens Settings as a single window, matching the tray action
 /// without bringing the panel back beside it.
-pub fn settings_gesture(app: &AppHandle) {
+pub fn settings_shortcut(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || toggle_secondary_alone(&handle, "settings"));
 }
@@ -1280,87 +1363,6 @@ pub fn open_draw(app: AppHandle) {
         return;
     }
     show_secondary(&app, "draw", true);
-}
-
-/// The window a sketch is delivered to: the app Draw was opened over. The
-/// gesture runs while the person is still in their app, so the live foreground
-/// is the target; a panel button runs with the panel in front, so the window
-/// the panel was summoned over stands in. Never one of ours — a sketch must
-/// land where it was drawn for, and the clipboard is the honest fallback when
-/// knowledge of that window is gone.
-static DRAW_TARGET: AtomicIsize = AtomicIsize::new(0);
-
-/// Remember where Draw was opened over. Called as the window opens, from the
-/// gesture path and from the panel's own show path.
-fn remember_draw_target() {
-    let foreground = crate::fg::current();
-    let remembered = crate::panel::remembered_foreground();
-    DRAW_TARGET.store(
-        draw_target_choice(
-            foreground,
-            crate::fg::is_ours(foreground),
-            remembered,
-            crate::fg::is_ours(remembered),
-        ),
-        Ordering::SeqCst,
-    );
-}
-
-/// The rule, kept pure so it has tests: the live foreground when it is not
-/// ours, the panel's memory when it is, and nothing at all when both are
-/// Bard's own windows or absent.
-fn draw_target_choice(
-    foreground: isize,
-    foreground_is_ours: bool,
-    remembered: isize,
-    remembered_is_ours: bool,
-) -> isize {
-    if foreground != 0 && !foreground_is_ours {
-        return foreground;
-    }
-    if remembered != 0 && !remembered_is_ours {
-        return remembered;
-    }
-    0
-}
-
-/// What every failed hand-off says. The sketch is already on the clipboard —
-/// the window copies it before it asks — so the person is one keystroke away
-/// wherever they are.
-const DRAW_HANDOFF_FALLBACK: &str = "Saved and copied — paste it with Ctrl+V.";
-
-/// How long the hand-off waits for the remembered window to come forward. The
-/// hide and the focus are synchronous; this is the settle for the OS's own
-/// focus arbitration, bounded so the click never feels swallowed.
-const DRAW_SEND_SETTLE: Duration = Duration::from_millis(160);
-
-/// Deliver the sketch on the clipboard to the app Draw was opened over.
-///
-/// The companion is hidden and the remembered app is brought forward before
-/// the paste chord, because the chord goes wherever the focus is when it is
-/// sent. A missing or unusable target, or Bard still holding the foreground
-/// when the chord is due, ends in the person-readable fallback instead — a
-/// chord landing in the wrong window is worse than one the person makes
-/// themselves.
-#[tauri::command]
-pub fn send_drawing(app: AppHandle) -> Result<(), String> {
-    let target = DRAW_TARGET.load(Ordering::SeqCst);
-    if target == 0 || crate::fg::is_ours(target) {
-        crate::crash::record_event("draw:send-no-target");
-        return Err(DRAW_HANDOFF_FALLBACK.into());
-    }
-    if let Some(win) = app.get_webview_window("draw") {
-        crate::panel::hide_companion(&app, &win);
-    }
-    crate::fg::focus(target);
-    std::thread::sleep(DRAW_SEND_SETTLE);
-    if crate::fg::foreground_is_ours() {
-        crate::crash::record_event("draw:send-focus-stolen");
-        return Err(DRAW_HANDOFF_FALLBACK.into());
-    }
-    crate::paste::send_paste(&app)?;
-    crate::crash::record_event("draw:send-pasted");
-    Ok(())
 }
 
 /// Write the sketch as an SVG to wherever the person says. The suggested name
@@ -1557,10 +1559,7 @@ pub fn set_done(app: AppHandle, id: i64, done: bool) {
 
 #[tauri::command]
 pub async fn clear_completed(app: AppHandle) -> Result<(), String> {
-    let ids: Vec<i64> = db::completed_items(&app)
-        .into_iter()
-        .map(|item| item.id)
-        .collect();
+    let ids = db::completed_item_ids(&app)?;
     db::delete_items_with_files(&app, &ids)?;
     refresh(&app);
     Ok(())
@@ -1575,86 +1574,175 @@ pub async fn clear_history(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
-    crate::paste::set_text(&app, &text)
+    crate::clip::set_text(&app, &text)
 }
-
-/// Put the panel away, give focus back to the app it was summoned over, and
-/// paste what the panel has just written to the clipboard. The caller writes
-/// and verifies the clipboard first (copy_text / copy_item), so a failed write
-/// never turns into pasting whatever was there before.
-#[tauri::command]
-pub fn paste_back(app: AppHandle) {
-    crate::panel::hide_now(&app);
-    std::thread::spawn(move || {
-        // The shelf slides out now instead of vanishing, so the paste cannot be
-        // timed off a fixed sleep: too early and the chord lands in the shelf
-        // itself, and there is no later chance. Wait for the handshake — the
-        // window is hidden and the foreground is back by the time it is open —
-        // and paste anyway when it never comes, because not pasting is the one
-        // outcome the chord cannot have.
-        crate::panel::wait_hidden(PASTE_BACK_WAIT);
-        if let Err(error) = crate::paste::send_paste(&app) {
-            let _ = app.emit_to("main", "capture-failed", error);
-            crate::panel::show_now(&app);
-        }
-    });
-}
-
-/// How long `paste_back` waits for the shelf to finish sliding away. Longer
-/// than the hide's own wait for the frontend's ack, so a listening frontend is
-/// never cut off, and bounded, so a renderer that never answers cannot swallow
-/// the paste.
-const PASTE_BACK_WAIT: Duration = Duration::from_millis(700);
 
 #[tauri::command]
 pub async fn copy_item(app: AppHandle, id: i64) -> Result<(), String> {
-    let items = db::list_items(&app);
-    let Some(item) = items.into_iter().find(|i| i.id == id) else {
-        return Err("item not found".into());
-    };
-    if item.kind == "image" {
-        if let Some(p) = item.image_path {
-            crate::paste::set_image(&app, &p)?;
-        }
-    } else {
-        crate::paste::set_text(&app, &item.content)?;
-    }
+    let item = db::item_by_id(&app, id).ok_or("That item no longer exists.")?;
+    let detail = put_on_clipboard(&app, &item).inspect_err(|error| {
+        crate::feedback::notify(
+            &app,
+            crate::feedback::Note::error("Couldn't copy").with_detail(error.clone()),
+        );
+    })?;
     db::set_active_item(&app, Some(id));
+    refresh(&app);
+    crate::feedback::notify(&app, crate::feedback::Note::selected(None, None, detail));
+    Ok(())
+}
+
+/// Put one item on the clipboard and return a one-line description of it.
+pub fn put_on_clipboard(app: &AppHandle, item: &db::Item) -> Result<String, String> {
+    match item.kind.as_str() {
+        "image" => {
+            let path = item
+                .image_path
+                .as_deref()
+                .ok_or_else(|| "That image is no longer available.".to_string())?;
+            crate::clip::set_image(app, path)?;
+            Ok("Image".into())
+        }
+        "file" => {
+            let paths: Vec<String> = item
+                .content
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(String::from)
+                .collect();
+            crate::clip::set_files(app, &paths)?;
+            Ok(crate::feedback::excerpt(&item.content, 64))
+        }
+        _ => {
+            crate::clip::set_text(app, &item.content)?;
+            Ok(crate::feedback::excerpt(&item.content, 64))
+        }
+    }
+}
+
+/// The three items the slot shortcuts reach: pins first, in pin order, then
+/// the most recent.
+fn slot_items(app: &AppHandle) -> Vec<db::Item> {
+    // The one definition of a slot, shared with the state the panel reads, so
+    // the number on a row and the shortcut that copies it cannot disagree.
+    db::slot_items(app)
+}
+
+/// Put slot `slot` (1–3) on the clipboard.
+pub fn select_slot(app: &AppHandle, slot: u8) {
+    let items = slot_items(app);
+    let filled = items.len() as u8;
+    let Some(item) = items.get(slot.saturating_sub(1) as usize) else {
+        crate::feedback::notify(
+            app,
+            crate::feedback::Note::error(format!("Nothing in slot {slot} yet")),
+        );
+        return;
+    };
+    CYCLE
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .replace((slot, std::time::Instant::now()));
+    match put_on_clipboard(app, item) {
+        Ok(detail) => {
+            db::set_active_item(app, Some(item.id));
+            refresh(app);
+            crate::feedback::notify(
+                app,
+                crate::feedback::Note::selected(Some(slot), Some(filled), detail),
+            );
+        }
+        Err(error) => crate::feedback::notify(
+            app,
+            crate::feedback::Note::error("Couldn't copy").with_detail(error),
+        ),
+    }
+}
+
+/// The slot the cycle shortcut last chose, and when.
+static CYCLE: std::sync::Mutex<Option<(u8, std::time::Instant)>> = std::sync::Mutex::new(None);
+/// After this long, a cycle starts over from what is on the clipboard.
+const CYCLE_RESET: Duration = Duration::from_secs(5);
+
+/// Step to the next of the three slots. A fresh cycle starts after the item
+/// that is already on the clipboard, so the first press always changes it.
+pub fn cycle_slot(app: &AppHandle) {
+    let items = slot_items(app);
+    if items.is_empty() {
+        crate::feedback::notify(
+            app,
+            crate::feedback::Note::error("Nothing to cycle through yet"),
+        );
+        return;
+    }
+    let count = items.len() as u8;
+    let last = CYCLE
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .filter(|(_, at)| at.elapsed() < CYCLE_RESET)
+        .map(|(slot, _)| slot);
+    let current = last.or_else(|| {
+        let active = db::get_setting(app, "active_item_id").and_then(|v| v.parse::<i64>().ok());
+        items
+            .iter()
+            .position(|item| Some(item.id) == active)
+            .map(|index| index as u8 + 1)
+    });
+    let next = match current {
+        Some(slot) => slot % count + 1,
+        None => 1,
+    };
+    select_slot(app, next);
+}
+
+#[tauri::command]
+pub fn set_dock(app: AppHandle, dock: String) -> Result<(), String> {
+    let parsed = crate::panel::Dock::parse(&dock).ok_or("Bard docks left, right or floats.")?;
+    db::set_setting_checked(&app, crate::panel::DOCK_SETTING, parsed.name())?;
+    crate::panel::apply_dock(&app);
     refresh(&app);
     Ok(())
 }
 
-/// Paste one of the first three timeline items into the foreground app. Pins
-/// lead the timeline, so slots 1–3 are the pinned items, then the panel order.
-/// The global Right Shift × 2 + number gesture calls this without opening the
-/// panel, so the active application remains the paste target.
-pub fn paste_item(app: &AppHandle, slot: u8) -> Result<(), String> {
-    if !(1..=3).contains(&slot) {
-        return Err("Bard only exposes item slots 1 through 3.".into());
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Feedback {
+    pill: bool,
+    sound: bool,
+}
+
+#[tauri::command]
+pub fn get_feedback() -> Feedback {
+    Feedback {
+        pill: crate::feedback::pill_on(),
+        sound: crate::feedback::sound_on(),
     }
-    let items = db::timeline(app);
-    let Some(item) = items.get(slot as usize - 1) else {
-        return Err(format!("Bard has no item {slot} to paste."));
-    };
-    if item.kind == "image" {
-        let path = item
-            .image_path
-            .as_deref()
-            .ok_or_else(|| "That image is no longer available.".to_string())?;
-        crate::paste::set_image(app, path)?;
-    } else {
-        crate::paste::set_text(app, &item.content)?;
+}
+
+#[tauri::command]
+pub fn set_feedback(app: AppHandle, pill: bool, sound: bool) -> Feedback {
+    crate::feedback::set_channels(&app, pill, sound);
+    if pill || sound {
+        crate::feedback::notify(&app, crate::feedback::Note::info("info", "Feedback on"));
     }
-    db::set_active_item(app, Some(item.id));
-    crate::paste::send_paste(app)?;
-    refresh(app);
-    Ok(())
+    get_feedback()
+}
+
+#[tauri::command]
+pub fn set_capture_paused(app: AppHandle, paused: bool) -> bool {
+    crate::monitor::set_paused(&app, paused)
+}
+
+#[tauri::command]
+pub fn notify_error(app: AppHandle, text: String) {
+    crate::feedback::notify(&app, crate::feedback::Note::error(text));
 }
 
 #[tauri::command]
 pub fn copy_attachment(app: AppHandle, id: i64) -> Result<(), String> {
     let path = db::attachment_path(&app, id).ok_or("Attachment not found")?;
-    crate::paste::set_image(&app, &path)
+    crate::clip::set_image(&app, &path)
 }
 
 #[tauri::command]
@@ -1681,16 +1769,18 @@ pub fn set_retention_days(app: AppHandle, origin: String, days: Option<i64>) -> 
 /// returns a count and propagates the first error, so the caller can say
 /// `History pruned.` or `Couldn't prune history. Try again.` honestly.
 ///
-/// The count cap is applied here rather than on the capture path, so pruning is
-/// something a person asked for and watches happen, not something that silently
-/// deletes their data mid-session.
+/// It removes only what is past the lifespans the person chose, which is
+/// exactly what the pane promises: "Removes everything past the lifespans
+/// above, right now. It does not change them." The 5,000-item ceiling is a
+/// bound on how much the shelf re-reads, not a lifespan, and applying it here
+/// deleted automatic items of any age — including pinned ones — that no
+/// setting said to remove.
 #[tauri::command]
 pub async fn prune_history_now(app: AppHandle) -> Result<usize, String> {
     let mut removed = 0usize;
     for origin in ["clipboard", "dictation"] {
         removed += db::prune_expired(&app, origin)?;
     }
-    removed += db::prune_history(&app, db::AUTOMATIC_ITEM_CEILING)?;
     refresh(&app);
     Ok(removed)
 }
@@ -1723,13 +1813,13 @@ pub async fn item_image_data(app: AppHandle, id: i64) -> Option<String> {
     if item.kind != "image" {
         return None;
     }
-    crate::paste::image_data(&app, &item.image_path?)
+    crate::clip::image_data(&app, &item.image_path?)
 }
 
 #[tauri::command]
 pub async fn attachment_image_data(app: AppHandle, id: i64) -> Option<String> {
     let path = db::attachment_path(&app, id)?;
-    crate::paste::image_data(&app, &path)
+    crate::clip::image_data(&app, &path)
 }
 
 /// An image card's picture: the file's asset URL, not its bytes.
@@ -1748,14 +1838,14 @@ pub async fn item_cover_url(app: AppHandle, id: i64) -> Option<String> {
     if item.kind != "image" {
         return None;
     }
-    crate::paste::image_url(&item.image_path?)
+    crate::clip::image_url(&item.image_path?)
 }
 
 /// An attachment thumbnail's picture, on the same terms as [`item_cover_url`].
 #[tauri::command]
 pub async fn attachment_cover_url(app: AppHandle, id: i64) -> Option<String> {
     let path = db::attachment_path(&app, id)?;
-    crate::paste::image_url(&path)
+    crate::clip::image_url(&path)
 }
 
 /// What every window needs to paint itself: the theme and the background.
@@ -1890,6 +1980,19 @@ pub fn set_theme(app: AppHandle, theme: String) {
 pub fn set_onboarding_completed(app: AppHandle, done: bool) -> Result<(), String> {
     db::set_setting_checked(&app, "onboarding_completed", if done { "1" } else { "0" })?;
     crate::panel::show_now(&app);
+    // On Wayland, a person who skipped the desktop's shortcut request during
+    // setup is asked once now; one who declined it is not asked again.
+    #[cfg(target_os = "linux")]
+    if done
+        && crate::desktop::is_wayland()
+        && !crate::linux_portal::shortcuts_ready()
+        && db::get_setting(&app, crate::linux_portal::DECLINED_SETTING).as_deref() != Some("1")
+    {
+        let portal_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = crate::linux_portal::configure_shortcuts(portal_app).await;
+        });
+    }
     Ok(())
 }
 
@@ -1902,7 +2005,7 @@ pub async fn configure_desktop(app: AppHandle, feature: String) -> Result<(), St
         }
         match feature.as_str() {
             "shortcuts" => crate::linux_portal::configure_shortcuts(app).await,
-            "input" => crate::linux_portal::configure_input(app).await,
+            "edit-shortcuts" => crate::linux_portal::edit_shortcuts(app).await,
             _ => Err("That desktop integration is not available.".into()),
         }
     }
@@ -2018,31 +2121,6 @@ pub fn open_startup_settings() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn set_capture_double_shift(app: AppHandle, enabled: bool) {
-    db::set_setting(
-        &app,
-        "capture_double_shift",
-        if enabled { "1" } else { "0" },
-    );
-}
-
-/// Turn the dictation review sheet on or off. Off by default, and stored as a
-/// setting so the take path reads it without knowing who changed it.
-#[tauri::command]
-pub fn set_dictation_review(app: AppHandle, enabled: bool) {
-    db::set_setting(
-        &app,
-        crate::dictation::REVIEW_SETTING_KEY,
-        if enabled { "1" } else { "0" },
-    );
-}
-
-#[tauri::command]
-pub fn capture_now(app: AppHandle) {
-    crate::capture::capture_selection(&app);
-}
-
-#[tauri::command]
 pub fn show_panel(app: AppHandle) {
     crate::panel::show_now(&app);
 }
@@ -2055,46 +2133,6 @@ pub fn hide_panel(app: AppHandle) {
 #[tauri::command]
 pub fn toggle_panel(app: AppHandle) {
     crate::panel::toggle_now(&app);
-}
-
-/// Dock the shelf to one of the screen's four edges. A visible shelf moves the
-/// moment the edge is chosen — the edge is the thing the person is looking at —
-/// and the next show anchors to whatever was stored.
-#[tauri::command]
-pub fn set_shelf_edge(app: AppHandle, edge: String) -> Result<(), String> {
-    let Some(edge) = crate::geometry::Edge::checked(&edge) else {
-        return Err("The shelf docks to the top, right, bottom or left edge.".into());
-    };
-    db::set_setting_checked(&app, crate::geometry::EDGE_SETTING, edge.as_str())?;
-    if let Some(win) = app.get_webview_window("main") {
-        if win.is_visible().unwrap_or(false) {
-            // Window operations are a Windows-main-thread responsibility, and
-            // this is called from whichever window's Settings pane it came from.
-            let handle = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(win) = handle.get_webview_window("main") {
-                    crate::geometry::anchor(&handle, &win, edge);
-                }
-            });
-        }
-    }
-    // Every window re-reads what it needs on this, so a panel that is already
-    // out can lay itself out for the new edge instead of waiting for the next
-    // show. It is the same signal every other setting change raises.
-    refresh(&app);
-    // Its own event besides the refresh, so a shelf that is already out can
-    // re-lay itself out the moment the edge changes rather than one round-trip
-    // later.
-    let _ = app.emit("shelf-edge", edge.as_str());
-    Ok(())
-}
-
-/// The panel's sign that the shelf has finished sliding out. The window is not
-/// hidden and the foreground does not go back until this arrives, so the slide
-/// is never cut off by the window disappearing underneath it.
-#[tauri::command]
-pub fn shelf_hidden() {
-    crate::panel::shelf_hidden_ack();
 }
 
 #[tauri::command]
@@ -2146,31 +2184,6 @@ pub fn dictate_cancel(app: AppHandle) {
     crate::dictation::cancel(&app);
 }
 
-#[tauri::command]
-pub fn set_dictation_overlay_position(app: AppHandle, position: String) -> Result<(), String> {
-    crate::dictation::set_overlay_position(&app, &position)
-}
-
-/// Confirm a reviewed take with the sheet's current body: paste it into the
-/// window the take started in, or file it in the timeline if Bard had focus.
-#[tauri::command]
-pub fn dictation_confirm(app: AppHandle, text: String) -> Result<(), String> {
-    crate::dictation::confirm(&app, text)
-}
-
-/// Put the sheet's current body on the clipboard, leaving the sheet up.
-#[tauri::command]
-pub fn dictation_copy(app: AppHandle, text: String) -> Result<(), String> {
-    crate::dictation::copy(&app, text)
-}
-
-/// Dismiss the sheet: the body stays on the clipboard best-effort, and the
-/// take ends in Idle.
-#[tauri::command]
-pub fn dictation_dismiss(app: AppHandle, text: String) {
-    crate::dictation::dismiss(&app, text);
-}
-
 /// The clipboard's image as a data URL, or null when it holds none (or the
 /// licence restricts content). Draw's Ctrl+V intake — the pixels come from the
 /// same clipboard Bard's monitor reads, with the same size caps.
@@ -2179,7 +2192,7 @@ pub fn clipboard_image_data(app: AppHandle) -> Option<String> {
     if crate::license::require(&app).is_err() {
         return None;
     }
-    let mut clipboard = arboard::Clipboard::new().ok()?;
+    let mut clipboard = crate::clip::handle().ok()?;
     let image = clipboard.get_image().ok()?;
     let encoded = crate::monitor::encode_png(&image)?;
     let base64 = base64::engine::general_purpose::STANDARD.encode(&encoded);
@@ -2214,7 +2227,7 @@ mod acl_tests {
             include_str!("../capabilities/main.json"),
             include_str!("../capabilities/settings.json"),
             include_str!("../capabilities/draw.json"),
-            include_str!("../capabilities/overlay.json"),
+            include_str!("../capabilities/pill.json"),
         ]
         .concat();
         let handlers = main
@@ -2317,6 +2330,28 @@ mod export_tests {
         std::fs::remove_dir_all(root).ok();
     }
 
+    /// An item whose section was not in the section list used to disappear from
+    /// the export entirely: only sections that were read were printed, and the
+    /// item was never written anywhere else. A failed section read must not
+    /// cost the person their items.
+    #[test]
+    fn an_item_whose_section_is_missing_is_still_exported() {
+        let root = test_dir("missing-section");
+        let dir = root.join("out");
+        std::fs::create_dir_all(&dir).unwrap();
+        let items = vec![item(1, Some(7), "filed but unreachable", "text", None)];
+        let attachments = std::collections::HashMap::new();
+
+        export_markdown_into(&dir, &[], &items, &attachments).unwrap();
+
+        let markdown = std::fs::read_to_string(dir.join("bard-export.md")).unwrap();
+        assert!(
+            markdown.contains("- filed but unreachable"),
+            "an item must never be dropped because its section was not read"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
     #[test]
     fn two_files_with_the_same_name_are_both_exported() {
         let mut used = std::collections::HashSet::new();
@@ -2333,29 +2368,48 @@ mod export_tests {
 }
 
 #[cfg(test)]
-mod draw_tests {
+mod ingest_tests {
     use super::*;
 
+    /// File intake is the same door as the clipboard: a text file over the
+    /// watcher's cap must be refused, not stored whole and not truncated.
     #[test]
-    fn the_live_foreground_is_the_delivery_target() {
-        assert_eq!(draw_target_choice(12, false, 0, false), 12);
-        // The live foreground beats the panel's older memory.
-        assert_eq!(draw_target_choice(12, false, 34, false), 12);
+    fn file_intake_applies_the_clipboard_capture_cap_to_text() {
+        let cap = crate::monitor::MAX_CAPTURE_TEXT_BYTES as u64;
+        assert_eq!(ingest_kind("log", cap), IngestKind::Text);
+        assert_eq!(ingest_kind("log", cap + 1), IngestKind::TextTooLarge);
+        assert_eq!(ingest_kind("txt", 1), IngestKind::Text);
+        // The 25 MB bound still applies to every kind of file.
+        assert_eq!(
+            ingest_kind("png", MAX_INGEST_FILE_BYTES + 1),
+            IngestKind::Unsupported
+        );
+        assert_eq!(ingest_kind("png", MAX_INGEST_FILE_BYTES), IngestKind::Image);
+        // A file that is neither an image nor text keeps its name as a note.
+        assert_eq!(ingest_kind("zip", 10), IngestKind::FileName);
     }
 
+    /// Two names that differ only in case are two files on Linux, and one on
+    /// the case-insensitive filesystems. Lowercasing every path collapsed the
+    /// pair on Linux and silently skipped one of them.
     #[test]
-    fn a_foreground_of_ours_falls_back_to_the_panels_memory() {
-        assert_eq!(draw_target_choice(12, true, 34, false), 34);
-        // No foreground at all is the same question as one of ours.
-        assert_eq!(draw_target_choice(0, false, 34, false), 34);
+    fn case_distinct_paths_are_one_only_where_the_filesystem_says_so() {
+        let upper = path_key(Path::new("/tmp/Report.txt"));
+        let lower = path_key(Path::new("/tmp/report.txt"));
+        if cfg!(any(windows, target_os = "macos")) {
+            assert_eq!(upper, lower);
+        } else {
+            assert_ne!(
+                upper, lower,
+                "Linux has two files here, so an import must keep both"
+            );
+        }
     }
+}
 
-    #[test]
-    fn bard_itself_is_never_a_delivery_target() {
-        assert_eq!(draw_target_choice(12, true, 34, true), 0);
-        assert_eq!(draw_target_choice(0, false, 34, true), 0);
-        assert_eq!(draw_target_choice(0, false, 0, false), 0);
-    }
+#[cfg(test)]
+mod draw_tests {
+    use super::*;
 
     #[test]
     fn a_suggested_svg_name_keeps_its_stem_and_gains_the_extension() {

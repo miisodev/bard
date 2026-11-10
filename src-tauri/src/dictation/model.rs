@@ -5,7 +5,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex, MutexGuard, OnceLock,
     },
-    time::Duration,
+    time::{Duration, Instant, SystemTime},
 };
 
 use serde::Serialize;
@@ -109,6 +109,148 @@ fn active_cancel_lock() -> MutexGuard<'static, Option<CancelToken>> {
     ACTIVE_CANCEL
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// A compatibility probe whose load may outlive the caller that started it.
+///
+/// `hf::spawn_probe` runs `Model::load` on its own thread and abandons the wait
+/// on timeout, but the thread still owns the model until the load returns. This
+/// registry is the hand-over point: a probe nobody abandoned drops its model
+/// exactly as before, while an abandoned one leaves it here for
+/// `reap_probe_residency`.
+///
+/// Integration point: `hf::spawn_probe` must call `begin_probe` before the
+/// load, pass the `ProbeLease` to the loading closure, and call
+/// `ProbeAbandon::abandon` when `recv_timeout` expires; `engine_load` must
+/// hand the loaded `Model` to `ProbeLease::finish`. Until that hook lands
+/// nothing registers here, so the watcher has no probe to reap and a load that
+/// never returns is still only bounded by the engine itself.
+struct ProbeSlot {
+    path: PathBuf,
+    started: Instant,
+    abandoned: AtomicBool,
+    /// Set when an abandoned probe has left its model in `resident`. The lease
+    /// must then outlive its own drop, because the watcher owns the model now.
+    keep: AtomicBool,
+    reported: AtomicBool,
+    resident: Mutex<Option<Box<dyn std::any::Any + Send>>>,
+}
+
+static PROBES: Mutex<Vec<std::sync::Arc<ProbeSlot>>> = Mutex::new(Vec::new());
+
+/// A probe older than the same idle window the transcription session uses is
+/// treated as stranded: its waiter has given up and its load has not returned.
+const PROBE_STRANDED_AFTER: Duration = Duration::from_millis(UNLOAD_IDLE_MS);
+
+fn probe_lock() -> MutexGuard<'static, Vec<std::sync::Arc<ProbeSlot>>> {
+    PROBES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The same poison-degrading lock the rest of this module uses, for the plain
+/// payloads in a probe slot.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn unregister_probe(slot: &std::sync::Arc<ProbeSlot>) {
+    probe_lock().retain(|entry| !std::sync::Arc::ptr_eq(entry, slot));
+}
+
+/// The loading half of a probe.
+pub struct ProbeLease {
+    slot: std::sync::Arc<ProbeSlot>,
+}
+
+/// The waiting half, which is the only one that knows the caller has timed out.
+pub struct ProbeAbandon {
+    slot: std::sync::Arc<ProbeSlot>,
+}
+
+impl ProbeLease {
+    /// Hand the loaded model over. A probe whose waiter is still waiting drops
+    /// it here, exactly as `Model::load(...).map(drop)` used to; an abandoned one
+    /// leaves it for the idle watcher, which is then the only party that can
+    /// release it.
+    pub fn finish<T: Send + 'static>(self, resident: T) {
+        if self.slot.abandoned.load(Ordering::Acquire) {
+            *lock(&self.slot.resident) = Some(Box::new(resident));
+            self.slot.keep.store(true, Ordering::Release);
+        }
+    }
+}
+
+impl Drop for ProbeLease {
+    fn drop(&mut self) {
+        if !self.slot.keep.load(Ordering::Acquire) {
+            unregister_probe(&self.slot);
+        }
+    }
+}
+
+impl ProbeAbandon {
+    pub fn abandon(&self) {
+        self.slot.abandoned.store(true, Ordering::Release);
+    }
+}
+
+/// Register a probe before its load starts. `hf.rs` is the only intended caller.
+pub fn begin_probe(path: PathBuf) -> (ProbeLease, ProbeAbandon) {
+    let slot = std::sync::Arc::new(ProbeSlot {
+        path,
+        started: Instant::now(),
+        abandoned: AtomicBool::new(false),
+        keep: AtomicBool::new(false),
+        reported: AtomicBool::new(false),
+        resident: Mutex::new(None),
+    });
+    probe_lock().push(slot.clone());
+    (ProbeLease { slot: slot.clone() }, ProbeAbandon { slot })
+}
+
+/// Drop any model an abandoned probe left behind and report probes whose load
+/// has still not returned after the idle window.
+///
+/// A load that is genuinely wedged cannot be freed from here: the engine's
+/// in-progress allocation belongs to the probe thread, not to this module. The
+/// event is the honest signal that the process is still holding it; the model a
+/// completed probe deposits is the part this watcher can actually reap.
+fn reap_probe_residency() -> usize {
+    let slots: Vec<std::sync::Arc<ProbeSlot>> = probe_lock().iter().cloned().collect();
+    let mut reaped = 0;
+    let mut emptied = Vec::new();
+    for slot in &slots {
+        if let Some(resident) = lock(&slot.resident).take() {
+            drop(resident);
+            reaped += 1;
+            emptied.push(slot.clone());
+        }
+        if slot.abandoned.load(Ordering::Acquire)
+            && slot.started.elapsed() >= PROBE_STRANDED_AFTER
+            && !slot.reported.swap(true, Ordering::AcqRel)
+        {
+            log::warn!(
+                "model:probe-stranded path={} age_s={}",
+                slot.path.display(),
+                slot.started.elapsed().as_secs()
+            );
+            crate::crash::record_event("model:probe-stranded");
+        }
+    }
+    if !emptied.is_empty() {
+        probe_lock().retain(|entry| {
+            !emptied
+                .iter()
+                .any(|done| std::sync::Arc::ptr_eq(entry, done))
+        });
+    }
+    if reaped > 0 {
+        crate::crash::record_event("model:probe-reaped");
+    }
+    reaped
 }
 
 /// Mark the engine as used, so the idle reaper can eventually reclaim it.
@@ -249,11 +391,57 @@ pub fn models(app: &AppHandle) -> Vec<ModelInfo> {
     list
 }
 
+/// Whether the active model is present and can be used.
+///
+/// This is deliberately a cheap check, not a hash: `get_state` asks it on
+/// every state refresh, and a state read must never wait on a multi-gigabyte
+/// file. It answers the question the surfaces actually ask — is there a model
+/// here that a take could use — by looking for the file and, for a catalogue
+/// model, checking that it is the size the catalogue promised.
+///
+/// The *integrity* of that file is a separate question, and it is asked where
+/// it matters: `ensure_model_ready` is the gate a take passes through, so a
+/// corrupt or partially downloaded model is refused before anyone records a
+/// word against it. Answering "not ready" here until that check had run
+/// would tell a person with a perfectly good model that it was missing.
 pub fn model_ready(app: &AppHandle) -> bool {
     let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
-    resolve_path(app, &id)
-        .map(|path| path.is_file())
-        .unwrap_or(false)
+    let Some(path) = resolve_path(app, &id) else {
+        return false;
+    };
+    if !path.is_file() {
+        return false;
+    }
+    if let Some(model) = crate::catalog::find(&id) {
+        // A catalogue model is downloaded to an exact name; a file of the
+        // wrong size is a partial download, not the model.
+        return match std::fs::metadata(&path) {
+            Ok(metadata) => metadata.len() == model.file.size_bytes,
+            Err(_) => false,
+        };
+    }
+    true
+}
+
+/// Verify the active model before a take may start.
+///
+/// `model_ready` is the cheap state query; this is the gate that used to be
+/// missing. It runs the same pinned size/SHA-256 check the take paid only after
+/// recording — against a corrupt or partially downloaded file that meant
+/// recording a whole take and then failing with nothing to show for it. The
+/// answer is cached by file identity, so only the first take after launch (or
+/// after the file changes) pays for it.
+pub(crate) fn ensure_model_ready(app: &AppHandle) -> Result<(), String> {
+    let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
+    let Some(path) = resolve_path(app, &id) else {
+        return Err("No voice model has been chosen yet. Install one in Settings › Models.".into());
+    };
+    if !path.is_file() {
+        return Err(
+            "The selected voice model is not downloaded. Install it in Settings › Models.".into(),
+        );
+    }
+    verify_model_cached(app, &id, &path)
 }
 
 pub fn model_status(app: &AppHandle) -> ModelStatus {
@@ -345,6 +533,9 @@ pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
     if path.is_file() {
         let pinned = crate::hf::verify_pinned_file(&path, def.size_bytes, def.sha256);
         if pinned.is_ok() && crate::hf::verify_load(&path.to_string_lossy()) {
+            // The file the person already had is the file just checked; do not
+            // make the first take hash it again.
+            remember_verified(def.id, &path);
             crate::hf::emit_model_installed(app, def.id);
             return Ok(());
         }
@@ -373,7 +564,11 @@ pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
     }
     // The file on disk has just changed, so anything previously verified for this
     // model is no longer a statement about these bytes.
-    invalidate_verification();
+    invalidate_verification_for(&path);
+    // This download was just checked against the catalogue checksum and opened
+    // by the engine, so the same bytes do not need hashing again on the first
+    // take.
+    remember_verified(def.id, &path);
 
     // Installation is not selection. The UI receives a refresh signal and the
     // user activates this model explicitly with `set_model`.
@@ -382,6 +577,12 @@ pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
 }
 
 pub fn delete_model(app: &AppHandle, id: &str) -> Result<(), String> {
+    // The verdict describes a file that is about to disappear. Forgetting it
+    // here means a later file that happens to reuse the path and its size and
+    // timestamp cannot inherit the deleted model's answer.
+    if let Some(path) = resolve_path(app, id) {
+        invalidate_verification_for(&path);
+    }
     crate::hf::delete_model(app, id)?;
     // A non-active deletion cannot be the in-memory session, but clearing an
     // idle/stale session here preserves the old unload behavior for callers.
@@ -398,6 +599,7 @@ pub fn start_unload_watcher(_app: AppHandle) {
     }
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(30));
+        reap_probe_residency();
         let last = LAST_USE.load(Ordering::SeqCst);
         if last > 0 && crate::db::now_ms() - last as i64 > UNLOAD_IDLE_MS as i64 {
             release_session();
@@ -413,48 +615,111 @@ pub fn transcribe(app: &AppHandle, samples: &[f32]) -> Result<String, String> {
     result
 }
 
-/// The model whose file has been fully verified in this process, if any.
+/// The identity of the exact model file a verification answer describes.
 ///
-/// Keyed by id and the resolved path together, so switching models, or the same
-/// id pointing at a different file, re-verifies.
-fn verified_this_process() -> &'static Mutex<Option<(String, PathBuf)>> {
-    static VERIFIED: OnceLock<Mutex<Option<(String, PathBuf)>>> = OnceLock::new();
-    VERIFIED.get_or_init(|| Mutex::new(None))
+/// The path alone is not enough: a replacement at the same path, a fresh
+/// download or a partially written file must not inherit the previous answer.
+/// Size and modification time are the cheap pair that changes with the bytes,
+/// and caching on them is what lets a state read ask for the answer without
+/// touching the file's contents.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VerificationKey {
+    id: String,
+    path: PathBuf,
+    size: u64,
+    modified: Option<SystemTime>,
 }
 
-/// Run the full catalogue verification once per process for a given model file.
-fn ensure_session_verified(app: &AppHandle, id: &str, path: &Path) -> Result<(), String> {
-    let resolved = path.to_path_buf();
-    {
-        let guard = verified_this_process()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if guard
-            .as_ref()
-            .is_some_and(|(seen_id, seen_path)| seen_id == id && seen_path == &resolved)
-        {
-            return Ok(());
-        }
+struct VerificationEntry {
+    key: VerificationKey,
+    outcome: Result<(), String>,
+}
+
+fn verification_cache() -> &'static Mutex<Vec<VerificationEntry>> {
+    static CACHE: OnceLock<Mutex<Vec<VerificationEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Serializes the expensive check, not the cheap cache read. A warm-up and a
+/// take arriving together must not each hash a multi-gigabyte file; the second
+/// one waits here and then finds the first one's answer in the cache.
+fn verification_in_progress() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn verification_key(id: &str, path: &Path) -> Result<VerificationKey, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Could not inspect the voice model: {error}"))?;
+    if !metadata.is_file() {
+        return Err("The selected model path is not a regular file.".into());
     }
-
-    crate::hf::verify_model_file(app, id, path)?;
-
-    let mut guard = verified_this_process()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *guard = Some((id.to_owned(), resolved));
-    Ok(())
+    Ok(VerificationKey {
+        id: id.to_owned(),
+        path: path.to_path_buf(),
+        size: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
 }
 
-/// Forget the per-process verification, so the next capture checks again.
-///
-/// Called whenever the file behind the active model can have changed underneath
-/// Bard — a fresh download, or a model being replaced.
-pub fn invalidate_verification() {
-    let mut guard = verified_this_process()
+/// The cached answer for `key`, if it describes the same file.
+fn cached_model_verification(key: &VerificationKey) -> Option<Result<(), String>> {
+    let cache = verification_cache()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *guard = None;
+    cache
+        .iter()
+        .find(|entry| entry.key == *key)
+        .map(|entry| entry.outcome.clone())
+}
+
+fn remember_verification(key: VerificationKey, outcome: Result<(), String>) {
+    let mut cache = verification_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.retain(|entry| entry.key.path != key.path);
+    cache.push(VerificationEntry { key, outcome });
+}
+
+/// Run the pinned size/SHA-256 verification once per model file.
+fn verify_model_cached(app: &AppHandle, id: &str, path: &Path) -> Result<(), String> {
+    let key = verification_key(id, path)?;
+    if let Some(outcome) = cached_model_verification(&key) {
+        return outcome;
+    }
+    let _hashing = verification_in_progress()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // The warm-up may have finished while this caller waited for the hasher.
+    if let Some(outcome) = cached_model_verification(&key) {
+        return outcome;
+    }
+    let outcome = crate::hf::verify_model_file(app, id, path);
+    remember_verification(key, outcome.clone());
+    outcome
+}
+
+/// Record a file that was just verified by the download path, so the first take
+/// after an install does not hash the same bytes again.
+fn remember_verified(id: &str, path: &Path) {
+    let Ok(key) = verification_key(id, path) else {
+        return;
+    };
+    remember_verification(key, Ok(()));
+}
+
+/// Verify the file a take is about to load, reusing the cached answer only
+/// while the file's size and modification time still describe the same bytes.
+fn ensure_session_verified(app: &AppHandle, id: &str, path: &Path) -> Result<(), String> {
+    verify_model_cached(app, id, path)
+}
+
+/// Forget the cached answer for one file, leaving the other models alone.
+fn invalidate_verification_for(path: &Path) {
+    verification_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .retain(|entry| entry.key.path.as_path() != path);
 }
 
 /// Set once the verification warm-up has claimed its thread for this process.
@@ -477,9 +742,10 @@ fn claim_warmup(started: &AtomicBool) -> bool {
 /// is the same work whenever it happens, so it may as well happen while the
 /// person is still opening the panel.
 ///
-/// The stamp `ensure_session_verified` sets is only set on success, exactly as
-/// on the take path: a failed warm-up (no model, a missing file, a hash error)
-/// changes nothing, so the take still verifies and reports in its own words.
+/// The answer is cached either way, exactly as on the take path: the warm-up
+/// exists to pay the hash once, and a failure it finds is the same failure a
+/// take would report. The take gate asks again only when the file's identity
+/// changes.
 pub fn spawn_verification_warmup(app: AppHandle) {
     if !claim_warmup(&WARMUP_STARTED) {
         return;
@@ -515,21 +781,12 @@ fn transcribe_inner(app: &AppHandle, samples: &[f32]) -> Result<String, String> 
     if !path.is_file() {
         return Err("Voice model not downloaded.".into());
     }
-    // Verified once per *session*, not once per capture.
-    //
-    // `verify_model_file` resolves the file and re-checks it against the
-    // catalogue, and `verify_pinned_file` answers from the durable marker when
-    // the file's `(size, last write, creation)` stamp and the catalogue's
-    // checksum are both unchanged since the last successful hash — see that
-    // function for exactly what that trusts. A stat is not free either:  this
-    // runs before every take, and a take should not wait on a file read it does
-    // not need. The session check is the cheap one, and the marker is what makes
-    // the first check in a new process cheap as well.
-    //
-    // Verifying on session entry rather than per capture also keeps any change
-    // to the file between sessions caught even when the stamp cannot see it:
-    // a fresh process has no in-memory verdict, so it asks the marker, and the
-    // marker's answer is the file's stamp against what was hashed.
+    // The take gate (`ensure_model_ready`) has already run this check before
+    // the microphone opened; keeping it here covers a direct `transcribe`
+    // caller and any file change in the gap. It is a cache read while the
+    // file's size and modification time still describe the bytes that were
+    // hashed, so a take does not wait on a file read it does not need; a miss
+    // falls through to `verify_model_file` and its durable marker.
     ensure_session_verified(app, &id, &path)?;
 
     if !INIT_BACKENDS.load(Ordering::SeqCst) {
@@ -647,5 +904,167 @@ mod tests {
             "release_session blocked for {:?}",
             started.elapsed()
         );
+    }
+
+    /// A unique path for a stand-in model file. The real models are gigabytes
+    /// and live in the user's data directory; these checks only need the
+    /// metadata they are actually about.
+    fn temp_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "bard-dictation-model-{}-{tag}.bin",
+            std::process::id()
+        ))
+    }
+
+    fn probe_registered(path: &Path) -> bool {
+        probe_lock().iter().any(|slot| slot.path == path)
+    }
+
+    struct DropFlag(std::sync::Arc<AtomicBool>);
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_verification_answer_is_bound_to_the_exact_file_it_describes() {
+        let path = temp_path("verification-key");
+        let other = temp_path("verification-key-other");
+        fs::write(&path, b"first").expect("write the model stand-in");
+        fs::write(&other, b"first").expect("write the second stand-in");
+
+        let first = verification_key("model-a", &path).expect("a regular file");
+        assert_eq!(
+            first,
+            verification_key("model-a", &path).expect("the same file"),
+            "an unchanged file must compare equal"
+        );
+        assert!(
+            first != verification_key("model-b", &path).expect("another model id"),
+            "the same bytes under another id must not inherit the answer"
+        );
+        assert!(
+            first != verification_key("model-a", &other).expect("another path"),
+            "the same bytes at another path must not inherit the answer"
+        );
+
+        // Both halves of the cheap identity: a longer file and a touched file
+        // must each produce a key that cannot match the previous answer.
+        fs::write(&path, b"second").expect("replace the contents");
+        let resized = verification_key("model-a", &path).expect("after the write");
+        assert!(
+            first != resized,
+            "a size change must invalidate the cached answer"
+        );
+
+        let touched = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open for the timestamp change")
+            .set_modified(touched)
+            .expect("set the modification time");
+        let retimed = verification_key("model-a", &path).expect("after the touch");
+        assert!(
+            resized != retimed,
+            "a modification-time change must invalidate the cached answer"
+        );
+
+        assert!(
+            verification_key("model-a", &temp_path("verification-missing")).is_err(),
+            "a path that does not exist has no identity to cache"
+        );
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&other);
+    }
+
+    #[test]
+    fn a_cached_verification_is_returned_only_for_the_file_it_describes() {
+        let path = temp_path("verification-cache");
+        fs::write(&path, b"cached").expect("write the model stand-in");
+        let key = verification_key("cache-test", &path).expect("a regular file");
+
+        assert!(
+            cached_model_verification(&key).is_none(),
+            "nothing cached yet"
+        );
+        remember_verification(key.clone(), Err("bad bytes".into()));
+        assert_eq!(
+            cached_model_verification(&key),
+            Some(Err("bad bytes".into())),
+            "a failure is cached as deliberately as a success: a corrupt file \
+             must not be hashed again on every state read and every attempt"
+        );
+
+        // The same path with different bytes is a different question.
+        fs::write(&path, b"cached and longer").expect("replace the contents");
+        let replaced = verification_key("cache-test", &path).expect("after the write");
+        assert!(
+            cached_model_verification(&replaced).is_none(),
+            "a changed file must not reuse the previous verdict"
+        );
+
+        invalidate_verification_for(&path);
+        assert!(
+            cached_model_verification(&key).is_none(),
+            "invalidation must forget the file it was given"
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_probe_that_is_not_abandoned_drops_its_model_immediately() {
+        let dropped = std::sync::Arc::new(AtomicBool::new(false));
+        let path = temp_path("probe-normal");
+        let (lease, abandon) = begin_probe(path.clone());
+        assert!(
+            probe_registered(&path),
+            "the lease registers before loading"
+        );
+
+        // The waiter is still there, so the loaded model is the waiter's to
+        // drop; nothing may be left for the reaper.
+        lease.finish(DropFlag(dropped.clone()));
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "an answered probe must release its model at once"
+        );
+        assert!(
+            !probe_registered(&path),
+            "a finished probe must leave no slot behind"
+        );
+        drop(abandon);
+    }
+
+    #[test]
+    fn an_abandoned_probe_leaves_its_model_for_the_reaper_to_release() {
+        let dropped = std::sync::Arc::new(AtomicBool::new(false));
+        let path = temp_path("probe-abandoned");
+        let (lease, abandon) = begin_probe(path.clone());
+
+        // This is the timeout: the waiter has stopped waiting, but the load is
+        // still going to return into a thread nobody is reading.
+        abandon.abandon();
+        lease.finish(DropFlag(dropped.clone()));
+        assert!(
+            !dropped.load(Ordering::SeqCst),
+            "an abandoned probe's model must outlive the waiter that gave up"
+        );
+        assert!(probe_registered(&path), "the reaper needs to find it");
+
+        assert!(reap_probe_residency() >= 1, "the resident model is reaped");
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "reaping must actually drop the model"
+        );
+        assert!(
+            !probe_registered(&path),
+            "a reaped probe must not stay registered"
+        );
+        drop(abandon);
     }
 }

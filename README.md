@@ -2,49 +2,54 @@
 
 **Clipboard, Draw and Dictate.**
 
-Bard is a minimal native Windows workspace that merges three things into one
-keyboard-first panel: an advanced clipboard manager, a sketchpad and local voice dictation
-— inspired by shadcn's Copper and built as something Apple would ship for
-Windows.
+Bard is a native Windows and Linux app that merges three things into one
+keyboard-first panel: an advanced clipboard manager, a sketchpad and local
+voice dictation — inspired by shadcn's Copper and built as something Apple
+would ship for Windows.
 
-- **Capture** — double-tap `Left Shift` to grab a selection (text or images),
-  and everything you copy anywhere lands in a searchable timeline. Sections,
-  favorites, multi-select, inline edit, mixed notes (images attached to
-  text), Markdown export.
-- **Dictate** — tap the same `Ctrl` twice to start dictation, or hold the second
-  press for push-to-talk. A short tap locks recording so you can speak hands-free;
-  another `Ctrl` `Ctrl` stops it. Bard uses a local `transcribe-cpp` GGUF model:
-  choose Bard Fast or Bard General in **Settings → Models**.
-  Audio capture and local transcription stay on this device. Optional text-only
-  Refine runs only after local transcription when switched on in
-  **Settings → Refine**; it sends only the finished transcript to OpenRouter
-  and otherwise uses the local result. The text pastes into the app you're using, or
-  is retained in the local timeline according to the Dictation lifespan setting. Esc cancels; the model unloads
-  after five idle minutes. A single take can run for up to 20 minutes. In
-  **Settings → Dictation**, the recording pill can sit at the top or bottom of
-  the screen and at the left, middle, or right.
+Everything Bard does ends on your clipboard. Bard never types into another
+application on your behalf: you pick it, dictate it or sketch it, and you
+paste it yourself. That is the promise, and it is why focus, timing and
+per-application permissions never decide whether your words arrive.
 
-## Keyboard shortcuts
+- **Clipboard** — every copy and cut, from any application, on Windows, X11 and
+  Wayland, kept in one searchable timeline. Text, links, colours, images, files
+  and drawings. Pin the three you reuse most and put any of them back on the
+  clipboard with one chord, from any application, without opening a window.
+- **Dictate** — hold one key to talk, or tap it to start and tap again to stop.
+  Transcription runs on your own machine through a local `transcribe-cpp` GGUF
+  model: choose **Bard Fast** or **Bard General** in **Settings → Models**.
+  Audio capture and local transcription never leave the device. Optional
+  text-only **Refine** runs after local transcription, only when switched on,
+  and only ever sends the finished transcript text to OpenRouter on your own
+  key; any failure keeps the local transcript. Every transcript is also kept
+  in Bard's history, so a later copy cannot lose it. The model unloads after
+  five idle minutes and a single take can run for up to 20 minutes.
+- **Draw** — pen, arrows, shapes and text on a page of its own. Copy the page
+  as an image in one keystroke, or save it as an SVG.
 
-| Action | Shortcut |
+## Global shortcuts
+
+One table of shortcuts, the same on every platform, and every one of them can
+be changed in **Settings → Shortcuts** (except on Wayland, where the desktop
+owns the bindings and asks once).
+
+| Action | Default |
 | --- | --- |
-| Capture selection | `Left Shift` `Left Shift` |
-| Paste item 1 / 2 / 3 | `Right Shift` `Right Shift` then `1` / `2` / `3` |
-| Toggle panel | `Right Shift` `Right Shift` |
-| Settings | `Right Alt` `Right Alt` |
-| Draw | `Left Alt` `Left Alt` |
-| Dictate | same-key `Ctrl` `Ctrl` (hold the second press for push-to-talk) |
-| Paste into the app you came from | `Enter` |
-| Paste item 1–9 | `Ctrl+1` … `Ctrl+9` |
-| Copy item | `Ctrl+C` |
-| Mark done | `Space` |
-| Delete | `Del` |
-| Switch section | `Ctrl+K` |
-| Multi-select | `Ctrl`+click, `Shift`+click / `Shift`+arrows |
-| Edit item | double-click |
-| Hide panel | `Esc` (steps: clear search → clear selection → hide) |
+| Show or hide Bard | `Alt+Shift+V` |
+| Dictate — hold to talk, tap to toggle | `Alt+Shift+Space` |
+| Copy item 1 / 2 / 3 | `Alt+Shift+1` / `2` / `3` |
+| Cycle through items 1–3 | `Alt+Shift+C` |
+| Preview what is on the clipboard | `Alt+Shift+P` |
+| Pause or resume keeping what you copy | `Alt+Shift+X` |
+| Open Draw | `Alt+Shift+D` |
+| Open Settings | `Alt+Shift+,` |
+| Show the shortcut guide | `Alt+Shift+/` |
 
-Shortcuts are fixed. The same-key gestures and the Right Shift item-paste sequence remain available from every app; the Settings → Shortcuts page is a reference, not a key editor.
+Inside the panel: `↑` `↓` move, `Enter` copies and closes, `Shift+Enter`
+copies and stays, `Ctrl+P` pins, `Ctrl+S` keeps forever, `Del` deletes,
+`Ctrl+F` searches, `Esc` steps back through search, selection, then the
+window, and the context-menu key opens the row's menu.
 
 ## Licence
 
@@ -52,25 +57,27 @@ Shortcuts are fixed. The same-key gestures and the Right Shift item-paste sequen
 
 Bard includes a 14-day local trial that needs no account and no key. A licence
 costs **US$20 once** and runs for **365 days from the day you first activate
-it**, on up to **three** activated Windows computers. When those 365 days are
-over the licence ends: nothing is charged again, there is no renewal step, and
-there is no account to sign into. Buy again to carry on.
+it**, on up to **three** activated computers. When those 365 days are over the
+licence ends: nothing is charged again, there is no renewal step, and there is
+no account to sign into. Buy again to carry on.
 
-The raw key is stored in Windows Credential Manager, and Bard keeps a signed
-offline lease so a network outage does not discard a valid entitlement. When
-the paid term ends, existing captures stay readable and exportable while new
-capture, dictation, drawing, and editing are paused.
+The raw key is stored in the operating system's credential store (Windows
+Credential Manager, or the D-Bus Secret Service on Linux), and Bard keeps a
+signed offline lease so a network outage does not discard a valid entitlement.
+When the paid term ends, existing captures stay readable, copyable and
+exportable while new capture, dictation and drawing are paused.
 
 ## Building
 
-Prerequisites: Rust (stable MSVC), Node/Bun, CMake, MSVC Build Tools (C++
-workload), and WebView2 (present on current Windows 10/11 installations; the
-installer can bootstrap it when a clean machine needs it).
+Prerequisites: Rust (the pinned toolchain in `rust-toolchain.toml`), Bun, and
+on Linux the GTK 3 / WebKitGTK 4.1 development packages; on Windows, MSVC
+Build Tools, CMake and WebView2 (present on current Windows 10/11
+installations; the installer can bootstrap it when a clean machine needs it).
 
 ```sh
-bun install
+bun install --frozen-lockfile
 bun run tauri dev      # develop
-bun run build:msix     # Store MSIX validation package
+bun run build:msix     # Store MSIX validation package (Windows)
 ```
 
 A local release — the NSIS installer plus its updater signature — is built by
@@ -79,6 +86,9 @@ A local release — the NSIS installer plus its updater signature — is built b
 ```powershell
 .\scripts\build-release.ps1 -Unsigned   # ships unsigned, by decision
 ```
+
+Linux packages are built in the pinned `ubuntu:22.04` container, because a
+build on a newer distribution demands a glibc its users do not have.
 
 Bard ships in two ways, and only one of them is signed.
 
@@ -98,7 +108,6 @@ Bard ships in two ways, and only one of them is signed.
   different identity from the Store copy, install beside it, and never receive
   an update. The package takes its identity from Partner Center.
 
-
 The two model roles are pinned to hash-verified
 `https://github.com/miisodev/bard-models` releases: `parakeet-tdt-0.6b-v3-Q6_K.gguf`
 for Fast, from `models-v3`, and `Qwen3-ASR-1.7B-Q6_K.gguf` for General, from
@@ -109,18 +118,26 @@ complete file, and load through `transcribe-cpp` before activation.
 
 ## Architecture
 
-Tauri 2 (Rust + React/TS/Vite), SQLite as the single source of truth:
+Tauri 2 (Rust + React/TypeScript/Vite), SQLite as the single source of truth.
+The Rust core owns every privileged path; the webview only draws.
 
-- `src-tauri/src/capture.rs` — one rdev raw-input coordinator for the fixed
-  same-key Shift, Alt, and Ctrl gestures, the Right Shift item-paste slot, and
-  the enigo copy chord / zero-width-sentinel clipboard dance
-- `src-tauri/src/monitor.rs` — clipboard sequence poller, privacy-format aware,
-  dedup by content
+- `src-tauri/src/monitor.rs` — clipboard capture. A hidden `AddClipboardFormatListener`
+  window on Windows; XFixes selection watching on X11 and XWayland, which is
+  how a Wayland copy is heard on GNOME. Privacy-marked copies (password
+  managers) are never kept, and Bard's own writes never re-enter its history.
+- `src-tauri/src/shortcuts.rs` — the one shortcut table: `RegisterHotKey` on
+  Windows, `XGrabKey` on X11, and the GlobalShortcuts portal on Wayland. A
+  chord another application already owns fails visibly instead of silently.
 - `src-tauri/src/dictation/` — cpal recording (device-selectable), rubato
-  resampling to 16 kHz, earshot VAD (pure Rust), the sole `transcribe-cpp`
-  GGML inference engine, and an overlay window with cancel + live levels
-- `src/` — the panel: sectioned timeline, search, favorites, multi-select,
-  context menu, drag-drop, inline edit, settings, onboarding
+  resampling to 16 kHz, earshot VAD (pure Rust), and the sole `transcribe-cpp`
+  GGML inference engine.
+- `src-tauri/src/db.rs` — the schema, the migrations and every query. A change
+  to a Rust struct breaks the webview with no compile error, so
+  `src/types.ts` mirrors it by hand and both change together.
+- `src/` — the panel (`components/Clipboard.tsx`), the settings window, the
+  status pill, and the Draw window. No router, no state library, no CSS
+  framework: the design tokens in `src/styles/tokens.css` are the whole visual
+  language, and `scripts/css-audit.mjs` checks them.
 
 ## Verification
 
@@ -130,19 +147,14 @@ bun audit
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
-cargo check --locked --manifest-path src-tauri/Cargo.toml
 cargo audit --file src-tauri/Cargo.lock   # cargo install cargo-audit
 ```
 
 `cargo audit` is the Rust half of the dependency gate and reads
 `src-tauri/Cargo.lock` explicitly — there is no `Cargo.lock` at the repository
-root, so a bare `cargo audit` looks at the wrong place. As of 2026-09-26 it
-reports 0 vulnerabilities and 8 warnings over 682 locked packages; three of those
-crates (`glib`, `memmap2`, `proc-macro-error`) are in the lockfile but are never
-compiled for Windows, which
-`cargo tree --target x86_64-pc-windows-msvc -i <crate>` will confirm. CI runs the
-same command through `rustsec/audit-check`, pinned to a commit; a critical
-advisory fails the job and an informational one is reported on a Check.
+root, so a bare `cargo audit` looks at the wrong place. CI runs the same
+command through `rustsec/audit-check`, pinned to a commit; a critical advisory
+fails the job and an informational one is reported on a Check.
 
 The model release gate is `cargo test smoke_test_exact_models_when_requested` against the staged files. Set
 `BARD_SMOKE_MODELS` (and `BARD_SMOKE_WAV` for transcription) only when running
@@ -150,5 +162,6 @@ against the staged model files; the smoke tests are no-ops otherwise. The
 OpenRouter pane is optional and should be exercised with a disposable key
 entered in the UI, never pasted into chat or committed to the repository.
 
-Idle cost is near zero: a 300 ms sequence poll, an event-driven input hook,
-and no model in memory until the first dictation.
+Idle cost is near zero: an event-driven clipboard watcher, a heartbeat that
+records that it is still alive, and no model in memory until the first
+dictation.

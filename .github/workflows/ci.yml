@@ -194,8 +194,8 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
       # The same prebuilt cargo-audit the Windows job uses.
-      - name: X11 foreground integration
-        run: xvfb-run -a cargo test --locked --manifest-path src-tauri/Cargo.toml fg::tests::x11_foreground_tracks_and_focuses_real_windows -- --ignored --exact
+      - name: X11 clipboard and shortcut integration
+        run: xvfb-run -a cargo test --locked --manifest-path src-tauri/Cargo.toml x11_integration -- --ignored
 
       - uses: taiki-e/install-action@v2
         with:

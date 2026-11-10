@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod backup;
-mod capture;
 mod catalog;
+mod clip;
 mod cloud;
 mod commands;
 mod crash;
@@ -10,12 +10,10 @@ mod credential;
 mod db;
 mod desktop;
 mod dictation;
-mod fg;
+mod feedback;
 mod geometry;
-mod gesture;
 mod guardian;
 mod hf;
-mod hook;
 mod license;
 #[cfg(target_os = "linux")]
 mod linux_portal;
@@ -25,8 +23,10 @@ mod monitor;
 mod native_runtime;
 mod packaging;
 mod panel;
-mod paste;
 mod paths;
+mod pill;
+mod shortcuts;
+mod sound;
 mod tray;
 mod ttl;
 mod updater;
@@ -155,12 +155,25 @@ fn open_database() -> (rusqlite::Connection, Option<String>) {
     )
 }
 
+/// Whether this argument reads as one of the app's own flags rather than a
+/// name to ingest.
+///
+/// `--` opens a flag everywhere. On Windows `/` does too, and every Windows
+/// path carries a drive letter or a backslash, so the `/` rule there never
+/// hid a real file. On POSIX it hid every one of them: `/home/me/note.txt`
+/// starts with `/` and is exactly what a file manager's "Open with Bard"
+/// hands over. So the `/` half only follows the flag rule on the platform it
+/// came from, and everywhere else an argument is a path when the filesystem
+/// actually has something at that name.
+fn is_flag(arg: &str) -> bool {
+    arg.starts_with("--") || (cfg!(target_os = "windows") && arg.starts_with('/'))
+}
+
+/// The arguments that name files to ingest at startup.
 fn usable_paths(args: &[String]) -> Vec<String> {
     args.iter()
         .skip(1)
-        .filter(|arg| {
-            !arg.starts_with("--") && !arg.starts_with('/') && std::path::Path::new(arg).is_file()
-        })
+        .filter(|arg| !is_flag(arg) && std::path::Path::new(arg).is_file())
         .cloned()
         .collect()
 }
@@ -251,11 +264,32 @@ fn main() {
         .manage(db::DbNotice(Mutex::new(storage_notice)))
         .setup(|app| {
             let handle = app.handle().clone();
-            let data_dir = paths::data_dir()
-                .ok_or("Bard could not resolve its local application-data directory.")?;
-            std::fs::create_dir_all(&data_dir)?;
-            let images_dir = data_dir.join("images");
-            std::fs::create_dir_all(&images_dir)?;
+            // The data directory is wanted, not required. `open_database`
+            // already decided how to run without one: an in-memory database and
+            // a notice that says plainly that this session's history is not
+            // being kept. Ending the process here instead would make that
+            // fallback unreachable and give the person a silent exit rather
+            // than the explanation.
+            let data_dir = paths::data_dir();
+            let images_dir = match &data_dir {
+                Some(dir) => {
+                    if let Err(error) = std::fs::create_dir_all(dir) {
+                        crate::crash::record_event("db:data-dir-unavailable");
+                        log::warn!("Bard could not use its data directory: {error}");
+                    }
+                    let images = dir.join("images");
+                    let _ = std::fs::create_dir_all(&images);
+                    images
+                }
+                None => {
+                    crate::crash::record_event("db:data-dir-unresolved");
+                    // Somewhere writable enough to hold this session's images,
+                    // so the app still runs and still shows what it can.
+                    std::env::temp_dir()
+                        .join("com.miisodev.bard")
+                        .join("images")
+                }
+            };
             // The shelf's image covers are loaded from the `asset` protocol, so
             // the images folder — and nothing else — goes into its scope. The
             // URL for a file is only ever handed out after `paste` has checked
@@ -320,14 +354,16 @@ fn main() {
                 }
             }
 
+            feedback::init(&handle);
             monitor::start(handle.clone());
-            if !desktop::is_wayland() {
-                capture::start(handle.clone());
-            }
             dictation::init(handle.clone());
+            shortcuts::start(&handle);
+            // On Wayland the desktop grants shortcuts through its portal. Ask
+            // once setup is done, and not again after the person declined.
             #[cfg(target_os = "linux")]
             if desktop::is_wayland()
-                && db::get_setting(&handle, "desktop_shortcuts_enabled").as_deref() == Some("1")
+                && db::get_setting(&handle, "onboarding_completed").as_deref() == Some("1")
+                && db::get_setting(&handle, linux_portal::DECLINED_SETTING).as_deref() != Some("1")
             {
                 let portal_app = handle.clone();
                 tauri::async_runtime::spawn(async move {
@@ -340,10 +376,6 @@ fn main() {
             }
 
             tray::create(app)?;
-            // The panel is a docked shelf now: it anchors itself to its edge —
-            // on the monitor its setting names, or under the pointer — on every
-            // show, so there is no saved rectangle to restore and nothing to
-            // place at startup. Its window stays hidden until the first show.
 
             // Opening the app should open the app. It lives in the tray, but
             // launching it and being shown nothing reads as a failure to
@@ -395,12 +427,11 @@ fn main() {
                 // which is exactly the case that matters, a click into another
                 // application.
                 //
-                // Moved and Resized are deliberately not handled for the
-                // panel: they are the docking code's own anchoring, not a place
-                // a person put the window, and remembering them would fill
-                // `geometry:main` with a rectangle nothing reads.
                 WindowEvent::Focused(focused) => {
                     panel::on_focus_change(window.app_handle(), *focused);
+                }
+                WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                    panel::on_moved(window.app_handle());
                 }
                 _ => {}
             }
@@ -412,7 +443,6 @@ fn main() {
             commands::add_image,
             commands::open_draw,
             commands::open_draw_with_image,
-            commands::send_drawing,
             commands::save_svg,
             commands::set_draw_prefs,
             commands::open_settings,
@@ -428,7 +458,6 @@ fn main() {
             commands::delete_all_data,
             commands::copy_text,
             commands::copy_item,
-            commands::paste_back,
             commands::copy_attachment,
             commands::item_image_data,
             commands::item_cover_url,
@@ -444,15 +473,9 @@ fn main() {
             commands::get_appearance,
             commands::set_background,
             commands::set_draw_background,
-            commands::set_capture_double_shift,
-            commands::capture_now,
-            commands::save_window_geometry,
-            commands::minimize_panel,
             commands::show_panel,
             commands::hide_panel,
             commands::toggle_panel,
-            commands::set_shelf_edge,
-            commands::shelf_hidden,
             commands::get_models,
             commands::get_model,
             commands::set_model,
@@ -462,11 +485,6 @@ fn main() {
             commands::dictate_start,
             commands::dictate_stop,
             commands::dictate_cancel,
-            commands::set_dictation_overlay_position,
-            commands::set_dictation_review,
-            commands::dictation_confirm,
-            commands::dictation_copy,
-            commands::dictation_dismiss,
             commands::create_section,
             commands::set_active_section,
             commands::rename_section,
@@ -490,10 +508,10 @@ fn main() {
             commands::set_retention_days,
             commands::get_retention_days,
             commands::prune_history_now,
-            commands::set_sound_on_capture,
-            commands::get_sound_on_capture,
             commands::get_microphones,
             commands::set_microphone,
+            commands::get_dictation_options,
+            commands::set_dictation_options,
             commands::hf_cached_models,
             commands::get_detected_models,
             commands::check_model,
@@ -520,6 +538,14 @@ fn main() {
             commands::clear_license,
             commands::check_for_update,
             commands::install_update,
+            commands::set_dock,
+            commands::get_feedback,
+            commands::set_feedback,
+            commands::set_capture_paused,
+            commands::notify_error,
+            shortcuts::get_shortcuts,
+            shortcuts::set_shortcut,
+            shortcuts::reset_shortcuts,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run bard");
