@@ -16,6 +16,8 @@
     "dialog:allow-open",
     "allow-get-state",
     "allow-get-setting-str",
+    "allow-get-dictation-options",
+    "allow-set-dictation-options",
     "allow-set-theme",
     "allow-set-autostart",
     "allow-configure-desktop",

@@ -16,7 +16,15 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { Shape } from "../draw/shapes";
 import catalog from "../../src-tauri/src/catalog/catalog.json";
 import { version as appVersion } from "../../package.json";
-import type { AppState, Item, ModelInfo, PackSummary, PillNote, ShortcutState } from "../types";
+import type {
+  AppState,
+  Item,
+  ModelInfo,
+  PackSummary,
+  PillNote,
+  ShortcutState,
+  TranscriptOptions,
+} from "../types";
 import "./preview.css";
 
 const params = new URLSearchParams(location.search);
@@ -396,6 +404,19 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
       return ["Default microphone", "Studio USB Mic"];
     case "get_setting_str":
       return settings[String(args.key)] ?? "";
+    case "get_dictation_options":
+      return {
+        trailingSpace: settings.dictation_trailing_space !== "0",
+        fillers: settings.dictation_fillers === "1",
+        silenceMs: Number(settings.dictation_silence_ms ?? 1600),
+      };
+    case "set_dictation_options": {
+      const next = (args.options ?? {}) as Partial<TranscriptOptions>;
+      settings.dictation_trailing_space = next.trailingSpace ? "1" : "0";
+      settings.dictation_fillers = next.fillers ? "1" : "0";
+      settings.dictation_silence_ms = String(next.silenceMs ?? 1600);
+      return null;
+    }
     case "get_retention_days":
       return args.origin === "dictation" ? 30 : 90;
     case "get_export_dir":

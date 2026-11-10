@@ -82,6 +82,8 @@ const COMMANDS: &[&str] = &[
     "prune_history_now",
     "get_microphones",
     "set_microphone",
+    "get_dictation_options",
+    "set_dictation_options",
     "hf_cached_models",
     "get_detected_models",
     "check_model",

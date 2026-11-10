@@ -510,6 +510,8 @@ fn main() {
             commands::prune_history_now,
             commands::get_microphones,
             commands::set_microphone,
+            commands::get_dictation_options,
+            commands::set_dictation_options,
             commands::hf_cached_models,
             commands::get_detected_models,
             commands::check_model,

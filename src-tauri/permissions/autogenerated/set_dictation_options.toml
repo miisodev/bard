@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-dictation-options"
+description = "Enables the set_dictation_options command without any pre-configured scope."
+commands.allow = ["set_dictation_options"]
+
+[[permission]]
+identifier = "deny-set-dictation-options"
+description = "Denies the set_dictation_options command without any pre-configured scope."
+commands.deny = ["set_dictation_options"]

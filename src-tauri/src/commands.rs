@@ -1006,6 +1006,62 @@ pub fn get_microphones() -> Vec<String> {
     crate::dictation::list_input_devices()
 }
 
+/// The choices that shape the finished transcript.
+///
+/// They are one command rather than three settings the renderer can poke at
+/// freely: these are the only three knobs the transcription pipeline reads,
+/// and keeping them together means the webview cannot write a setting the
+/// pipeline never looks at.
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptOptions {
+    /// End the transcript with a space, so it never fuses with what is typed
+    /// next.
+    pub trailing_space: bool,
+    /// Take the filler words out.
+    pub fillers: bool,
+    /// How long a silence has to last before the take ends on its own. Zero
+    /// means never: the take ends when the person stops it.
+    pub silence_ms: u64,
+}
+
+/// The silence window the person may choose, in milliseconds. The first entry
+/// is the default; the last means the take never ends on silence.
+pub const SILENCE_CHOICES_MS: [u64; 4] = [1600, 1200, 2400, 0];
+
+#[tauri::command]
+pub fn get_dictation_options(app: AppHandle) -> TranscriptOptions {
+    let options = crate::dictation::transcript_options(&app);
+    TranscriptOptions {
+        trailing_space: options.trailing_space,
+        fillers: options.fillers,
+        silence_ms: crate::dictation::silence_auto_stop_ms(&app),
+    }
+}
+
+#[tauri::command]
+pub fn set_dictation_options(app: AppHandle, options: TranscriptOptions) -> Result<(), String> {
+    if !SILENCE_CHOICES_MS.contains(&options.silence_ms) {
+        return Err("That is not a silence length Bard can use.".into());
+    }
+    crate::db::set_setting_checked(
+        &app,
+        "dictation_trailing_space",
+        if options.trailing_space { "1" } else { "0" },
+    )?;
+    crate::db::set_setting_checked(
+        &app,
+        "dictation_fillers",
+        if options.fillers { "1" } else { "0" },
+    )?;
+    crate::db::set_setting_checked(
+        &app,
+        "dictation_silence_ms",
+        &options.silence_ms.to_string(),
+    )?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_microphone(app: AppHandle, name: String) {
     db::set_setting(&app, "selected_microphone", &name);

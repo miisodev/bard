@@ -233,6 +233,15 @@ export interface ClipboardPreview {
   length?: number | null;
 }
 
+export interface TranscriptOptions {
+  /** End the transcript with a space, so it never fuses with what is typed next. */
+  trailingSpace: boolean;
+  /** Take the filler words out of the transcript. */
+  fillers: boolean;
+  /** How long a silence has to last before the take ends on its own. */
+  silenceMs: number;
+}
+
 export interface AppState {
   sections: Section[];
   items: Item[];

@@ -350,7 +350,8 @@ pub fn stop(app: &AppHandle) {
         start_take_watchdog(&app, operation, take_deadline(samples.len()));
         feedback::notify(&app, Note::dictation("work", "Transcribing", true));
         let _ = app.emit("dictation-state", "transcribing");
-        let outcome = model::transcribe(&app, &samples).map(clean_text);
+        let options = transcript_options(&app);
+        let outcome = model::transcribe(&app, &samples).map(|text| clean_text(text, options));
         if operation_cancelled(operation) {
             finish_cancelled(&app, operation);
             return;
@@ -450,17 +451,122 @@ fn busy(state: DictState) -> bool {
 /// half-built row, and the row can add it back in one place. It was not harmless
 /// either: it ate the word "um" when it was meant, ate the German "er", and
 /// stripped one filler out of eleven, so it never did the job it claimed.
-fn clean_text(raw: String) -> String {
+fn clean_text(raw: String, options: TranscriptOptions) -> String {
     let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let without_fillers = if options.fillers {
+        remove_fillers(trimmed)
+    } else {
+        trimmed.to_string()
+    };
+    let trimmed = without_fillers.trim();
     if trimmed.is_empty() {
         return String::new();
     }
     let mut text = String::with_capacity(trimmed.len() + 1);
     text.push_str(trimmed);
     // A trailing space, so dictated text never fuses with the word it was
-    // dictated after. Added, never taken away.
-    text.push(' ');
+    // dictated after. Added, never taken away - unless the person asked for
+    // the transcript to end exactly where they stopped speaking.
+    if options.trailing_space {
+        text.push(' ');
+    }
     text
+}
+
+/// What the person chose for the finished transcript.
+#[derive(Clone, Copy)]
+pub struct TranscriptOptions {
+    /// End the transcript with a space, so it never fuses with what is typed
+    /// next. On by default.
+    pub trailing_space: bool,
+    /// Take the filler words out. Off by default: a filler is sometimes the
+    /// word someone meant.
+    pub fillers: bool,
+}
+
+/// The setting names, read from the same store as every other choice.
+const TRAILING_SPACE_SETTING: &str = "dictation_trailing_space";
+const FILLERS_SETTING: &str = "dictation_fillers";
+/// How long a silence has to last before the take ends on its own. Zero means
+/// never: the take ends when the person stops it.
+pub const SILENCE_SETTING: &str = "dictation_silence_ms";
+
+/// How long the silence has to be, in milliseconds, as the person chose it.
+pub fn silence_auto_stop_ms(app: &AppHandle) -> u64 {
+    crate::db::get_setting(app, SILENCE_SETTING)
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(audio::SILENCE_AUTO_STOP_MS)
+}
+
+pub fn transcript_options(app: &AppHandle) -> TranscriptOptions {
+    TranscriptOptions {
+        // The trailing space is the default, so only an explicit "0" turns it off.
+        trailing_space: crate::db::get_setting(app, TRAILING_SPACE_SETTING).as_deref() != Some("0"),
+        fillers: crate::db::get_setting(app, FILLERS_SETTING).as_deref() == Some("1"),
+    }
+}
+
+/// The filler words, as whole words.
+///
+/// The list is deliberately short and deliberately excludes "er" and "ah":
+/// both are ordinary words in German, Danish, Dutch and several other
+/// languages, and a transcript in one of those languages must not lose them.
+/// The old cleaner ate the German "er", and a cleaner that eats a word
+/// somebody meant is worse than one that leaves a filler in.
+const FILLERS: &[&str] = &[
+    "um", "uh", "umm", "ummm", "uhm", "erm", "hmm", "hm", "mm", "mhm",
+];
+
+/// Take the filler words out, and change nothing else.
+///
+/// Every character that is not part of a filler word is kept exactly where it
+/// was: the whitespace around a removed word stays, so the rest of the
+/// transcript is byte for byte what was said.
+fn remove_fillers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        // The whitespace before the next word, and the word itself.
+        let gap_len = rest.len() - rest.trim_start().len();
+        let (gap, after_gap) = rest.split_at(gap_len);
+        let word_len = after_gap
+            .find(char::is_whitespace)
+            .unwrap_or(after_gap.len());
+        let (word, after) = after_gap.split_at(word_len);
+        // The word without the punctuation around it: "Um," and "um," are
+        // both the filler.
+        let bare = word.trim_matches(|c: char| !c.is_alphanumeric());
+        if !bare.is_empty()
+            && FILLERS
+                .iter()
+                .any(|filler| bare.eq_ignore_ascii_case(filler))
+        {
+            // The punctuation that belongs to the sentence stays - a comma
+            // after a pause is the writer's, not the filler's - and the
+            // filler's own marks go with it. The whitespace that followed the
+            // filler goes too, so the words around it keep the spacing they
+            // had rather than gaining a gap.
+            let sentence: String = word
+                .chars()
+                .rev()
+                .take_while(|c| !c.is_alphanumeric())
+                .filter(|c| ",.;:!?".contains(*c))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            out.push_str(&sentence);
+            rest = after;
+            continue;
+        }
+        out.push_str(gap);
+        out.push_str(word);
+        rest = after;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -523,7 +629,13 @@ mod tests {
     fn clean_text_preserves_every_character_it_was_given() {
         for (input, expected) in TEXT_CASES {
             assert_eq!(
-                &clean_text((*input).to_string()),
+                &clean_text(
+                    (*input).to_string(),
+                    TranscriptOptions {
+                        trailing_space: true,
+                        fillers: false
+                    }
+                ),
                 expected,
                 "input {input:?}"
             );
@@ -537,7 +649,13 @@ mod tests {
         // and one trailing space. Character for character, it is the same text.
         for (input, _) in TEXT_CASES {
             let expected = input.trim();
-            let produced = clean_text((*input).to_string());
+            let produced = clean_text(
+                (*input).to_string(),
+                TranscriptOptions {
+                    trailing_space: true,
+                    fillers: false,
+                },
+            );
             let produced = produced.strip_suffix(' ').unwrap_or(&produced);
             assert_eq!(produced, expected, "input {input:?}");
             assert_eq!(
@@ -553,8 +671,65 @@ mod tests {
         // `stop` treats an empty result as "Nothing heard", so this is load
         // bearing: whitespace must not become a pasteable space.
         for input in ["", " ", "\t", "\n", " \t\r\n ", "\u{a0}"] {
-            assert_eq!(clean_text(input.to_string()), "", "input {input:?}");
+            assert_eq!(
+                clean_text(
+                    input.to_string(),
+                    TranscriptOptions {
+                        trailing_space: true,
+                        fillers: false,
+                    },
+                ),
+                "",
+                "input {input:?}"
+            );
         }
+    }
+
+    #[test]
+    fn the_trailing_space_can_be_turned_off() {
+        let options = TranscriptOptions {
+            trailing_space: false,
+            fillers: false,
+        };
+        assert_eq!(clean_text("hello ".into(), options), "hello");
+        assert_eq!(
+            clean_text("hello".into(), options),
+            "hello",
+            "the space is added, never taken away"
+        );
+    }
+
+    #[test]
+    fn fillers_are_removed_only_when_asked_and_only_as_whole_words() {
+        let on = TranscriptOptions {
+            trailing_space: true,
+            fillers: true,
+        };
+        let off = TranscriptOptions {
+            trailing_space: true,
+            fillers: false,
+        };
+        assert_eq!(clean_text("well um, hello".into(), on), "well, hello ");
+        assert_eq!(clean_text("well um, hello".into(), off), "well um, hello ");
+        // A word that merely contains a filler is not one.
+        assert_eq!(clean_text("summit umbrella".into(), on), "summit umbrella ");
+        // "er" and "ah" are ordinary words in several languages, so they are
+        // not on the list.
+        assert_eq!(clean_text("er ah".into(), on), "er ah ");
+    }
+
+    #[test]
+    fn removing_a_filler_leaves_the_rest_of_the_text_exactly_where_it_was() {
+        let on = TranscriptOptions {
+            trailing_space: true,
+            fillers: true,
+        };
+        assert_eq!(clean_text("a um b".into(), on), "a b ");
+        assert_eq!(clean_text("a  um  b".into(), on), "a  b ");
+        // The comma belongs to the sentence, not to the filler.
+        assert_eq!(clean_text("well um, hello".into(), on), "well, hello ");
+        assert_eq!(clean_text("um".into(), on), "");
+        assert_eq!(clean_text("um ".into(), on), "");
     }
 
     #[test]

@@ -18,7 +18,12 @@ pub const TARGET_RATE: u32 = 16000;
 /// 16 kHz, and the VAD's whole timing policy is denominated in these 16 ms
 /// frames, so this is derived from the detector rather than chosen here.
 const CHUNK_OUT: usize = super::vad::FRAME_SAMPLES;
-const SILENCE_AUTO_STOP_MS: u64 = 1600;
+/// How long a silence has to last before the take ends on its own.
+///
+/// The person can change this; when they have not, this is what a take uses.
+/// A setting of zero means "never end on silence", and the take then ends when
+/// the person stops it.
+pub const SILENCE_AUTO_STOP_MS: u64 = 1600;
 /// How often the monitor examines the take. This drives the auto-stop, the
 /// stall guard and the stream-error check, none of which may be throttled with
 /// the display channel.
@@ -60,15 +65,19 @@ struct MonitorState {
     level_bits: AtomicU32,
     probability_bits: AtomicU32,
     silence_ms: AtomicU64,
+    /// How long the silence has to be before this take ends on its own. Read
+    /// once, when the take starts, so the monitor never touches the database.
+    silence_auto_stop_ms: u64,
 }
 
 impl MonitorState {
-    fn new() -> Self {
+    fn new(silence_auto_stop_ms: u64) -> Self {
         Self {
             active: AtomicBool::new(true),
             level_bits: AtomicU32::new(0f32.to_bits()),
             probability_bits: AtomicU32::new(0f32.to_bits()),
             silence_ms: AtomicU64::new(0),
+            silence_auto_stop_ms,
         }
     }
 
@@ -496,7 +505,8 @@ fn start_monitor(shared: Arc<Shared>, app: AppHandle) -> JoinHandle<()> {
                 crate::dictation::stop(&app);
                 break;
             }
-            if monitor.silence_ms.load(Ordering::Relaxed) > SILENCE_AUTO_STOP_MS
+            if monitor.silence_auto_stop_ms > 0
+                && monitor.silence_ms.load(Ordering::Relaxed) > monitor.silence_auto_stop_ms
                 && crate::dictation::is_recording()
             {
                 // This is a normal worker thread, never the CPAL callback. The
@@ -507,6 +517,13 @@ fn start_monitor(shared: Arc<Shared>, app: AppHandle) -> JoinHandle<()> {
             thread::sleep(MONITOR_TICK);
         }
     })
+}
+
+/// How long the silence has to be before this take ends on its own.
+///
+/// Read once per take, so the monitor thread never touches the database.
+fn silence_auto_stop_ms(app: &AppHandle) -> u64 {
+    super::silence_auto_stop_ms(app)
 }
 
 pub fn start(app: AppHandle) -> Result<(), String> {
@@ -526,7 +543,7 @@ pub fn start(app: AppHandle) -> Result<(), String> {
     let format = config.sample_format();
 
     STREAM_ERROR.store(false, Ordering::Release);
-    let monitor = Arc::new(MonitorState::new());
+    let monitor = Arc::new(MonitorState::new(silence_auto_stop_ms(&app)));
     let shared = Arc::new(Shared {
         // Reserved once, here, rather than grown inside the callback: reaching
         // the cap by doubling copies tens of megabytes on the audio thread, and
@@ -805,7 +822,7 @@ mod tests {
             samples: Mutex::new(Vec::new()),
             vad: Mutex::new(crate::dictation::vad::VadState::new()),
             frames: AtomicU64::new(0),
-            monitor: Arc::new(MonitorState::new()),
+            monitor: Arc::new(MonitorState::new(SILENCE_AUTO_STOP_MS)),
             failed: AtomicBool::new(false),
             limit_reached: AtomicBool::new(false),
             callbacks_in_flight: AtomicU32::new(0),

@@ -25,6 +25,7 @@ import type {
   Dock,
   FeedbackChannels,
   ShortcutState,
+  TranscriptOptions,
 } from "./types";
 
 export const api = {
@@ -200,6 +201,11 @@ export const api = {
   setCapturePaused: (paused: boolean) => invoke<boolean>("set_capture_paused", { paused }),
   /** Show an error in the status pill (and sound it, if sounds are on). */
   notifyError: (text: string) => invoke<void>("notify_error", { text }),
+  /** The choices that shape the finished transcript. */
+  getDictationOptions: () => invoke<TranscriptOptions>("get_dictation_options"),
+  setDictationOptions: (options: TranscriptOptions) =>
+    invoke<void>("set_dictation_options", { options }),
+
   getShortcuts: () => invoke<ShortcutState>("get_shortcuts"),
   setShortcut: (id: string, chord: string) =>
     invoke<ShortcutState>("set_shortcut", { id, chord }),
