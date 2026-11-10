@@ -443,6 +443,19 @@ pub fn start(app: AppHandle) {
                     let Ok(mut cb) = crate::clip::handle() else {
                         return;
                     };
+                    // On Windows the exclusion lives in the clipboard's own
+                    // formats, and a format can only be read while the
+                    // clipboard is open. So the question is asked here, with
+                    // the clipboard open, rather than before the read: asked
+                    // with the clipboard closed, every format reads as absent
+                    // and nothing is ever excluded.
+                    #[cfg(windows)]
+                    {
+                        let _open = cb.get();
+                        if clip_excluded() {
+                            return;
+                        }
+                    }
                     let files = if watched {
                         cb.get().file_list().ok().filter(|f| !f.is_empty())
                     } else {
@@ -1234,16 +1247,15 @@ fn clip_state() -> (u32, bool) {
     x11watch::state()
 }
 
-/// The sequence and the exclusion flag together on Windows.
+/// The sequence on Windows.
 ///
-/// Windows has no stored exclusion flag: the answer is read from the
-/// clipboard's own formats at the moment it is asked, so the two are always
-/// about the same clipboard. The formats are the ones a password manager or
-/// another privacy-aware application sets to say "this is not for a history",
-/// and they are the reason the check exists at all.
+/// The exclusion is not answered here: on Windows it lives in the clipboard's
+/// own formats, which can only be read while the clipboard is open, so it is
+/// read at the point of the read. Asking it here would mean asking four times
+/// a second, and every ask touches the clipboard.
 #[cfg(windows)]
 fn clip_state() -> (u32, bool) {
-    (clip_seq(), clip_excluded())
+    (clip_seq(), false)
 }
 
 /// The sequence and the exclusion flag together on the platforms that have

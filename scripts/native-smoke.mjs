@@ -189,9 +189,19 @@ try {
   try {
     // The v3 promise: whatever another program puts on the clipboard is kept.
     const marker = `Bard native smoke — copied elsewhere ${Date.now()}`;
-    const copied = windows
-      ? spawnSync("powershell.exe", ["-NoProfile", "-Command", `Set-Clipboard -Value '${marker}'`], { encoding: "utf8", timeout: 15_000 })
-      : spawnSync("bash", ["-c", `printf '%s' "$1" | xclip -selection clipboard >/dev/null 2>&1 &`, "bash", marker], { encoding: "utf8", timeout: 15_000 });
+    // Another program writing to the clipboard can lose a race with the
+    // clipboard being open somewhere else: Windows allows one holder at a
+    // time, and PowerShell's Set-Clipboard does not retry. The copy itself is
+    // what is being tested, so the write is retried rather than failed on the
+    // first collision.
+    let copied = { status: 1, stderr: "not attempted" };
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      copied = windows
+        ? spawnSync("powershell.exe", ["-NoProfile", "-Command", `Set-Clipboard -Value '${marker}'`], { encoding: "utf8", timeout: 15_000 })
+        : spawnSync("bash", ["-c", `printf '%s' "$1" | xclip -selection clipboard >/dev/null 2>&1 &`, "bash", marker], { encoding: "utf8", timeout: 15_000 });
+      if (copied.status === 0) break;
+      await new Promise((done) => setTimeout(done, 500));
+    }
     assert.equal(copied.status, 0, `external clipboard write failed: ${copied.stderr}`);
     const deadline = Date.now() + 10_000;
     let kept = false;
