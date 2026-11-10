@@ -112,7 +112,7 @@ jobs:
           icacls "$env:GITHUB_WORKSPACE" /grant "${env:USERNAME}:(OI)(CI)M"
           & 'C:/tools/gsudo/Current/gsudo.exe' --integrity Medium node scripts/native-smoke.mjs $app
           if ($LASTEXITCODE -ne 0) { throw "Native smoke exit $LASTEXITCODE" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: native-review-${{ runner.os }}

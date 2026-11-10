@@ -19,7 +19,7 @@ jobs:
           toolchain: 1.98.1
       - name: Build the isolated benchmark
         run: cargo build --release --locked --manifest-path tools/asr-bench/Cargo.toml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: asr-benchmark-tool
           path: |
@@ -46,7 +46,7 @@ jobs:
           mkdir benchmark-review
           lscpu > benchmark-review/cpu.txt
           tools/asr-bench/target/release/bard-asr-bench fast.gguf tools/asr-bench/speech.f32le 4 > benchmark-review/result.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: asr-benchmark-results

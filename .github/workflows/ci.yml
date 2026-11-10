@@ -49,7 +49,7 @@ jobs:
       # than downloading a second browser and running another apt transaction.
       - run: google-chrome --version
       - run: bun run test:ui
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: browser-review
@@ -128,7 +128,7 @@ jobs:
       - name: Windows installer candidate
         run: bun run tauri build --bundles nsis --no-sign
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-candidate
           path: |
@@ -218,7 +218,7 @@ jobs:
           rpm -qpR src-tauri/target/release/bundle/rpm/*.rpm
           readelf --version-info src-tauri/target/release/bard | grep GLIBC_ | sort -u
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-candidate
           path: |
