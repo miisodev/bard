@@ -232,7 +232,9 @@ pub fn toggle_paused(app: &AppHandle) -> bool {
 fn forget_current_clipboard() {
     if let Ok(mut clipboard) = crate::clip::handle() {
         if let Ok(text) = clipboard.get_text() {
-            note_own_text(text.trim());
+            // Hashed untrimmed, exactly as capture_text hashes what the
+            // watcher reads back: what was copied is what is kept.
+            note_own_text(&text);
         }
     }
 }
@@ -270,16 +272,22 @@ fn content_hash(text: &str) -> u64 {
 /// `capture_text`. Without this the watcher had never seen that text, so every
 /// dictated line came back a moment later as a second `clipboard` row.
 pub fn note_own_text(text: &str) {
-    // Hashed trimmed, exactly as the watcher hashes what it reads back: a
-    // transcript is written with a trailing space and read back without one.
-    seen(&SEEN_TEXT).mark_own(content_hash(text.trim()));
+    // Hashed exactly as the watcher hashes what it reads back: `set_text`
+    // verifies the clipboard round-trip byte for byte, so the written text
+    // and the read-back text are the same and their hashes match. Trimming
+    // here would make Bard's own write describe a different event than the
+    // watcher reads back, and the same dictated line would be captured twice.
+    seen(&SEEN_TEXT).mark_own(content_hash(text));
 }
 
 pub fn capture_text(app: &AppHandle, text: &str) {
     if crate::license::require(app).is_err() {
         return;
     }
-    if !seen(&SEEN_TEXT).fresh(content_hash(text.trim())) {
+    // The duplicate check hashes what the watcher reads back, untrimmed:
+    // " foo " and "foo" are different copies, and the same copy is not
+    // captured twice.
+    if !seen(&SEEN_TEXT).fresh(content_hash(text)) {
         return;
     }
 
@@ -414,7 +422,10 @@ pub fn start(app: AppHandle) {
                 // With a change listener the sequence says whether anything
                 // happened. Without one (no X server on Linux) every tick reads
                 // the text and lets the content hash decide.
-                let seq = clip_seq();
+                // The flag and the sequence describe the same event: read them
+                // together so a new sequence is never paired with a stale
+                // exclusion flag.
+                let (seq, excluded) = clip_state();
                 if listener.is_some() || cfg!(windows) {
                     if seq == last_seq {
                         return;
@@ -424,7 +435,7 @@ pub fn start(app: AppHandle) {
                         return;
                     }
                 }
-                if is_paused() || clip_excluded() {
+                if is_paused() || excluded {
                     return;
                 }
                 let watched = listener.is_some() || cfg!(windows);
@@ -452,8 +463,9 @@ pub fn start(app: AppHandle) {
                 if let Some(files) = files {
                     capture_files(&app, files);
                 } else if let Some(text) = text {
-                    let t = text.trim().to_string();
-                    if t.is_empty() {
+                    // Whitespace-only copies are dropped explicitly: there is
+                    // nothing to keep, and an empty row is not how Bard says so.
+                    if text.trim().is_empty() {
                         return;
                     }
                     // A change that landed while the text was being read is
@@ -461,7 +473,9 @@ pub fn start(app: AppHandle) {
                     if cfg!(windows) && clip_seq() != seq {
                         return;
                     }
-                    capture_text(&app, &t);
+                    // Store what was copied: the hash covers the untrimmed
+                    // text so it matches what the watcher reads back.
+                    capture_text(&app, &text);
                 } else if let Some(img) = image {
                     let _ = capture_image(&app, img);
                 }
@@ -638,8 +652,14 @@ mod x11watch {
         CHANGES.lock().map(|c| c.seq).unwrap_or(0)
     }
 
-    pub fn excluded() -> bool {
-        CHANGES.lock().map(|c| c.excluded).unwrap_or(false)
+    /// The sequence and the exclusion flag for the same event, read together
+    /// so the monitor can never pair a new sequence with a stale flag. On a
+    /// poisoned lock the unknown case fails safe: excluded.
+    pub fn state() -> (u32, bool) {
+        CHANGES
+            .lock()
+            .map(|c| (c.seq, c.excluded))
+            .unwrap_or((0, true))
     }
 
     pub fn wait(timeout: Duration) {
@@ -732,6 +752,17 @@ mod x11watch {
         true
     }
 
+    /// The result of asking the new clipboard owner what it offers.
+    enum Inspection {
+        /// This event was inspected: `excluded` is its answer.
+        Decided { excluded: bool },
+        /// A newer selection event arrived while this one was being asked
+        /// about. The sequence was advanced for the newer event and it was
+        /// marked excluded: unknown until inspected, so fail safe. This
+        /// event's result must not be written over it.
+        Superseded,
+    }
+
     fn run(conn: impl Connection, window: Window, atoms: Atoms) {
         loop {
             let event = match conn.wait_for_event() {
@@ -742,10 +773,19 @@ mod x11watch {
                 }
             };
             if let Event::XfixesSelectionNotify(notify) = event {
-                let excluded = offers_secret(&conn, window, &atoms, notify.timestamp);
-                if let Ok(mut changes) = CHANGES.lock() {
-                    changes.seq = changes.seq.wrapping_add(1);
-                    changes.excluded = excluded;
+                match offers_secret(&conn, window, &atoms, notify.timestamp) {
+                    Inspection::Decided { excluded } => {
+                        if let Ok(mut changes) = CHANGES.lock() {
+                            changes.seq = changes.seq.wrapping_add(1);
+                            changes.excluded = excluded;
+                        }
+                    }
+                    Inspection::Superseded => {
+                        // `offers_secret` already advanced the sequence for
+                        // the newer event and marked it excluded: the flag and
+                        // the sequence describe the same event, and the
+                        // unknown case fails safe.
+                    }
                 }
                 CHANGED.notify_all();
             }
@@ -754,48 +794,67 @@ mod x11watch {
 
     /// Ask the new owner what it offers and look for the password hint. A slow
     /// or silent owner is given 250 ms and then treated as an ordinary copy.
-    fn offers_secret(conn: &impl Connection, window: Window, atoms: &Atoms, time: u32) -> bool {
+    ///
+    /// If a newer selection event arrives while this one is being asked about,
+    /// the newer event's exclusion is not yet known: the sequence is advanced
+    /// for it, it is marked excluded (fail safe), and [`Inspection::Superseded`]
+    /// is returned so this inspection's stale result is never written over
+    /// the newer event's sequence.
+    fn offers_secret(
+        conn: &impl Connection,
+        window: Window,
+        atoms: &Atoms,
+        time: u32,
+    ) -> Inspection {
         let asked = conn
             .convert_selection(window, atoms.clipboard, atoms.targets, atoms.property, time)
             .is_ok()
             && conn.flush().is_ok();
         if !asked {
-            return false;
+            return Inspection::Decided { excluded: false };
         }
         let deadline = Instant::now() + Duration::from_millis(250);
         loop {
             match conn.poll_for_event() {
                 Ok(Some(Event::SelectionNotify(reply))) if reply.selection == atoms.clipboard => {
                     if reply.property == x11rb::NONE {
-                        return false;
+                        return Inspection::Decided { excluded: false };
                     }
                     let Some(property) = conn
                         .get_property(true, window, atoms.property, AtomEnum::ATOM, 0, 4096)
                         .ok()
                         .and_then(|cookie| cookie.reply().ok())
                     else {
-                        return false;
+                        return Inspection::Decided { excluded: false };
                     };
-                    return property
-                        .value32()
-                        .map(|mut targets| targets.any(|t| t == atoms.secret_hint))
-                        .unwrap_or(false);
+                    return Inspection::Decided {
+                        excluded: property
+                            .value32()
+                            .map(|mut targets| targets.any(|t| t == atoms.secret_hint))
+                            .unwrap_or(false),
+                    };
                 }
                 Ok(Some(Event::XfixesSelectionNotify(_))) => {
                     // A newer copy arrived while this one was being asked
-                    // about. Count it; the reader takes whatever is current.
+                    // about. This event and the newer one are both counted,
+                    // and the newer one is marked excluded until it has been
+                    // inspected. The result of this inspection is discarded so
+                    // the flag and the sequence always describe the same event.
                     if let Ok(mut changes) = CHANGES.lock() {
-                        changes.seq = changes.seq.wrapping_add(1);
+                        changes.seq = changes.seq.wrapping_add(2);
+                        changes.excluded = true;
                     }
+                    CHANGED.notify_all();
+                    return Inspection::Superseded;
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     if Instant::now() >= deadline {
-                        return false;
+                        return Inspection::Decided { excluded: false };
                     }
                     std::thread::sleep(Duration::from_millis(4));
                 }
-                Err(_) => return false,
+                Err(_) => return Inspection::Decided { excluded: false },
             }
         }
     }
@@ -819,7 +878,7 @@ mod x11watch {
             }
             assert_ne!(super::seq(), before, "the ownership change was heard");
             assert!(
-                !super::excluded(),
+                !super::state().1,
                 "an ordinary copy is not treated as secret"
             );
         }
@@ -1167,14 +1226,19 @@ fn clip_excluded() -> bool {
     )
 }
 
+/// The sequence and the exclusion flag for the same event, read together so
+/// the caller can never pair a new sequence with a stale flag. On a poisoned
+/// lock the unknown case fails safe: excluded.
 #[cfg(target_os = "linux")]
-fn clip_excluded() -> bool {
-    x11watch::excluded()
+fn clip_state() -> (u32, bool) {
+    x11watch::state()
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
-fn clip_excluded() -> bool {
-    false
+/// The sequence and the exclusion flag together on non-Linux platforms, where
+/// there is no stored flag to pair the sequence with.
+#[cfg(not(target_os = "linux"))]
+fn clip_state() -> (u32, bool) {
+    (clip_seq(), false)
 }
 
 #[cfg(test)]

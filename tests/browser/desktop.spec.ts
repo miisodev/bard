@@ -56,7 +56,7 @@ test("clicking an item puts it on the clipboard and marks it current", async ({ 
   await page.goto("/?bare=1");
   const link = page.getByRole("option", { name: /handy\.computer/ });
   await link.click();
-  await expect(page.getByRole("option", { name: /handy\.computer.*on the clipboard/ })).toBeVisible();
+  await expect(page.getByRole("option", { name: /handy\.computer.*on the clipboard/i })).toBeVisible();
 });
 
 test("the first three items carry their slot numbers", async ({ page }) => {
@@ -88,14 +88,14 @@ test("pinning moves an item into the pinned group, by pointer or keyboard", asyn
   // A pointer shortcut kept out of the accessibility tree; Ctrl+P is the
   // keyboard route, checked below.
   await row.locator("[data-action='pin']").click({ force: true });
-  await expect(page.getByRole("option", { name: /hello@miiso\.dev.*pinned/ })).toBeVisible();
+  await expect(page.getByRole("option", { name: /hello@miiso\.dev.*pinned/i })).toBeVisible();
   const search = page.getByRole("searchbox", { name: "Search the clipboard history" });
   await search.fill("Cape Town venue for");
   await search.press("ArrowDown");
   await page.getByRole("listbox", { name: "Clipboard history" }).focus();
   await page.keyboard.press("Control+p");
   await search.fill("");
-  await expect(page.getByRole("option", { name: /Book the Cape Town venue.*pinned/ })).toBeVisible();
+  await expect(page.getByRole("option", { name: /Book the Cape Town venue.*pinned/i })).toBeVisible();
 });
 
 test("the shortcut guide lists the global chords and closes with Escape", async ({ page }) => {

@@ -9,7 +9,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-/** Runtime/product paths that must agree with a claimed hosted source commit. */
+/**
+ * Runtime/product paths that must agree with a claimed hosted source commit.
+ *
+ * Every page the app ships is here. `pill.html` was missing, so a build that
+ * only changed the status pill could have been described by the commit it did
+ * not come from; `overlay.html` was listed but no longer exists.
+ */
 export const PRODUCT_SOURCE_PATHS = [
   "src",
   "src-tauri",
@@ -18,7 +24,7 @@ export const PRODUCT_SOURCE_PATHS = [
   "index.html",
   "settings.html",
   "draw.html",
-  "overlay.html",
+  "pill.html",
 ];
 
 export function isFullCommitSha(value) {

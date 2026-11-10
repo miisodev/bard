@@ -831,12 +831,17 @@ fn model_probe_guard() -> MutexGuard<'static, ()> {
 /// The engine open a compatibility probe performs. Split out from `spawn_probe`
 /// so the lifetime of the serialization guard can be regression-tested without a
 /// real multi-hundred-megabyte model.
-fn engine_load(path: &Path) -> Result<(), String> {
+fn engine_load(path: &Path, probe: crate::dictation::model::ProbeLease) -> Result<(), String> {
     // `map(drop)`: the probe learns whether the file opens and then releases it
     // immediately. Nothing here keeps a model resident between probes.
-    transcribe_cpp::Model::load(path)
-        .map(drop)
-        .map_err(|error| error.to_string())
+    //
+    // `finish` is the release point. A waiter that is still there drops the
+    // model at once, exactly as `map(drop)` did; one that timed out leaves it
+    // in the registry for the idle watcher, which is the only party left that
+    // can free it.
+    let model = transcribe_cpp::Model::load(path).map_err(|error| error.to_string())?;
+    probe.finish(model);
+    Ok(())
 }
 
 /// Run one probe on its own thread, waiting at most `timeout` for it.
@@ -852,20 +857,23 @@ fn engine_load(path: &Path) -> Result<(), String> {
 /// no matter how many callers time out.
 ///
 /// An abandoned thread cannot be reclaimed from here: `start_unload_watcher`
-/// tracks only the live transcription `SESSION`, so the resident probe model is
-/// bounded by the load's own duration and nothing more. Needs orchestrator:
-/// `dictation/model.rs` — track probe residency alongside `SESSION` so the idle
-/// watcher can see it.
+/// tracks only the live transcription `SESSION`, but its model can be:
+/// `dictation::model::begin_probe` registers the load and `ProbeLease::finish`
+/// leaves a completed model of an abandoned probe for the idle watcher, which
+/// drops it on a later tick. A load that never returns is still only bounded by
+/// the engine itself; the registry reports that as stranded instead of
+/// pretending it was freed.
 fn spawn_probe<L>(path: PathBuf, timeout: Duration, load: L) -> Result<Result<(), String>, String>
 where
-    L: FnOnce(&Path) -> Result<(), String> + Send + 'static,
+    L: FnOnce(&Path, crate::dictation::model::ProbeLease) -> Result<(), String> + Send + 'static,
 {
+    let (probe, abandon) = crate::dictation::model::begin_probe(path.clone());
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         // Declared first so it outlives the model: the guard must never be
         // released while a probe model is still mapped.
         let _probe = model_probe_guard();
-        let outcome = load(&path);
+        let outcome = load(&path, probe);
         let _ = sender.send(outcome);
     });
     match receiver.recv_timeout(timeout) {
@@ -875,10 +883,16 @@ where
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
             Err("The model compatibility probe ended without reporting a result.".into())
         }
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
-            "The model compatibility probe timed out after {} seconds.",
-            timeout.as_secs()
-        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            // The load is still running with the lease. Mark it abandoned so
+            // the model it eventually produces is left for the idle watcher
+            // rather than staying resident for the life of the process.
+            abandon.abandon();
+            Err(format!(
+                "The model compatibility probe timed out after {} seconds.",
+                timeout.as_secs()
+            ))
+        }
     }
 }
 
@@ -2477,7 +2491,7 @@ mod tests {
         let first = spawn_probe(
             PathBuf::from("first.gguf"),
             Duration::from_millis(60),
-            move |_path| {
+            move |_path, _probe| {
                 let _ = started_tx.send(Instant::now());
                 std::thread::sleep(hold);
                 let _ = finished_tx.send(Instant::now());
@@ -2500,7 +2514,7 @@ mod tests {
             spawn_probe(
                 PathBuf::from("second.gguf"),
                 Duration::from_millis(60),
-                move |_path| {
+                move |_path, _probe| {
                     ran.store(true, Ordering::SeqCst);
                     Ok(())
                 },
@@ -2520,9 +2534,11 @@ mod tests {
         finished_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("the abandoned load must finish");
-        let third = spawn_probe(PathBuf::from("third.gguf"), Duration::from_secs(30), |_| {
-            Ok(())
-        });
+        let third = spawn_probe(
+            PathBuf::from("third.gguf"),
+            Duration::from_secs(30),
+            |_, _| Ok(()),
+        );
         assert!(
             matches!(third, Ok(Ok(()))),
             "the guard must be released once the abandoned load ends, got {third:?}"

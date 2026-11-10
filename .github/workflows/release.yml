@@ -15,6 +15,13 @@ on:
 permissions:
   contents: read
 
+# One release validation at a time. Two dispatches of the same tag would run
+# overlapping Windows jobs, each holding a runner for up to an hour, and their
+# conclusions would be about different trees.
+concurrency:
+  group: bard-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     if: github.repository == 'miisodev/bard'

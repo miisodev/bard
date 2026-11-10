@@ -377,10 +377,25 @@ static PORTAL_TRIGGERS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None
 #[cfg(target_os = "linux")]
 pub fn set_portal_triggers(triggers: HashMap<String, String>) {
     if let Ok(mut slot) = PORTAL_TRIGGERS.lock() {
-        *slot = Some(triggers);
-    }
-    for action in ACTIONS {
-        set_status(action, Status::Ready);
+        *slot = Some(triggers.clone());
+        for action in ACTIONS {
+            // A shortcut is Ready only when the portal actually reported it.
+            // An empty or partial list means the desktop did not bind that
+            // chord, and the person must be told the truth: not bound, not
+            // shown as a working shortcut that does nothing.
+            let reported = slot
+                .as_ref()
+                .and_then(|triggers| triggers.get(action.id()))
+                .is_some_and(|trigger| !trigger.is_empty());
+            set_status(
+                action,
+                if reported {
+                    Status::Ready
+                } else {
+                    Status::Pending
+                },
+            );
+        }
     }
 }
 
@@ -1185,5 +1200,45 @@ mod tests {
             assert_eq!(Action::from_id(action.id()), Some(action));
         }
         assert_eq!(Action::from_id("capture"), None);
+    }
+}
+
+/// The portal's answer decides which shortcuts are Ready; it does not need an
+/// X server, only the trigger map the desktop sends.
+#[cfg(all(test, target_os = "linux"))]
+mod portal_triggers {
+    use super::*;
+
+    #[test]
+    fn only_portal_reported_shortcuts_are_ready() {
+        let mut reported = HashMap::new();
+        reported.insert("main".to_string(), "ALT+SHIFT+v".to_string());
+        // An empty trigger is a report of nothing: treated as unreported.
+        reported.insert("draw".to_string(), String::new());
+        set_portal_triggers(reported);
+
+        assert_eq!(status(Action::Main), Status::Ready);
+        assert_eq!(
+            status(Action::Draw),
+            Status::Pending,
+            "an empty trigger is not a report"
+        );
+        assert_eq!(
+            status(Action::Pause),
+            Status::Pending,
+            "an unreported shortcut is not bound"
+        );
+
+        // The desktop's changed event re-reports the whole table: what it
+        // omits falls back to pending, never stays ready.
+        set_portal_triggers(HashMap::new());
+        for action in ACTIONS {
+            assert_eq!(
+                status(action),
+                Status::Pending,
+                "{} after an empty report",
+                action.id()
+            );
+        }
     }
 }

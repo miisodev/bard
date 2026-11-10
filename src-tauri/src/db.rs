@@ -146,6 +146,17 @@ pub struct AppState {
     pub background_color: String,
     /// The timeline's order: one of `SORT_ORDERS`.
     pub sort: String,
+    /// The three items the slot shortcuts copy, in slot order.
+    ///
+    /// The panel used to work this out for itself by taking the first three
+    /// rows it had been given, which was only right while the timeline's
+    /// order and the slots' order were the same. They are not: the slots are
+    /// always the pins and then the most recent, whatever order the timeline
+    /// is shown in, so a person who chose "Oldest first" saw the number 1 on
+    /// the oldest item while Alt+Shift+1 copied the newest. The assignment is
+    /// published here instead, from the same read the shortcuts use, so the
+    /// badge and the shortcut can never disagree.
+    pub slot_ids: Vec<i64>,
     /// Where the main window lives: "float", "left" or "right".
     pub dock: String,
     /// A storage problem the person should know about — a damaged history file
@@ -1206,13 +1217,22 @@ pub fn set_done(app: &AppHandle, id: i64, done: bool) {
     });
 }
 
-/// Items cleared this way are gone, images and all — the caller unlinks the
-/// files first, exactly as clear_history does.
-pub fn completed_items(app: &AppHandle) -> Vec<Item> {
-    list_items(app)
-        .into_iter()
-        .filter(|i| i.done != 0)
-        .collect()
+/// The ids of completed items, or an error when they cannot be read.
+///
+/// Fallible on purpose: the clear command must not read a failed query as
+/// "nothing is completed" and report success over data it never saw. Only the
+/// ids are read, because deleting the rows does not need their contents.
+pub fn completed_item_ids(app: &AppHandle) -> Result<Vec<i64>, String> {
+    if !is_ready(app) {
+        return Err("Bard's history is not available yet.".into());
+    }
+    with_conn(app, |connection| {
+        read_ids(
+            connection,
+            "SELECT id FROM items WHERE done != 0",
+            "Could not read completed items",
+        )
+    })
 }
 
 pub fn delete_all_data(app: &AppHandle) -> Result<(), String> {
@@ -1249,7 +1269,9 @@ pub fn delete_all_data(app: &AppHandle) -> Result<(), String> {
         let _ = connection.execute_batch("VACUUM");
     });
     for file in files {
-        remove_owned_image_file(app, &file);
+        // The images directory is removed below, so one file that cannot be
+        // unlinked individually is not worth failing the whole erase for.
+        let _ = remove_owned_image_file(app, &file);
     }
     if let Some(root) = crate::paths::data_dir() {
         let _ = std::fs::remove_dir_all(root.join("images"));
@@ -1288,13 +1310,31 @@ pub fn images_root() -> Option<std::path::PathBuf> {
     crate::paths::data_dir().map(|root| root.join("images"))
 }
 
-pub fn remove_owned_image_file(app: &AppHandle, path: &str) {
+/// Delete one file Bard owns.
+///
+/// A missing file is success: the row that made it Bard's is what is being
+/// removed, and a file already gone has nothing left to unlink. A path outside
+/// the images folder is not Bard's to delete and is left alone, also success.
+/// Anything else is an error, because a deletion that leaves the file on disk
+/// has not finished.
+pub fn remove_owned_image_file(app: &AppHandle, path: &str) -> Result<(), String> {
     let _ = app;
     let Some(images) = images_root() else {
-        return;
+        return Ok(());
     };
-    if crate::hf::path_is_within(&images, std::path::Path::new(path)) {
-        let _ = std::fs::remove_file(path);
+    remove_file_within(&images, path)
+}
+
+/// The policy above, over an explicit root so a test can drive it without an
+/// `AppHandle`.
+fn remove_file_within(images: &Path, path: &str) -> Result<(), String> {
+    if !crate::hf::path_is_within(images, Path::new(path)) {
+        return Ok(());
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("could not remove {path}: {error}")),
     }
 }
 
@@ -1350,29 +1390,93 @@ pub fn list_items(app: &AppHandle) -> Vec<Item> {
 /// while a shelf that silently hides one of them — an old pin especially,
 /// which is also a Right Shift × 2 paste slot — would be worse than any
 /// amount of reading.
+///
+/// Every failure here is answered rather than unwrapped. The release profile is
+/// `panic = "abort"`, so a prepare or query error used to end the process with
+/// no window and no message, and a single unconvertible row used to empty the
+/// whole shelf — "nothing here" when the truth was "one row is bad".
+fn read_items_windowed(connection: &Connection, limit: i64) -> Vec<Item> {
+    let mut statement = match connection.prepare(&format!(
+        "SELECT {ITEM_COLUMNS} FROM items
+         WHERE origin NOT IN ('clipboard', 'dictation')
+            OR favorite = 1
+            OR pinned_at IS NOT NULL
+            OR id IN (
+                SELECT id FROM items
+                WHERE origin IN ('clipboard', 'dictation')
+                  AND favorite = 0
+                  AND pinned_at IS NULL
+                ORDER BY id DESC LIMIT ?1
+            )
+         ORDER BY id DESC"
+    )) {
+        Ok(statement) => statement,
+        Err(error) => {
+            crate::crash::record_event("db:items-read-failed");
+            log::warn!("could not read the timeline: {error}");
+            return Vec::new();
+        }
+    };
+    let rows = match statement.query_map(params![limit], item_from_row) {
+        Ok(rows) => rows,
+        Err(error) => {
+            crate::crash::record_event("db:items-read-failed");
+            log::warn!("could not read the timeline: {error}");
+            return Vec::new();
+        }
+    };
+    let mut items = Vec::new();
+    for row in rows {
+        match row {
+            Ok(item) => items.push(item),
+            Err(error) => {
+                // Keep the rows that did convert. A shelf that says "nothing
+                // here" when the truth is "one row is bad" is the harmful kind
+                // of empty, so the bad row is recorded and the rest survive.
+                crate::crash::record_event("db:item-row-read-failed");
+                log::warn!("could not read one timeline row: {error}");
+            }
+        }
+    }
+    items
+}
+
 pub(crate) fn list_items_windowed(app: &AppHandle, limit: i64) -> Vec<Item> {
-    with_conn(app, |c| {
-        let mut stmt = c
-            .prepare(&format!(
-                "SELECT {ITEM_COLUMNS} FROM items
-                 WHERE origin NOT IN ('clipboard', 'dictation')
-                    OR favorite = 1
-                    OR pinned_at IS NOT NULL
-                    OR id IN (
-                        SELECT id FROM items
-                        WHERE origin IN ('clipboard', 'dictation')
-                          AND favorite = 0
-                          AND pinned_at IS NULL
-                        ORDER BY id DESC LIMIT ?1
-                    )
-                 ORDER BY id DESC"
-            ))
-            .unwrap();
-        stmt.query_map(params![limit], item_from_row)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap_or_default()
-    })
+    with_conn(app, |connection| read_items_windowed(connection, limit))
+}
+
+/// Every item, newest first, or an error when the table cannot be read.
+///
+/// The timeline is deliberately windowed, but the export and "clear history"
+/// both promise every row a person kept. This read has no ceiling and no
+/// forgiveness: a failed read returns an error rather than a shorter list,
+/// because either caller would otherwise act on a lie — an export that quietly
+/// omitted the oldest history, or a clear that reported success having skipped
+/// the rows it could not read.
+pub fn all_items(app: &AppHandle) -> Result<Vec<Item>, String> {
+    if !is_ready(app) {
+        return Err("Bard's history is not available yet.".into());
+    }
+    with_conn(app, read_all_items)
+}
+
+fn read_all_items(connection: &Connection) -> Result<Vec<Item>, String> {
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT {ITEM_COLUMNS} FROM items ORDER BY id DESC"
+        ))
+        .map_err(|error| format!("Could not read the history: {error}"))?;
+    let rows = statement
+        .query_map([], item_from_row)
+        .map_err(|error| format!("Could not read the history: {error}"))?;
+    let mut items = Vec::new();
+    for row in rows {
+        // Unlike the shelf read, a bad row is not skipped: an export that
+        // silently leaves one item out is exactly the data loss it promises
+        // not to have.
+        items.push(row.map_err(|error| format!("Could not read an item: {error}"))?);
+    }
+    Ok(items)
 }
 
 /// How many leading members a pack previews.
@@ -1717,8 +1821,8 @@ pub fn pack_reorder(app: &AppHandle, id: i64, item_ids: &[i64]) -> Result<(), St
 }
 
 /// Remove expired automatic items and every owned file attached to them.
-/// `None` means the user selected Forever. Favorites and manual work are never
-/// removed by age-based cleanup.
+/// `None` means the user selected Forever. Favorites, pins and manual work are
+/// never removed by age-based cleanup.
 ///
 /// Returns how many rows went, so a caller that has just told the panel about
 /// one new item can tell whether the same pass also took some away — the panel
@@ -1739,21 +1843,38 @@ pub fn cleanup_origin(app: &AppHandle, origin: &str) -> Result<usize, String> {
     // collected into a `Result` and unwrapped outside it. A prepare or query
     // failure is reported rather than unwrapped: it used to be `.unwrap()`, which
     // under `panic = "abort"` killed the process.
-    let ids = with_conn(app, |c| -> Result<Vec<i64>, String> {
-        let mut stmt = c
-            .prepare(
-                "SELECT id FROM items
-                 WHERE origin = ?1 AND favorite = 0 AND created_at < ?2",
-            )
-            .map_err(|error| format!("Could not read expired items: {error}"))?;
-        let rows = stmt
-            .query_map(params![origin, cutoff], |row| row.get::<_, i64>(0))
-            .map_err(|error| format!("Could not read expired items: {error}"))?;
-        Ok(rows.filter_map(Result::ok).collect())
-    })?;
+    let ids = with_conn(app, |c| expired_item_ids(c, origin, cutoff))?;
     let removed = ids.len();
     delete_items_with_files(app, &ids)?;
     Ok(removed)
+}
+
+/// The ids one origin's age-based pass will remove.
+///
+/// Favourites are exempt because a kept copy is a decision, and pins are
+/// exempt for the same reason: a pin is a decision the person made, and the
+/// shelf already treats it as outside every window. An automatic pass that
+/// deleted one would contradict the person and the read at once.
+fn expired_item_ids(
+    connection: &Connection,
+    origin: &str,
+    cutoff: i64,
+) -> Result<Vec<i64>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id FROM items
+             WHERE origin = ?1 AND favorite = 0 AND pinned_at IS NULL
+               AND created_at < ?2",
+        )
+        .map_err(|error| format!("Could not read expired items: {error}"))?;
+    let rows = statement
+        .query_map(params![origin, cutoff], |row| row.get::<_, i64>(0))
+        .map_err(|error| format!("Could not read expired items: {error}"))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|error| format!("Could not read expired items: {error}"))?);
+    }
+    Ok(ids)
 }
 
 /// A file written less than this long ago is never swept: a capture writes its
@@ -1975,8 +2096,17 @@ pub fn delete_items_with_files(app: &AppHandle, ids: &[i64]) -> Result<(), Strin
             .commit()
             .map_err(|error| format!("Could not commit deletion: {error}"))
     })?;
+    // The rows are gone now, so a file that cannot be unlinked is the only
+    // thing left to report. It is reported rather than swallowed: a deletion
+    // that leaves the image on disk has not finished, even though the row that
+    // named it has.
+    let mut failures = Vec::new();
     for path in &files {
-        remove_owned_image_file(app, path);
+        if let Err(error) = remove_owned_image_file(app, path) {
+            crate::crash::record_event("db:image-delete-failed");
+            log::warn!("{error}");
+            failures.push(error);
+        }
     }
     // "Clear captures" and the retention controls are the app's central privacy
     // promise, and a person using them reasonably expects the text to be gone.
@@ -1989,83 +2119,119 @@ pub fn delete_items_with_files(app: &AppHandle, ids: &[i64]) -> Result<(), Strin
     //
     // Deliberately not a `VACUUM`: vacuuming on every clipboard capture would
     // rewrite the whole database, and the full erase path still does that.
-    let _ = with_conn_mut(app, |connection| {
-        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-    });
+    if let Err(error) = with_conn_mut(app, |connection| truncate_wal(connection)) {
+        crate::crash::record_event("db:wal-truncate-failed");
+        log::warn!("{error}");
+        failures.push(error);
+    }
     if get_setting(app, "active_item_id")
         .and_then(|value| value.parse::<i64>().ok())
         .is_some_and(|active| ids.contains(&active))
     {
         set_active_item(app, None);
     }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        // The rows are deleted; saying only "could not delete" would be a lie
+        // in the other direction. The caller shows this to the person.
+        Err(format!(
+            "Bard deleted the history, but could not finish cleaning up: {}",
+            failures.join("; ")
+        ))
+    }
+}
+
+/// Truncate the write-ahead log so deleted text is not left recoverable in it.
+///
+/// The pragma reports a busy checkpoint as a row rather than as an error, so
+/// the row is read: `execute_batch` threw the answer away and called a refused
+/// checkpoint a success.
+fn truncate_wal(connection: &Connection) -> Result<(), String> {
+    let (busy, log, checkpointed): (i64, i64, i64) = connection
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|error| format!("the write-ahead log could not be cleared: {error}"))?;
+    if busy != 0 {
+        return Err(format!(
+            "the write-ahead log could not be cleared ({checkpointed} of {log} pages \
+             checkpointed), so deleted text may still be recoverable in the database file"
+        ));
+    }
     Ok(())
 }
 
-/// A hard ceiling on how many automatic items Bard will keep, whatever the age
-/// setting says.
+/// How many automatic items the shelf's own read returns.
 ///
-/// This exists because `prune_history` used to run on *every* capture and
-/// deleted past 5,000 automatic items even when the user had chosen **Forever**,
-/// with nothing on screen saying so. Silently deleting data a person explicitly
-/// asked you to keep is not a safety feature; in a product whose pitch is "your
-/// captures stay on this machine" it is a reason to stop trusting it.
+/// This is a bound on how much history one refresh re-reads and re-serialises
+/// into every webview — not a retention rule and not a deletion. Nothing in the
+/// app removes a row because of it; the age-based retention setting is still
+/// the only automatic deletion. It used to be wired into `Prune now`, which
+/// deleted past 5,000 automatic items even when the person had chosen
+/// **Forever**, with nothing on screen saying so. Silently deleting data a
+/// person explicitly asked you to keep is not a safety feature; in a product
+/// whose pitch is "your captures stay on this machine" it is a reason to stop
+/// trusting it.
 ///
-/// It is therefore no longer wired into the capture path. The Data pane's
-/// `Prune now` is the only caller, it reports what it did, and the age-based
-/// setting is the only automatic deletion. If a runaway producer ever needs a
-/// backstop, it belongs behind an explicit, visible control — not behind a
-/// setting the user believes is in force.
+/// If a runaway producer ever needs a backstop, it belongs behind an explicit,
+/// visible control of its own — not behind a setting the person believes is in
+/// force, and not inside an action that promises to apply their lifespans.
 pub const AUTOMATIC_ITEM_CEILING: usize = 5_000;
 
-/// Delete automatic items beyond `limit`, oldest first. Manual items and
-/// favourites are exempt. Returns how many rows were removed.
-pub fn prune_history(app: &AppHandle, limit: usize) -> Result<usize, String> {
-    let ids = with_conn(app, |c| -> Result<Vec<i64>, String> {
-        let mut stmt = c
-            .prepare(
-                "SELECT id FROM items
-                 WHERE origin IN ('clipboard', 'dictation') AND favorite = 0
-                   AND id NOT IN (
-                     SELECT id FROM items
-                     WHERE origin IN ('clipboard', 'dictation') AND favorite = 0
-                     ORDER BY id DESC LIMIT ?1
-                   )",
-            )
-            .map_err(|error| format!("Could not read history to prune: {error}"))?;
-        let rows = stmt
-            .query_map(params![limit as i64], |row| row.get::<_, i64>(0))
-            .map_err(|error| format!("Could not read history to prune: {error}"))?;
-        Ok(rows.filter_map(Result::ok).collect())
-    })?;
-    let removed = ids.len();
-    delete_items_with_files(app, &ids)?;
-    Ok(removed)
-}
-
 pub fn clear_history(app: &AppHandle) -> Result<(), String> {
-    let ids: Vec<i64> = list_items(app).into_iter().map(|item| item.id).collect();
+    if !is_ready(app) {
+        return Err("Bard's history is not available yet.".into());
+    }
+    // The id list comes from a read that can fail. `list_items` answers a
+    // failed query with an empty vector, and `delete_items_with_files` answers
+    // an empty vector with `Ok(())` — together, a read error used to show
+    // "History cleared." over an untouched database.
+    let ids = with_conn(app, |connection| {
+        read_ids(
+            connection,
+            "SELECT id FROM items",
+            "Could not read the history",
+        )
+    })?;
     delete_items_with_files(app, &ids)
 }
 
 pub fn clear_captures(app: &AppHandle) -> Result<(), String> {
-    let ids: Vec<i64> = with_conn(app, |c| {
-        let Ok(mut stmt) = c.prepare(
-            "SELECT id FROM items WHERE origin IN ('clipboard', 'dictation') AND favorite = 0",
-        ) else {
-            crate::crash::record_event("db:clear-captures-read-failed");
-            return Vec::new();
-        };
-        let captures = match stmt.query_map([], |row| row.get(0)) {
-            Ok(rows) => rows.filter_map(Result::ok).collect(),
-            Err(error) => {
-                crate::crash::record_event("db:clear-captures-read-failed");
-                log::warn!("could not read captures to clear: {error}");
-                Vec::new()
-            }
-        };
-        captures
-    });
+    if !is_ready(app) {
+        return Err("Bard's history is not available yet.".into());
+    }
+    let ids = with_conn(app, read_capture_ids)?;
     delete_items_with_files(app, &ids)
+}
+
+/// Every id a statement yields, or an error naming what could not be read.
+///
+/// The destructive commands share this read so none of them can mistake a
+/// failed query for "there is nothing to delete". A forgiving read is fine for
+/// a shelf that will repaint; it is wrong for an action that reports a privacy
+/// promise kept.
+fn read_ids(connection: &Connection, sql: &str, context: &str) -> Result<Vec<i64>, String> {
+    let mut statement = connection
+        .prepare(sql)
+        .map_err(|error| format!("{context}: {error}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, i64>(0))
+        .map_err(|error| format!("{context}: {error}"))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|error| format!("{context}: {error}"))?);
+    }
+    Ok(ids)
+}
+
+/// The ids "Clear captures" will delete.
+fn read_capture_ids(connection: &Connection) -> Result<Vec<i64>, String> {
+    read_ids(
+        connection,
+        "SELECT id FROM items WHERE origin IN ('clipboard', 'dictation') AND favorite = 0",
+        "Could not read the captures to clear",
+    )
 }
 
 const CUSTOM_MODEL_COLUMNS: &str =
@@ -2258,6 +2424,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
             background: "theme".into(),
             background_color: String::new(),
             sort: SORT_ORDERS[0].into(),
+            slot_ids: Vec::new(),
             dock: "float".into(),
             storage_notice: None,
         };
@@ -2283,6 +2450,7 @@ pub fn get_state(app: &AppHandle) -> AppState {
         background: get_setting(app, "background").unwrap_or_else(|| "theme".into()),
         background_color: get_setting(app, "background_color").unwrap_or_default(),
         sort: sort_order(app),
+        slot_ids: slot_ids(app),
         dock: crate::panel::dock(app).name().into(),
         storage_notice: storage_notice(app),
     }
@@ -2384,13 +2552,37 @@ pub fn set_pinned(app: &AppHandle, id: i64, pinned: bool) -> Result<(), PinError
 /// The items in the order the panel shows them. Right Shift × 2 + a number
 /// pastes by this order too, so "item 1" is always the one at the top.
 ///
-/// Bounded by [`AUTOMATIC_ITEM_CEILING`] — see [`list_items_windowed`] — and
-/// that is the only reader that is: `clear_history` and the export path still
-/// walk every row, because "every row" is what they are for.
+/// The read is bounded by [`AUTOMATIC_ITEM_CEILING`] — see
+/// [`list_items_windowed`]. The export deliberately does not use it:
+/// [`all_items`] carries every row a person kept, because "everything they
+/// kept" is what an export is for.
 pub fn timeline(app: &AppHandle) -> Vec<Item> {
     let mut items = list_items_windowed(app, AUTOMATIC_ITEM_CEILING as i64);
     sort_items(&mut items, &sort_order(app));
     items
+}
+
+/// How many rows the slot shortcuts read before taking the first three.
+const SLOT_WINDOW: i64 = 60;
+
+/// The three items the slot shortcuts copy, in slot order.
+///
+/// Pins lead, oldest pin first, then the most recent — the order the person
+/// pinned them in, so pinning a new item never changes which slot an older
+/// pin answers to. This is deliberately independent of the order the timeline
+/// is shown in: the slots are a fixed set of keys, and a key that copied
+/// something different because the list had been sorted would be a trap.
+pub fn slot_items(app: &AppHandle) -> Vec<Item> {
+    let mut items = list_items_windowed(app, SLOT_WINDOW);
+    sort_items(&mut items, "newest");
+    items.truncate(3);
+    items
+}
+
+/// The ids of the slot items, in slot order. Published in the state so the
+/// panel can label a row with the slot that copies it.
+pub fn slot_ids(app: &AppHandle) -> Vec<i64> {
+    slot_items(app).into_iter().map(|item| item.id).collect()
 }
 
 /// Rewrites stored file paths that still point into the legacy roaming data
@@ -3342,6 +3534,173 @@ mod tests {
             .unwrap();
         assert_eq!(version, 4);
         drop(migrated);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// The export's read is the one that has to carry every row: the shelf read
+    /// is windowed on purpose. A test that only proved `read_all_items` returned
+    /// the rows it was given would pass again the day the export went back to
+    /// the windowed read.
+    #[test]
+    fn the_export_read_carries_every_row_while_the_shelf_read_is_windowed() {
+        let connection = in_memory();
+        for id in 1..=4 {
+            connection
+                .execute(
+                    "INSERT INTO items(id, content, kind, origin, created_at, updated_at)
+                     VALUES(?1, ?2, 'text', 'clipboard', ?1, ?1)",
+                    params![id, format!("clip {id}")],
+                )
+                .unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO items(id, content, kind, origin, created_at, updated_at)
+                 VALUES(9, 'manual', 'text', 'manual', 9, 9)",
+                [],
+            )
+            .unwrap();
+
+        let windowed = read_items_windowed(&connection, 2);
+        assert_eq!(
+            windowed.iter().map(|item| item.id).collect::<Vec<_>>(),
+            [9, 4, 3],
+            "the shelf keeps the newest automatic rows and every manual one"
+        );
+
+        let all = read_all_items(&connection).expect("every row");
+        assert_eq!(
+            all.iter().map(|item| item.id).collect::<Vec<_>>(),
+            [9, 4, 3, 2, 1],
+            "the export read must carry the rows the shelf window leaves out"
+        );
+    }
+
+    #[test]
+    fn one_unreadable_row_does_not_empty_the_shelf() {
+        let connection = in_memory();
+        connection
+            .execute(
+                "INSERT INTO items(content, kind, origin, created_at, updated_at)
+                 VALUES('good', 'text', 'clipboard', 1, 1)",
+                [],
+            )
+            .unwrap();
+        // SQLite keeps a value its INTEGER affinity cannot convert as TEXT, so
+        // this row reads in SQL and fails in `item_from_row`.
+        connection
+            .execute(
+                "INSERT INTO items(content, kind, origin, favorite, created_at, updated_at)
+                 VALUES('bad', 'text', 'clipboard', 'not-a-number', 2, 2)",
+                [],
+            )
+            .unwrap();
+
+        let items = read_items_windowed(&connection, 10);
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.content.as_str())
+                .collect::<Vec<_>>(),
+            ["good"],
+            "a bad row must not turn a shelf with a good row into an empty one"
+        );
+    }
+
+    /// A failed read must be an error, not an empty list. The clear commands
+    /// used to turn exactly this into "nothing to delete" and report success
+    /// over an untouched database.
+    #[test]
+    fn a_failed_history_read_is_an_error_not_an_empty_history() {
+        let connection = Connection::open_in_memory().expect("in-memory database");
+        assert!(read_all_items(&connection).is_err());
+        assert!(read_capture_ids(&connection).is_err());
+    }
+
+    #[test]
+    fn age_based_cleanup_keeps_favourites_and_pins() {
+        let connection = in_memory();
+        let cutoff = 1_000;
+        let insert = |id: i64,
+                      origin: &str,
+                      favorite: i64,
+                      pinned: Option<i64>,
+                      created_at: i64| {
+            connection
+                .execute(
+                    "INSERT INTO items(id, content, kind, origin, favorite, pinned_at, created_at, updated_at)
+                     VALUES(?1, ?2, 'text', ?3, ?4, ?5, ?6, ?6)",
+                    params![id, format!("item {id}"), origin, favorite, pinned, created_at],
+                )
+                .unwrap();
+        };
+        insert(1, "clipboard", 0, None, 10); // expired and plain: the only one that goes
+        insert(2, "clipboard", 1, None, 10); // expired but a favourite
+        insert(3, "clipboard", 0, Some(50), 10); // expired but pinned
+        insert(4, "dictation", 0, None, 10); // another origin's pass
+        insert(5, "clipboard", 0, None, cutoff); // exactly at the cutoff is not past it
+
+        assert_eq!(
+            expired_item_ids(&connection, "clipboard", cutoff).expect("expired ids"),
+            [1],
+            "an automatic pass may remove only expired, unpinned, unkept captures"
+        );
+    }
+
+    #[test]
+    fn a_missing_image_is_not_a_deletion_failure() {
+        let root = std::env::temp_dir().join(format!("bard-images-{}", now_ms()));
+        let images = root.join("images");
+        std::fs::create_dir_all(&images).unwrap();
+        let owned = images.join("shot.png");
+        std::fs::write(&owned, b"png").unwrap();
+        let outside = root.join("elsewhere.png");
+        std::fs::write(&outside, b"png").unwrap();
+
+        assert!(remove_file_within(&images, &owned.to_string_lossy()).is_ok());
+        assert!(!owned.exists());
+        // Already gone is success: there is nothing left to delete.
+        assert!(remove_file_within(&images, &owned.to_string_lossy()).is_ok());
+        // Outside the images folder is not Bard's to delete.
+        assert!(remove_file_within(&images, &outside.to_string_lossy()).is_ok());
+        assert!(outside.exists());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// The checkpoint pragma reports a refused truncation as a row, not as an
+    /// error, so the old `execute_batch` called it a success. This holds a read
+    /// transaction open from a second connection, which is exactly what stops
+    /// SQLite truncating the log.
+    #[test]
+    fn a_blocked_wal_truncation_is_reported_rather_than_called_a_success() {
+        let dir = std::env::temp_dir().join(format!("bard-wal-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bard.db");
+        let writer = init(&path).unwrap();
+        writer
+            .busy_timeout(std::time::Duration::from_millis(0))
+            .unwrap();
+        writer
+            .execute(
+                "INSERT INTO items(content, kind, origin, created_at, updated_at)
+                 VALUES('secret', 'text', 'clipboard', 1, 1)",
+                [],
+            )
+            .unwrap();
+
+        let reader = Connection::open(&path).unwrap();
+        reader
+            .execute_batch("BEGIN; SELECT COUNT(*) FROM items;")
+            .unwrap();
+        assert!(
+            truncate_wal(&writer).is_err(),
+            "a checkpoint that could not truncate the log must not be reported as success"
+        );
+        reader.execute_batch("COMMIT;").unwrap();
+        assert!(truncate_wal(&writer).is_ok());
+
+        drop(reader);
+        drop(writer);
         std::fs::remove_dir_all(dir).ok();
     }
 }

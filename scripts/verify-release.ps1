@@ -25,6 +25,13 @@ if (-not $sevenZip -and (Test-Path 'C:\Program Files\7-Zip\7z.exe')) {
 if ($sevenZip) {
   & $sevenZip.Source t $installer | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "NSIS archive integrity failed" }
+} else {
+  # The archive test was silently skipped when 7-Zip was not installed, so a
+  # release could be verified by hashes alone and nobody would know the
+  # installer was never opened. The hashes still prove the bytes; the archive
+  # test proves the installer is a readable NSIS package. Say plainly which
+  # one was skipped rather than letting the absence pass for a pass.
+  Write-Warning "7-Zip was not found, so the NSIS archive integrity test was skipped. The SHA-256 hashes below are still checked against the published SHA256SUMS; install 7-Zip to also prove the installer opens."
 }
 
 $artifacts = @($binary, $installer, $signature)

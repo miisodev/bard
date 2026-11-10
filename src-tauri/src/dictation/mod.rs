@@ -1,5 +1,5 @@
 mod audio;
-mod model;
+pub(crate) mod model;
 mod vad;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -109,18 +109,27 @@ pub fn start(app: &AppHandle) -> bool {
         return false;
     }
     {
-        let mut state = state_lock();
+        let state = state_lock();
         // Idle is the only state a new take can start from.
         if *state != DictState::Idle {
             return false;
         }
-        if !model_ready(app) {
-            drop(state);
-            report(
-                app,
-                "No voice model yet",
-                Some("Install one in Settings › Models".into()),
-            );
+    }
+    // The first check hashes the whole model file, which on a cold start is
+    // seconds of work. It must not run under the state lock: every state query
+    // and the overlay read that lock, and a take that is starting is not yet a
+    // take. The check used to be missing entirely and the take paid for it only
+    // after recording, so a corrupt model cost a whole take; the price of the
+    // gate is that it is paid before the microphone opens instead.
+    if let Err(error) = model::ensure_model_ready(app) {
+        report(app, "Voice model not ready", Some(error));
+        return false;
+    }
+    {
+        let mut state = state_lock();
+        // Checked again because two starts can pass the check above together;
+        // only the one that arrives here first may own the take.
+        if *state != DictState::Idle {
             return false;
         }
         if !audio::mic_ready() {
@@ -312,6 +321,18 @@ pub fn stop(app: &AppHandle) {
             *state_lock() = DictState::Idle;
             report(&app, "Recording failed", Some(error));
             return;
+        }
+        if let Some(warning) = recording.warning {
+            // Capture outran the buffer and discarded its oldest unread audio.
+            // The take is still worth transcribing, but this is the only way the
+            // person can know the transcript does not cover everything they
+            // said, so it is said on screen and in the log rather than dropped.
+            crate::crash::record_event("dictation:audio-overrun");
+            let _ = app.emit("dictation-audio-warning", warning.clone());
+            feedback::notify(
+                &app,
+                Note::info("info", "Some audio was skipped").with_detail(warning),
+            );
         }
         let mut samples = recording.samples;
         if samples.is_empty() || !recording.speech_detected {

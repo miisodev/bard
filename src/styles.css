@@ -108,11 +108,13 @@ body {
   gap: var(--sp-3);
   height: var(--icon-control);
   padding: 0 var(--sp-6) 0 var(--sp-5);
+  border: 1px solid transparent;
   border-radius: var(--r-pill);
   background: var(--surface-2);
   color: var(--text-3);
   box-shadow: none;
   transition: background var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out),
               box-shadow var(--t-fast) var(--ease-out);
 }
 
@@ -120,9 +122,14 @@ body {
   background: color-mix(in srgb, var(--surface-2) 70%, var(--border-strong));
 }
 
+/* The panel opens with the search field focused, so this is the state a
+   person sees before they do anything at all. A hard 4px ring there is the
+   loudest thing in a deliberately calm window; a 2px accent edge with a
+   soft halo says "this is where typing goes" without shouting. */
 .search-field:focus-within {
   background: var(--surface);
-  box-shadow: var(--focus-ring);
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
 }
 
 .search::placeholder {
@@ -1731,8 +1738,11 @@ mark {
 }
 
 .filter.on {
-  background: var(--text);
-  color: var(--canvas);
+  /* The chosen filter is a tonal accent container, not an inverted pill. A
+     solid white pill on a dark panel was the brightest thing in the window
+     and pulled the eye away from the history it was meant to filter. */
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .filter:disabled {
@@ -1773,16 +1783,30 @@ mark {
   letter-spacing: var(--tr-caption);
 }
 
+/* The list is drawn a screenful at a time. These spacers hold the place of
+   the rows that are not on screen, so the scrollbar measures the whole
+   history rather than the slice of it that happens to be drawn. */
+.clip-spacer {
+  flex: none;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .item {
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-5);
-  min-height: 48px;
+  /* Every row is the same height, so the list can be drawn a screenful at a
+     time without the scrollbar and the rows disagreeing about where they
+     are. Two lines of text, a thumbnail and a swatch all fit. */
+  height: 56px;
   padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-5);
   border-radius: var(--r-card);
   color: var(--text);
   cursor: default;
+  overflow: hidden;
   transition: background var(--t-fast) var(--ease-out);
 }
 
@@ -1855,6 +1879,36 @@ mark {
   line-height: var(--lh-base);
   overflow-wrap: anywhere;
   white-space: pre-line;
+}
+
+/* The inline editor. It sits in the row in place of the text, so the shelf
+   does not jump and the person can see what they are changing. It is a real
+   text field: the caret, the selection and the undo stack all behave the way
+   they do everywhere else. */
+.item-edit {
+  display: block;
+  width: 100%;
+  min-height: 100%;
+  max-height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.item.is-editing {
+  background: var(--surface);
+  box-shadow: var(--el-card), inset 0 0 0 2px var(--ring);
 }
 
 .item-lines {

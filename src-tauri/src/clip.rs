@@ -131,6 +131,20 @@ pub fn preview() -> Preview {
     }
     if let Ok(image) = clipboard.get_image() {
         let (width, height) = (image.width as u32, image.height as u32);
+        let pixels = (width as u64).saturating_mul(height as u64);
+        if pixels > crate::monitor::MAX_CAPTURE_IMAGE_PIXELS {
+            // A full RGBA decode of a very large clipboard image spikes memory
+            // before the 320 px thumbnail exists, so the same pixel cap the
+            // capture path applies is enforced here first. Failing silently
+            // would look like an empty clipboard; say so plainly instead.
+            crate::crash::record_event("capture:preview-image-too-large");
+            return Preview {
+                kind: "image".into(),
+                width: Some(width),
+                height: Some(height),
+                ..Preview::default()
+            };
+        }
         let thumbnail = image::RgbaImage::from_raw(width, height, image.bytes.into_owned())
             .map(|rgba| {
                 let scale = (PREVIEW_IMAGE_EDGE as f32 / width.max(height).max(1) as f32).min(1.0);

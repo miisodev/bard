@@ -257,6 +257,12 @@ export interface AppState {
   background: "theme" | "light" | "dark" | "custom";
   backgroundColor: string;
   sort: SortOrder;
+  /**
+   * The ids the slot shortcuts copy, in slot order — the pins first, then the
+   * most recent. Published by the backend so the number on a row and the
+   * shortcut that copies it are the same fact.
+   */
+  slotIds: number[];
   /** Where the main window lives. */
   dock: Dock;
   /**

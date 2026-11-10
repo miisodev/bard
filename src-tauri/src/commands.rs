@@ -565,6 +565,70 @@ pub fn update_item(app: AppHandle, id: i64, content: String) -> Result<(), Strin
     Ok(())
 }
 
+/// The largest file intake will read at all. This is a sanity bound on the
+/// copy, not the text limit below.
+const MAX_INGEST_FILE_BYTES: u64 = 25 * 1024 * 1024;
+
+/// Extensions stored as an image item, by copying the file into Bard's images
+/// folder.
+const INGEST_IMAGE_EXTENSIONS: [&str; 9] = [
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "avif",
+];
+
+/// Extensions read as text and stored as a text item.
+const INGEST_TEXT_EXTENSIONS: [&str; 13] = [
+    "txt", "md", "markdown", "json", "csv", "log", "rs", "ts", "tsx", "js", "jsx", "html", "css",
+];
+
+/// What file intake will do with one file, decided from its extension and size
+/// before anything is read or copied.
+#[derive(Debug, PartialEq, Eq)]
+enum IngestKind {
+    Image,
+    Text,
+    /// A text file over the capture cap. Refused with a reason, never
+    /// truncated and never stored whole.
+    TextTooLarge,
+    /// Not an image or a text file: its name is stored as a note.
+    FileName,
+    /// Not something Bard stores.
+    Unsupported,
+}
+
+fn ingest_kind(extension: &str, bytes: u64) -> IngestKind {
+    if bytes > MAX_INGEST_FILE_BYTES {
+        return IngestKind::Unsupported;
+    }
+    if INGEST_IMAGE_EXTENSIONS.contains(&extension) {
+        return IngestKind::Image;
+    }
+    if INGEST_TEXT_EXTENSIONS.contains(&extension) {
+        // The same cap the clipboard watcher applies. Without it a 25 MB log
+        // opened with Bard became a 25 MB row in every state payload, while
+        // the same text copied from another app was refused at 256 KB.
+        return if bytes > crate::monitor::MAX_CAPTURE_TEXT_BYTES as u64 {
+            IngestKind::TextTooLarge
+        } else {
+            IngestKind::Text
+        };
+    }
+    IngestKind::FileName
+}
+
+/// Paths are compared the way the filesystem under them compares them: exactly
+/// on Linux, where two names that differ only in case are two files, and
+/// without case on Windows and macOS, where they are one. Lowercasing every
+/// path on every platform used to make one of two case-distinct files vanish
+/// from an import on Linux.
+fn path_key(path: &Path) -> String {
+    let key = path.to_string_lossy().into_owned();
+    if cfg!(any(windows, target_os = "macos")) {
+        key.to_lowercase()
+    } else {
+        key
+    }
+}
+
 /// Native-only file intake used by the Windows Explorer verb and first launch.
 /// It is deliberately not a Tauri command: a renderer can read a File object
 /// it owns, but it cannot ask Rust to copy an arbitrary path by name.
@@ -574,13 +638,22 @@ pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
         return 0;
     }
     let images = app.state::<ImagesDir>().0.clone();
+    // The duplicate check reads the library once. It used to call `list_items`
+    // inside the loop, so importing n text files scanned the whole table n
+    // times. New text is added to the set as it lands, so two files with the
+    // same contents in one import still produce one row.
+    let mut known_text: std::collections::HashSet<String> = db::list_items(app)
+        .into_iter()
+        .filter(|item| item.origin == "clipboard" && item.kind == "text")
+        .map(|item| item.content)
+        .collect();
     let mut added = 0;
     let mut seen = std::collections::HashSet::new();
     for p in paths {
-        if !seen.insert(Path::new(&p).to_string_lossy().to_ascii_lowercase()) {
+        let path = Path::new(&p);
+        if !seen.insert(path_key(path)) {
             continue;
         }
-        let path = Path::new(&p);
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -589,57 +662,56 @@ pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
         let Ok(metadata) = std::fs::metadata(path) else {
             continue;
         };
-        if !metadata.is_file() || metadata.len() > 25 * 1024 * 1024 {
+        if !metadata.is_file() {
             continue;
         }
-        if [
-            "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "avif",
-        ]
-        .contains(&ext.as_str())
-        {
-            let dest = unique_image_path(&images, &ext);
-            if std::fs::copy(path, &dest).is_ok() {
-                let id = db::insert_item_with_origin(
+        match ingest_kind(&ext, metadata.len()) {
+            IngestKind::Unsupported => {}
+            IngestKind::TextTooLarge => {
+                // Say so rather than truncating or silently dropping it. This
+                // is the clipboard path's message, because it is the same cap.
+                crate::crash::record_event("intake:text-too-large");
+                crate::feedback::notify(
                     app,
-                    "",
-                    "image",
-                    Some(&dest.to_string_lossy()),
-                    "clipboard",
+                    crate::feedback::Note::error(format!(
+                        "Too large to keep ({} KB; the limit is {} KB)",
+                        metadata.len().div_ceil(1024),
+                        crate::monitor::MAX_CAPTURE_TEXT_BYTES / 1024
+                    ))
+                    .with_detail(source_name(&p)),
                 );
-                if id == db::INSERT_FAILED {
-                    // The copy landed but the row did not, so nothing references
-                    // this file and no sweep will ever collect it. Undo the copy
-                    // rather than leak it, and do not count it as added — the
-                    // Explorer verb and the first-launch intake both report this
-                    // number back to the person.
-                    let _ = std::fs::remove_file(&dest);
-                    continue;
-                }
-                db::set_active_item(app, Some(id));
-                added += 1;
             }
-        } else if matches!(
-            ext.as_str(),
-            "txt"
-                | "md"
-                | "markdown"
-                | "json"
-                | "csv"
-                | "log"
-                | "rs"
-                | "ts"
-                | "tsx"
-                | "js"
-                | "jsx"
-                | "html"
-                | "css"
-        ) {
-            if let Ok(text) = std::fs::read_to_string(path) {
+            IngestKind::Image => {
+                let dest = unique_image_path(&images, &ext);
+                if std::fs::copy(path, &dest).is_ok() {
+                    let id = db::insert_item_with_origin(
+                        app,
+                        "",
+                        "image",
+                        Some(&dest.to_string_lossy()),
+                        "clipboard",
+                    );
+                    if id == db::INSERT_FAILED {
+                        // The copy landed but the row did not, so nothing references
+                        // this file and no sweep will ever collect it. Undo the copy
+                        // rather than leak it, and do not count it as added — the
+                        // Explorer verb and the first-launch intake both report this
+                        // number back to the person.
+                        let _ = std::fs::remove_file(&dest);
+                        continue;
+                    }
+                    db::set_active_item(app, Some(id));
+                    added += 1;
+                }
+            }
+            IngestKind::Text => {
+                let Ok(text) = std::fs::read_to_string(path) else {
+                    continue;
+                };
                 let text = text.trim();
-                if db::list_items(app)
-                    .iter()
-                    .any(|item| item.origin == "clipboard" && item.content == text)
-                {
+                // A blank file has nothing to keep, and an empty row would sit
+                // in every state payload saying nothing.
+                if text.is_empty() || known_text.contains(text) {
                     continue;
                 }
                 let id = db::insert_item_with_origin(app, text, "text", None, "clipboard");
@@ -649,16 +721,25 @@ pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
                 if id == db::INSERT_FAILED {
                     continue;
                 }
+                known_text.insert(text.to_string());
                 db::set_active_item(app, Some(id));
                 added += 1;
             }
-        } else if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-            let id = db::insert_item_with_origin(app, name, "text", None, "clipboard");
-            if id == db::INSERT_FAILED {
-                continue;
+            IngestKind::FileName => {
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                let name = name.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                let id = db::insert_item_with_origin(app, name, "text", None, "clipboard");
+                if id == db::INSERT_FAILED {
+                    continue;
+                }
+                db::set_active_item(app, Some(id));
+                added += 1;
             }
-            db::set_active_item(app, Some(id));
-            added += 1;
         }
     }
     refresh(app);
@@ -724,7 +805,9 @@ pub fn detach_attachment(app: AppHandle, id: i64) -> Result<(), String> {
         return Err(error);
     }
     if let Some(path) = db::delete_attachment(&app, id)? {
-        db::remove_owned_image_file(&app, &path);
+        // The row is gone; a file that cannot be unlinked is reported rather
+        // than silently left behind.
+        db::remove_owned_image_file(&app, &path)?;
     }
     refresh(&app);
     Ok(())
@@ -742,10 +825,15 @@ pub fn add_note_to_image(app: AppHandle, id: i64) {
 
 #[tauri::command]
 pub async fn export_markdown(app: AppHandle) -> Result<String, String> {
-    let state = db::get_state(&app);
+    // The export is the portability promise, so it reads every row the person
+    // kept rather than the windowed timeline the shelf paints from. A failed
+    // read is an error: a shorter export that looks complete is exactly the
+    // data loss the promise rules out.
+    let items = db::all_items(&app)?;
+    let sections = db::list_sections(&app);
     let mut attachments: std::collections::HashMap<i64, Vec<String>> =
         std::collections::HashMap::new();
-    for attachment in &state.attachments {
+    for attachment in db::list_all_attachments(&app) {
         attachments
             .entry(attachment.item_id)
             .or_default()
@@ -765,7 +853,7 @@ pub async fn export_markdown(app: AppHandle) -> Result<String, String> {
     if !dir.is_dir() {
         return Err("Choose a folder to export to in Data › Export folder.".into());
     }
-    export_markdown_into(&dir, &state.sections, &state.items, &attachments)?;
+    export_markdown_into(&dir, &sections, &items, &attachments)?;
     Ok(dir.join("bard-export.md").to_string_lossy().to_string())
 }
 
@@ -786,30 +874,27 @@ fn export_markdown_into(
     let mut out = String::from(
         "# Bard export\n\nImages are written into `images/` and attached files into `files/`, beside this file.\n",
     );
-    let mut unfiled: Vec<&db::Item> = vec![];
-    let mut by_section: Vec<(i64, &db::Item)> = vec![];
+    // An item belongs to a section only when that section was read. Everything
+    // else is written unfiled instead of being dropped: a failed section read
+    // used to make every sectioned item vanish from the export, which is the
+    // one thing an export must never do.
+    let known: std::collections::HashSet<i64> = sections.iter().map(|section| section.id).collect();
+    let mut unfiled: Vec<&db::Item> = Vec::new();
+    let mut by_section: std::collections::HashMap<i64, Vec<&db::Item>> =
+        std::collections::HashMap::new();
     for item in items {
-        match item.section_id {
+        match item.section_id.filter(|id| known.contains(id)) {
+            Some(section) => by_section.entry(section).or_default().push(item),
             None => unfiled.push(item),
-            Some(section) => by_section.push((section, item)),
         }
     }
     for item in &unfiled {
         out.push_str(&format!("- {}\n", item.content.replace('\n', "\n  ")));
     }
     for section in sections {
-        if !unfiled.is_empty() {
-            out.push('\n');
-            unfiled.clear();
-        }
-        let section_items: Vec<_> = by_section
-            .iter()
-            .filter(|(id, _)| *id == section.id)
-            .map(|(_, item)| *item)
-            .collect();
-        if section_items.is_empty() {
+        let Some(section_items) = by_section.get(&section.id) else {
             continue;
-        }
+        };
         out.push_str(&format!("\n## {}\n\n", section.name));
         for item in section_items {
             if item.kind == "image" {
@@ -1418,10 +1503,7 @@ pub fn set_done(app: AppHandle, id: i64, done: bool) {
 
 #[tauri::command]
 pub async fn clear_completed(app: AppHandle) -> Result<(), String> {
-    let ids: Vec<i64> = db::completed_items(&app)
-        .into_iter()
-        .map(|item| item.id)
-        .collect();
+    let ids = db::completed_item_ids(&app)?;
     db::delete_items_with_files(&app, &ids)?;
     refresh(&app);
     Ok(())
@@ -1486,10 +1568,9 @@ pub fn put_on_clipboard(app: &AppHandle, item: &db::Item) -> Result<String, Stri
 /// The three items the slot shortcuts reach: pins first, in pin order, then
 /// the most recent.
 fn slot_items(app: &AppHandle) -> Vec<db::Item> {
-    let mut items = db::list_items_windowed(app, 60);
-    db::sort_items(&mut items, "newest");
-    items.truncate(3);
-    items
+    // The one definition of a slot, shared with the state the panel reads, so
+    // the number on a row and the shortcut that copies it cannot disagree.
+    db::slot_items(app)
 }
 
 /// Put slot `slot` (1–3) on the clipboard.
@@ -1632,16 +1713,18 @@ pub fn set_retention_days(app: AppHandle, origin: String, days: Option<i64>) -> 
 /// returns a count and propagates the first error, so the caller can say
 /// `History pruned.` or `Couldn't prune history. Try again.` honestly.
 ///
-/// The count cap is applied here rather than on the capture path, so pruning is
-/// something a person asked for and watches happen, not something that silently
-/// deletes their data mid-session.
+/// It removes only what is past the lifespans the person chose, which is
+/// exactly what the pane promises: "Removes everything past the lifespans
+/// above, right now. It does not change them." The 5,000-item ceiling is a
+/// bound on how much the shelf re-reads, not a lifespan, and applying it here
+/// deleted automatic items of any age — including pinned ones — that no
+/// setting said to remove.
 #[tauri::command]
 pub async fn prune_history_now(app: AppHandle) -> Result<usize, String> {
     let mut removed = 0usize;
     for origin in ["clipboard", "dictation"] {
         removed += db::prune_expired(&app, origin)?;
     }
-    removed += db::prune_history(&app, db::AUTOMATIC_ITEM_CEILING)?;
     refresh(&app);
     Ok(removed)
 }
@@ -2191,6 +2274,28 @@ mod export_tests {
         std::fs::remove_dir_all(root).ok();
     }
 
+    /// An item whose section was not in the section list used to disappear from
+    /// the export entirely: only sections that were read were printed, and the
+    /// item was never written anywhere else. A failed section read must not
+    /// cost the person their items.
+    #[test]
+    fn an_item_whose_section_is_missing_is_still_exported() {
+        let root = test_dir("missing-section");
+        let dir = root.join("out");
+        std::fs::create_dir_all(&dir).unwrap();
+        let items = vec![item(1, Some(7), "filed but unreachable", "text", None)];
+        let attachments = std::collections::HashMap::new();
+
+        export_markdown_into(&dir, &[], &items, &attachments).unwrap();
+
+        let markdown = std::fs::read_to_string(dir.join("bard-export.md")).unwrap();
+        assert!(
+            markdown.contains("- filed but unreachable"),
+            "an item must never be dropped because its section was not read"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
     #[test]
     fn two_files_with_the_same_name_are_both_exported() {
         let mut used = std::collections::HashSet::new();
@@ -2203,6 +2308,46 @@ mod export_tests {
             unique_export_name("no-extension", &mut used),
             "no-extension"
         );
+    }
+}
+
+#[cfg(test)]
+mod ingest_tests {
+    use super::*;
+
+    /// File intake is the same door as the clipboard: a text file over the
+    /// watcher's cap must be refused, not stored whole and not truncated.
+    #[test]
+    fn file_intake_applies_the_clipboard_capture_cap_to_text() {
+        let cap = crate::monitor::MAX_CAPTURE_TEXT_BYTES as u64;
+        assert_eq!(ingest_kind("log", cap), IngestKind::Text);
+        assert_eq!(ingest_kind("log", cap + 1), IngestKind::TextTooLarge);
+        assert_eq!(ingest_kind("txt", 1), IngestKind::Text);
+        // The 25 MB bound still applies to every kind of file.
+        assert_eq!(
+            ingest_kind("png", MAX_INGEST_FILE_BYTES + 1),
+            IngestKind::Unsupported
+        );
+        assert_eq!(ingest_kind("png", MAX_INGEST_FILE_BYTES), IngestKind::Image);
+        // A file that is neither an image nor text keeps its name as a note.
+        assert_eq!(ingest_kind("zip", 10), IngestKind::FileName);
+    }
+
+    /// Two names that differ only in case are two files on Linux, and one on
+    /// the case-insensitive filesystems. Lowercasing every path collapsed the
+    /// pair on Linux and silently skipped one of them.
+    #[test]
+    fn case_distinct_paths_are_one_only_where_the_filesystem_says_so() {
+        let upper = path_key(Path::new("/tmp/Report.txt"));
+        let lower = path_key(Path::new("/tmp/report.txt"));
+        if cfg!(any(windows, target_os = "macos")) {
+            assert_eq!(upper, lower);
+        } else {
+            assert_ne!(
+                upper, lower,
+                "Linux has two files here, so an import must keep both"
+            );
+        }
     }
 }
 

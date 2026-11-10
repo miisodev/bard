@@ -174,6 +174,14 @@ const state: AppState = {
   background: "theme",
   backgroundColor: "#e6e7ea",
   sort: "newest",
+  // The pins and then the most recent, exactly as the backend publishes them:
+  // the pins in the order they were pinned, then everything else newest first.
+  slotIds: [
+    ...items.filter((item) => item.pinnedAt !== null).sort((a, b) => a.pinnedAt! - b.pinnedAt!),
+    ...items.filter((item) => item.pinnedAt === null).sort((a, b) => b.createdAt - a.createdAt),
+  ]
+    .slice(0, 3)
+    .map((item) => item.id),
   dock,
 };
 
@@ -510,12 +518,14 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
       const pinned = state.items.filter((i) => i.pinnedAt !== null).sort((a, b) => a.pinnedAt! - b.pinnedAt!);
       const rest = state.items.filter((i) => i.pinnedAt === null).sort((a, b) => b.createdAt - a.createdAt);
       state.items = [...pinned, ...rest];
+      state.slotIds = [...pinned, ...rest].slice(0, 3).map((i) => i.id);
       return null;
     }
     case "delete_item":
       state.items = state.items.filter((i) => i.id !== args.id);
       // The rows cascade: a deleted item leaves every pack it was in.
       for (const pack of packs) pack.itemIds = pack.itemIds.filter((id) => id !== args.id);
+      state.slotIds = state.slotIds.filter((id) => id !== args.id);
       return null;
     case "set_sort":
       state.sort = args.order as AppState["sort"];

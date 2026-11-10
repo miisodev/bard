@@ -207,14 +207,32 @@ pub fn play(cue: Cue) {
 /// How long the stream stays open after the last cue.
 const IDLE_CLOSE: Duration = Duration::from_secs(4);
 
+/// The output device is missing: recorded once per outage, not once per cue.
+///
+/// The lifecycle log is bounded and is where crash evidence lives, so a
+/// machine with no audio output must not fill it with one line per cue. The
+/// flag resets when a cue finds a device again, so a later outage is reported
+/// once too.
+static NO_OUTPUT_DEVICE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True the first time the output device is missing, then false until a cue
+/// finds a device again: one lifecycle line per outage, not one per cue.
+fn report_no_output_device() -> bool {
+    !NO_OUTPUT_DEVICE.swap(true, std::sync::atomic::Ordering::SeqCst)
+}
+
 fn worker(rx: Receiver<Cue>) {
     while let Ok(first) = rx.recv() {
         let Some(output) = Output::open() else {
-            crate::crash::record_event("sound:no-output-device");
+            if report_no_output_device() {
+                crate::crash::record_event("sound:no-output-device");
+            }
             // Drain what queued meanwhile; there is nothing to play it on.
             while rx.try_recv().is_ok() {}
             continue;
         };
+        // The device is available again: a later outage is reported once too.
+        NO_OUTPUT_DEVICE.store(false, std::sync::atomic::Ordering::SeqCst);
         output.push(render(first, output.rate));
         loop {
             match rx.recv_timeout(IDLE_CLOSE) {
@@ -353,5 +371,25 @@ mod tests {
         assert_eq!(Cue::from_kind("copy"), Cue::Copy);
         assert_eq!(Cue::from_kind("error"), Cue::Error);
         assert_eq!(Cue::from_kind("anything"), Cue::Info);
+    }
+
+    #[test]
+    fn a_missing_output_device_is_recorded_once_per_outage() {
+        assert!(
+            super::report_no_output_device(),
+            "the first missing device is reported"
+        );
+        assert!(
+            !super::report_no_output_device(),
+            "a second cue while it is missing is not"
+        );
+        assert!(!super::report_no_output_device());
+        // A successfully opened device ends the outage: the next miss is
+        // reported once again, not suppressed for the rest of the session.
+        super::NO_OUTPUT_DEVICE.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            super::report_no_output_device(),
+            "the next outage is reported once"
+        );
     }
 }

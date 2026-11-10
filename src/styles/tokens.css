@@ -162,7 +162,13 @@
 
   --scrim: rgba(12, 12, 20, 0.28);
   --scrollbar: rgba(0, 0, 0, 0.22);
-  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
+  /* The focus ring is one 2px outline in the accent. It is the same on every
+     surface, so a keyboard user sees one thing wherever the focus is. */
+  --focus-ring: 0 0 0 2px var(--ring);
+  /* A control filled with the accent colour needs the ring to separate from
+     itself: a canvas-coloured gap and the ring outside it. Only the filled
+     accent button uses this one. */
+  --focus-ring-on-accent: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
 
   /* ══ Kind tones ══════════════════════════════════════════════════════════
      Each kind's glyph sits in a small tonal circle of its own colour — the
@@ -232,7 +238,8 @@
 
   --scrim: rgba(0, 0, 0, 0.5);
   --scrollbar: rgba(255, 255, 255, 0.22);
-  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
+  --focus-ring: 0 0 0 2px var(--ring);
+  --focus-ring-on-accent: 0 0 0 2px var(--canvas), 0 0 0 4px var(--ring);
 
   --kind-text: #383a42;
   --kind-text-ink: #d6dbe5;

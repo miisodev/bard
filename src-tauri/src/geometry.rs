@@ -194,39 +194,88 @@ pub fn remember(app: &AppHandle, win: &WebviewWindow) {
     crate::db::set_setting(app, &key(win.label()), &value.to_string());
 }
 
+/// How long a window must be still before its rectangle is written.
+const SETTLE_MS: u64 = 400;
+
+/// One window's pending write.
+struct Pending {
+    /// Bumped by every move and resize event.
+    generation: u64,
+    /// Whether a worker is already waiting for this window to settle.
+    running: bool,
+}
+
+/// The pending writes, one entry per window label.
+fn pending() -> &'static std::sync::Mutex<std::collections::HashMap<String, Pending>> {
+    static PENDING: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Pending>>,
+    > = std::sync::OnceLock::new();
+    PENDING.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 /// Record a window's rectangle a moment after it stops moving or resizing,
 /// rather than on every one of the dozens of events a drag produces.
+///
+/// One worker waits per window, not one per event. A drag produces hundreds of
+/// events, and a thread each meant hundreds of threads all waking 400 ms later
+/// to find out they had nothing to do. The worker simply keeps waiting while
+/// the events keep coming, and writes once, when they stop.
 pub fn remember_soon(app: &AppHandle, label: &str) {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static GENERATIONS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
-    let generations = GENERATIONS.get_or_init(|| Mutex::new(HashMap::new()));
-    let generation = {
-        let mut map = generations
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let entry = map.entry(label.to_string()).or_insert(0);
-        *entry += 1;
-        *entry
-    };
+    let mut map = pending()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entry = map.entry(label.to_string()).or_insert(Pending {
+        generation: 0,
+        running: false,
+    });
+    entry.generation += 1;
+    if entry.running {
+        // A worker is already waiting for this window; it will see the new
+        // generation and start its clock again.
+        return;
+    }
+    entry.running = true;
+    drop(map);
+
     let app = app.clone();
     let label = label.to_string();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        let current = generations
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&label)
-            .copied();
-        if current != Some(generation) {
+        let mut seen = 0u64;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(SETTLE_MS));
+            let current = {
+                let map = pending()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                map.get(&label).map(|entry| entry.generation)
+            };
+            match current {
+                // The window moved again while the worker waited: nothing has
+                // settled yet, so the clock starts again from the last event.
+                Some(generation) if generation != seen => {
+                    seen = generation;
+                    continue;
+                }
+                None => return,
+                _ => {}
+            }
+            {
+                let mut map = pending()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if let Some(entry) = map.get_mut(&label) {
+                    entry.running = false;
+                }
+            }
+            let handle = app.clone();
+            let target = label.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(win) = handle.get_webview_window(&target) {
+                    remember(&handle, &win);
+                }
+            });
             return;
         }
-        let handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            if let Some(win) = handle.get_webview_window(&label) {
-                remember(&handle, &win);
-            }
-        });
     });
 }
 

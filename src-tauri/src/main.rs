@@ -155,12 +155,25 @@ fn open_database() -> (rusqlite::Connection, Option<String>) {
     )
 }
 
+/// Whether this argument reads as one of the app's own flags rather than a
+/// name to ingest.
+///
+/// `--` opens a flag everywhere. On Windows `/` does too, and every Windows
+/// path carries a drive letter or a backslash, so the `/` rule there never
+/// hid a real file. On POSIX it hid every one of them: `/home/me/note.txt`
+/// starts with `/` and is exactly what a file manager's "Open with Bard"
+/// hands over. So the `/` half only follows the flag rule on the platform it
+/// came from, and everywhere else an argument is a path when the filesystem
+/// actually has something at that name.
+fn is_flag(arg: &str) -> bool {
+    arg.starts_with("--") || (cfg!(target_os = "windows") && arg.starts_with('/'))
+}
+
+/// The arguments that name files to ingest at startup.
 fn usable_paths(args: &[String]) -> Vec<String> {
     args.iter()
         .skip(1)
-        .filter(|arg| {
-            !arg.starts_with("--") && !arg.starts_with('/') && std::path::Path::new(arg).is_file()
-        })
+        .filter(|arg| !is_flag(arg) && std::path::Path::new(arg).is_file())
         .cloned()
         .collect()
 }
@@ -251,11 +264,32 @@ fn main() {
         .manage(db::DbNotice(Mutex::new(storage_notice)))
         .setup(|app| {
             let handle = app.handle().clone();
-            let data_dir = paths::data_dir()
-                .ok_or("Bard could not resolve its local application-data directory.")?;
-            std::fs::create_dir_all(&data_dir)?;
-            let images_dir = data_dir.join("images");
-            std::fs::create_dir_all(&images_dir)?;
+            // The data directory is wanted, not required. `open_database`
+            // already decided how to run without one: an in-memory database and
+            // a notice that says plainly that this session's history is not
+            // being kept. Ending the process here instead would make that
+            // fallback unreachable and give the person a silent exit rather
+            // than the explanation.
+            let data_dir = paths::data_dir();
+            let images_dir = match &data_dir {
+                Some(dir) => {
+                    if let Err(error) = std::fs::create_dir_all(dir) {
+                        crate::crash::record_event("db:data-dir-unavailable");
+                        log::warn!("Bard could not use its data directory: {error}");
+                    }
+                    let images = dir.join("images");
+                    let _ = std::fs::create_dir_all(&images);
+                    images
+                }
+                None => {
+                    crate::crash::record_event("db:data-dir-unresolved");
+                    // Somewhere writable enough to hold this session's images,
+                    // so the app still runs and still shows what it can.
+                    std::env::temp_dir()
+                        .join("com.miisodev.bard")
+                        .join("images")
+                }
+            };
             // The shelf's image covers are loaded from the `asset` protocol, so
             // the images folder — and nothing else — goes into its scope. The
             // URL for a file is only ever handed out after `paste` has checked

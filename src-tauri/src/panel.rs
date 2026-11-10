@@ -203,7 +203,15 @@ pub fn on_moved(app: &AppHandle) {
             if let Ok(size) = win.inner_size() {
                 let logical = (size.width as f64 / scale).round();
                 if (260.0..=900.0).contains(&logical) {
-                    crate::db::set_setting(app, DOCK_WIDTH_SETTING, &logical.to_string());
+                    // A drag on the edge of a docked window fires a move event
+                    // for every pixel. Writing the setting for each one is a
+                    // database write under the global lock, dozens of times a
+                    // second; the width only changes when it actually changes.
+                    let previous = crate::db::get_setting(app, DOCK_WIDTH_SETTING)
+                        .and_then(|value| value.parse::<f64>().ok());
+                    if previous != Some(logical) {
+                        crate::db::set_setting(app, DOCK_WIDTH_SETTING, &logical.to_string());
+                    }
                 }
             }
         }
@@ -211,6 +219,8 @@ pub fn on_moved(app: &AppHandle) {
 }
 
 static FOCUS_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Whether a focus check is already waiting to run.
+static FOCUS_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A docked window goes away when you click elsewhere; a floating one stays.
 pub fn on_focus_change(app: &AppHandle, focused: bool) {
@@ -223,9 +233,17 @@ pub fn on_focus_change(app: &AppHandle, focused: bool) {
     {
         return;
     }
+    // The panel is focused and blurred constantly, and each change used to
+    // start a thread that slept 160 ms to see whether the focus really moved
+    // away. One check at a time is enough: a newer focus change while one is
+    // waiting simply takes its place.
+    if FOCUS_PENDING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(160));
+        FOCUS_PENDING.store(false, Ordering::SeqCst);
         if FOCUS_GENERATION.load(Ordering::SeqCst) != generation || just_shown() {
             return;
         }

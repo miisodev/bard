@@ -246,6 +246,13 @@ summary:focus-visible {
   box-shadow: var(--focus-ring);
 }
 
+/* A button filled with the accent colour cannot carry an accent-coloured
+   ring: the two would merge into one shape. The ring gets a gap of the
+   surface behind it, so it reads as a ring around the button. */
+.btn.primary:focus-visible {
+  box-shadow: var(--focus-ring-on-accent);
+}
+
 /* `.btn.danger` and `.segmented button:focus-visible` live in styles.css,
 beside
    the primitives they modify,

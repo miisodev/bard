@@ -40,6 +40,15 @@ const STALL_LIMIT: Duration = Duration::from_secs(3);
 const MAX_RECORDING_MINUTES: usize = 20;
 const MAX_RECORDING_SAMPLES: usize = TARGET_RATE as usize * 60 * MAX_RECORDING_MINUTES;
 const MAX_INPUT_BUFFER_SAMPLES: usize = 32_768;
+/// How long the stop path waits for the last capture callback to finish.
+///
+/// One callback is milliseconds of work; half a second covers a badly starved
+/// one without letting a wedged backend hold the stop path open.
+const DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+/// The sample buffer must be unchanged for this long, with no callback in
+/// flight, before it counts as settled.
+const DRAIN_QUIET: Duration = Duration::from_millis(20);
+const DRAIN_POLL: Duration = Duration::from_millis(5);
 
 static STREAM_ERROR: AtomicBool = AtomicBool::new(false);
 
@@ -126,6 +135,22 @@ struct Shared {
     monitor: Arc<MonitorState>,
     failed: AtomicBool,
     limit_reached: AtomicBool,
+    /// Callbacks that have entered the data callback but not yet returned. The
+    /// stop path waits for this to reach zero before it reads `samples`, so a
+    /// callback that is still appending its last frame is included.
+    callbacks_in_flight: AtomicU32,
+    /// Callbacks that have finished, so the stop path can tell a settled buffer
+    /// from one that is still growing.
+    callbacks: AtomicU64,
+    /// Device blocks that had to discard samples because the resampler could not
+    /// keep up, and how many samples those blocks lost.
+    overruns: AtomicU64,
+    dropped_samples: AtomicU64,
+    /// Set once the overrun has been written to the lifecycle log.
+    overrun_recorded: AtomicBool,
+    /// The device rate the dropped sample count is denominated in, for the
+    /// warning shown with the transcript.
+    input_rate: u32,
 }
 
 static RECORDER: Mutex<Option<Recorder>> = Mutex::new(None);
@@ -194,11 +219,52 @@ fn mark_failed(shared: &Shared) {
     shared.failed.store(true, Ordering::Release);
 }
 
+/// Put the first input overrun in the lifecycle log. Called from the monitor and
+/// from `stop`, never from the audio callback: the callback only bumps counters.
+fn record_overrun(shared: &Shared) {
+    if shared.overruns.load(Ordering::Acquire) == 0
+        || shared.overrun_recorded.swap(true, Ordering::AcqRel)
+    {
+        return;
+    }
+    crate::crash::record_event(&format!(
+        "audio:input-overrun:callbacks={} samples={}",
+        shared.overruns.load(Ordering::Relaxed),
+        shared.dropped_samples.load(Ordering::Relaxed)
+    ));
+}
+
 fn append_bounded_samples(samples: &mut Vec<f32>, output: &[f32], limit: usize) -> (usize, bool) {
     let remaining = limit.saturating_sub(samples.len());
     let stored = output.len().min(remaining);
     samples.extend_from_slice(&output[..stored]);
     (stored, stored < output.len())
+}
+
+/// Append `incoming` to `pending`, dropping from the front of the combined
+/// result until it fits `capacity`. Returns how many samples were discarded.
+///
+/// This is how the audio callback degrades when the resampler cannot keep up.
+/// The person is still talking, so the newest block matters more than the
+/// oldest pending one; a deliberate, counted loss is better than the old
+/// behaviour, which marked the take failed and then ignored every later block.
+fn append_keeping_newest(pending: &mut Vec<f32>, incoming: &[f32], capacity: usize) -> usize {
+    let total = pending.len().saturating_add(incoming.len());
+    if total <= capacity {
+        pending.extend_from_slice(incoming);
+        return 0;
+    }
+    let discard = total - capacity;
+    let from_pending = discard.min(pending.len());
+    if from_pending > 0 {
+        pending.copy_within(from_pending.., 0);
+        pending.truncate(pending.len() - from_pending);
+    }
+    // An incoming block can itself be larger than the whole cap. Keep its
+    // newest tail rather than trying to store more than the cap allows.
+    let from_incoming = discard - from_pending;
+    pending.extend_from_slice(&incoming[from_incoming..]);
+    discard
 }
 
 /// Make room for `frames` more samples, starting from empty. The block keeps
@@ -218,6 +284,32 @@ fn quiet(shared: &Shared) -> bool {
     shared.failed.load(Ordering::Acquire) || shared.limit_reached.load(Ordering::Acquire)
 }
 
+/// Counts one data callback for the stop path's drain.
+///
+/// It is created before any early return and dropped only after the callback has
+/// finished touching the shared state, including the frame it appends to
+/// `samples`. `callbacks` is published before the in-flight count falls to zero,
+/// so a waiter that sees zero cannot miss that callback's work.
+struct DeliveryGuard<'a> {
+    shared: &'a Shared,
+}
+
+impl<'a> DeliveryGuard<'a> {
+    fn enter(shared: &'a Shared) -> Self {
+        shared.callbacks_in_flight.fetch_add(1, Ordering::AcqRel);
+        Self { shared }
+    }
+}
+
+impl Drop for DeliveryGuard<'_> {
+    fn drop(&mut self) {
+        self.shared.callbacks.fetch_add(1, Ordering::Release);
+        self.shared
+            .callbacks_in_flight
+            .fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// Take one device callback from the audio thread.
 ///
 /// Only two mutexes are touched, both of them for the length of a memcpy or a
@@ -233,11 +325,18 @@ fn process_block(
     if quiet(shared) || block.is_empty() {
         return;
     }
-    if fifo.len().saturating_add(block.len()) > MAX_INPUT_BUFFER_SAMPLES {
-        mark_failed(shared);
-        return;
+    let discarded = append_keeping_newest(fifo, block, MAX_INPUT_BUFFER_SAMPLES);
+    if discarded > 0 {
+        // The resampler is behind. Keep the newest audio and keep streaming:
+        // the old code marked the take failed here, discarded this block and
+        // then ignored every later callback, so a busy machine became a silent
+        // take with no error. A counted gap and a warning is the honest
+        // degradation; the rest of what was said still reaches the transcript.
+        shared.overruns.fetch_add(1, Ordering::Relaxed);
+        shared
+            .dropped_samples
+            .fetch_add(discarded as u64, Ordering::Relaxed);
     }
-    fifo.extend_from_slice(block);
 
     let needed = resampler.input_frames_next();
     if fifo.len() < needed {
@@ -365,6 +464,11 @@ fn start_monitor(shared: Arc<Shared>, app: AppHandle) -> JoinHandle<()> {
                 }
             }
 
+            // An input overrun is a degraded take, not a failed one. Record the
+            // first occurrence here, on a normal thread; the callback only
+            // carries the counters.
+            record_overrun(&shared);
+
             // `limit_reached` is deliberately not tested here: reaching the
             // recording cap is a normal end of take, and folding it into the
             // stream-error branch would file a 20-minute take as a microphone
@@ -433,6 +537,12 @@ pub fn start(app: AppHandle) -> Result<(), String> {
         monitor: monitor.clone(),
         failed: AtomicBool::new(false),
         limit_reached: AtomicBool::new(false),
+        callbacks_in_flight: AtomicU32::new(0),
+        callbacks: AtomicU64::new(0),
+        overruns: AtomicU64::new(0),
+        dropped_samples: AtomicU64::new(0),
+        overrun_recorded: AtomicBool::new(false),
+        input_rate: sample_rate,
     });
 
     let scratch = Scratch::new(sample_rate)?;
@@ -480,6 +590,7 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[i16], _| {
+                    let _delivery = DeliveryGuard::enter(&shared);
                     if quiet(&shared) {
                         return;
                     }
@@ -506,6 +617,7 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[u16], _| {
+                    let _delivery = DeliveryGuard::enter(&shared);
                     if quiet(&shared) {
                         return;
                     }
@@ -535,6 +647,7 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[f32], _| {
+                    let _delivery = DeliveryGuard::enter(&shared);
                     if quiet(&shared) {
                         return;
                     }
@@ -565,10 +678,65 @@ fn err_cb(_err: cpal::StreamError) {
     STREAM_ERROR.store(true, Ordering::Release);
 }
 
+/// The warning a take carries when capture had to discard audio.
+fn input_overrun_warning(dropped: u64, rate: u32) -> Option<String> {
+    (dropped > 0).then(|| {
+        // Truncating a sub-millisecond loss to 0 would read as "nothing was
+        // lost"; the warning exists precisely because something was.
+        let milliseconds =
+            (dropped.saturating_mul(1_000) / u64::from(rate.max(1))).max(1);
+        format!(
+            "Part of the recording was skipped because the microphone fell behind ({milliseconds} ms). The transcript covers the audio Bard kept."
+        )
+    })
+}
+
+/// Wait until the final callback has finished and the sample buffer has stopped
+/// growing.
+fn drain_callbacks(shared: &Shared) {
+    drain_callbacks_with(shared, DRAIN_TIMEOUT, DRAIN_QUIET, DRAIN_POLL);
+}
+
+/// The drain itself, with its bounds as parameters so the wait can be tested
+/// without half a second of sleep.
+///
+/// Dropping the stream asks CPAL to stop, but a callback already inside the
+/// resampler or the VAD is still going to append the last frame the person
+/// spoke. The old fixed 40 ms sleep guessed at that: on a busy machine it was
+/// too short and the tail was lost, and on every take it was time spent waiting
+/// for nothing. Callback completion is the real signal; the quiet window catches
+/// a frame appended between two reads of the counter, and the timeout is only
+/// there so a backend that never returns cannot hold the stop path open.
+fn drain_callbacks_with(shared: &Shared, timeout: Duration, quiet: Duration, poll: Duration) {
+    let started = Instant::now();
+    let mut last_callbacks = shared.callbacks.load(Ordering::Acquire);
+    let mut last_len = lock(&shared.samples).len();
+    let mut settled_at = started;
+    while started.elapsed() < timeout {
+        let callbacks = shared.callbacks.load(Ordering::Acquire);
+        let in_flight = shared.callbacks_in_flight.load(Ordering::Acquire);
+        let len = lock(&shared.samples).len();
+        if callbacks != last_callbacks || len != last_len {
+            last_callbacks = callbacks;
+            last_len = len;
+            settled_at = Instant::now();
+        } else if in_flight == 0 && settled_at.elapsed() >= quiet {
+            return;
+        }
+        thread::sleep(poll);
+    }
+    // The backend never settled. The samples that did arrive are still a take;
+    // record the fact and return rather than hold the stop path open for ever.
+    crate::crash::record_event("audio:drain-timeout");
+}
+
 pub struct RecordingResult {
     pub samples: Vec<f32>,
     pub speech_detected: bool,
     pub error: Option<String>,
+    /// Set when the take had to discard audio because capture could not keep up.
+    /// The transcript is still valid for the audio that was stored.
+    pub warning: Option<String>,
 }
 
 pub fn stop() -> RecordingResult {
@@ -579,6 +747,7 @@ pub fn stop() -> RecordingResult {
             samples: Vec::new(),
             speech_detected: false,
             error: None,
+            warning: None,
         };
     };
     let Recorder {
@@ -591,12 +760,14 @@ pub fn stop() -> RecordingResult {
     if let Some(monitor) = monitor {
         let _ = monitor.join();
     }
-    // Give the backend a moment to finish its final callback before reading the
-    // shared samples. The monitor is already stopped, so this cannot wait on
-    // Tauri or the UI thread.
-    thread::sleep(Duration::from_millis(40));
+    drain_callbacks(&shared);
+    record_overrun(&shared);
     let speech_detected = lock(&shared.vad).speech_detected();
     let samples = std::mem::take(&mut *lock(&shared.samples));
+    let warning = input_overrun_warning(
+        shared.dropped_samples.load(Ordering::Acquire),
+        shared.input_rate,
+    );
     let error = (shared.failed.load(Ordering::Acquire) || STREAM_ERROR.load(Ordering::Acquire))
         .then(|| {
             "Microphone capture failed. Check the selected input device and try again.".to_string()
@@ -606,6 +777,7 @@ pub fn stop() -> RecordingResult {
         samples,
         speech_detected,
         error,
+        warning,
     }
 }
 
@@ -627,6 +799,23 @@ pub fn cancel() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_shared() -> Arc<Shared> {
+        Arc::new(Shared {
+            samples: Mutex::new(Vec::new()),
+            vad: Mutex::new(crate::dictation::vad::VadState::new()),
+            frames: AtomicU64::new(0),
+            monitor: Arc::new(MonitorState::new()),
+            failed: AtomicBool::new(false),
+            limit_reached: AtomicBool::new(false),
+            callbacks_in_flight: AtomicU32::new(0),
+            callbacks: AtomicU64::new(0),
+            overruns: AtomicU64::new(0),
+            dropped_samples: AtomicU64::new(0),
+            overrun_recorded: AtomicBool::new(false),
+            input_rate: 48_000,
+        })
+    }
 
     #[test]
     fn recording_limit_is_twenty_minutes() {
@@ -655,6 +844,123 @@ mod tests {
         assert_eq!(stored, 2);
         assert!(!limited);
         assert_eq!(samples, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn an_overrun_keeps_the_newest_audio_instead_of_failing_the_take() {
+        let mut pending = vec![1.0, 2.0, 3.0, 4.0];
+        let discarded = append_keeping_newest(&mut pending, &[5.0, 6.0, 7.0], 5);
+        assert_eq!(discarded, 2);
+        assert_eq!(pending, vec![3.0, 4.0, 5.0, 6.0, 7.0]);
+
+        // An incoming block can be larger than the whole capacity. Only its
+        // newest tail can survive, and the count is still the whole loss.
+        let mut pending = Vec::new();
+        let discarded = append_keeping_newest(&mut pending, &[1.0, 2.0, 3.0, 4.0, 5.0], 3);
+        assert_eq!(discarded, 2);
+        assert_eq!(pending, vec![3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn a_real_overrun_streams_on_instead_of_failing() {
+        let shared = test_shared();
+        let mut scratch = Scratch::new(48_000).expect("48 kHz is a supported rate");
+        // Half-scale samples: the voice-activity detector asserts that every
+        // frame it is handed is inside [-1, 1], and a real device never
+        // exceeds that. The overrun this test is about comes from the buffer
+        // being full, not from the level.
+        scratch.fifo.resize(MAX_INPUT_BUFFER_SAMPLES, 0.5);
+
+        process_block(
+            &shared,
+            &mut scratch.resampler,
+            &mut scratch.fifo,
+            &mut scratch.frame,
+            &[0.5; 480],
+        );
+
+        assert!(
+            !shared.failed.load(Ordering::Acquire),
+            "an overrun must not latch the take as failed"
+        );
+        assert_eq!(shared.overruns.load(Ordering::Acquire), 1);
+        assert_eq!(
+            shared.dropped_samples.load(Ordering::Acquire),
+            480,
+            "the oldest 480 samples made room for the newest 480"
+        );
+        assert_eq!(lock(&shared.samples).len(), CHUNK_OUT);
+
+        // The next callback still produces a frame. The take is degraded, not
+        // over. Refill the pending buffer first, because the first callback
+        // consumed a resampler block and that is what made room for this one.
+        scratch.fifo.resize(MAX_INPUT_BUFFER_SAMPLES, 0.5);
+        process_block(
+            &shared,
+            &mut scratch.resampler,
+            &mut scratch.fifo,
+            &mut scratch.frame,
+            &[0.5; 480],
+        );
+        assert_eq!(shared.overruns.load(Ordering::Acquire), 2);
+        assert_eq!(lock(&shared.samples).len(), 2 * CHUNK_OUT);
+        assert!(!shared.failed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn an_overrun_warning_names_the_audio_that_was_lost() {
+        assert_eq!(input_overrun_warning(0, 48_000), None);
+        let warning = input_overrun_warning(4_800, 48_000).expect("a loss has a warning");
+        assert!(warning.contains("100 ms"), "warning was {warning:?}");
+        assert!(warning.contains("transcript covers the audio Bard kept"));
+        // A loss smaller than a millisecond must not be reported as 0 ms.
+        let tiny = input_overrun_warning(1, 48_000).expect("even one sample is a loss");
+        assert!(tiny.contains("(1 ms)"), "warning was {tiny:?}");
+        // A zero rate must not divide by zero if a broken device reported one.
+        assert!(input_overrun_warning(1, 0).is_some());
+    }
+
+    #[test]
+    fn a_final_callback_that_arrives_late_is_still_in_the_take() {
+        let shared = test_shared();
+        let worker_shared = shared.clone();
+        let worker = thread::spawn(move || {
+            let _delivery = DeliveryGuard::enter(&worker_shared);
+            thread::sleep(Duration::from_millis(120));
+            lock(&worker_shared.samples).extend_from_slice(&[0.25, 0.5, 0.75]);
+        });
+        // Let the callback be inside the guard before the drain starts, which is
+        // the shape of one that was already delivering when the stream dropped.
+        thread::sleep(Duration::from_millis(10));
+
+        drain_callbacks(&shared);
+        worker.join().expect("the late callback");
+
+        assert_eq!(
+            *lock(&shared.samples),
+            vec![0.25, 0.5, 0.75],
+            "the final block must survive the drain"
+        );
+    }
+
+    #[test]
+    fn the_drain_gives_up_after_its_bound() {
+        let shared = test_shared();
+        let started = Instant::now();
+        // A quiet window longer than the timeout can never be satisfied, so this
+        // is the wedged-backend case.
+        drain_callbacks_with(
+            &shared,
+            Duration::from_millis(80),
+            Duration::from_millis(200),
+            Duration::from_millis(5),
+        );
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_millis(80));
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "the stop path hung for {elapsed:?}"
+        );
     }
 
     #[test]

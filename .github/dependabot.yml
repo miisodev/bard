@@ -1,0 +1,38 @@
+# Bard's dependencies are security-relevant: the app runs a native speech
+# engine, links a webview and installs updates, and the release ships a
+# software bill of materials for every one of them.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # The Rust graph is 650-odd crates. A group keeps the lockfile coherent
+      # and the pull requests reviewable, instead of sixty of them a week.
+      rust-dependencies:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "build(deps)"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      frontend-dependencies:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "build(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(deps)"

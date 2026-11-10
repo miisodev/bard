@@ -101,7 +101,15 @@ pub fn sync(app: &tauri::AppHandle) {
     linux_tray::refresh();
 }
 
-fn create_menu_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIcon> {
+fn create_menu_tray(app: &tauri::AppHandle) -> tauri::Result<Option<tauri::tray::TrayIcon>> {
+    // A missing or undecodable icon degrades to running without a tray icon:
+    // the bundled icons make this rare, but under `panic = "abort"` an
+    // unwrap here ends the process instead of letting Bard run. Say so in a
+    // lifecycle event rather than exiting.
+    let Some(icon) = app.default_window_icon().cloned() else {
+        crate::crash::record_event("tray:no-window-icon");
+        return Ok(None);
+    };
     let show = MenuItem::with_id(app, "show", "Show Bard", true, None::<&str>)?;
     let draw = MenuItem::with_id(app, "draw", "Draw", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
@@ -142,8 +150,6 @@ fn create_menu_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIc
     )?;
     let _ = CAPTURE_ITEM.set(capture.clone());
 
-    let icon = app.default_window_icon().cloned().unwrap();
-
     let builder = TrayIconBuilder::with_id("bard-tray")
         .icon(icon)
         .tooltip(tooltip())
@@ -161,7 +167,7 @@ fn create_menu_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIc
         })
         .on_menu_event(|app, event| run_action(app, event.id().as_ref()));
 
-    builder.build(app)
+    Ok(Some(builder.build(app)?))
 }
 
 fn db_autostart_handle(app: &tauri::AppHandle) -> bool {

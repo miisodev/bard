@@ -60,6 +60,18 @@ const win = getCurrentWindow();
 
 const WIDTHS = [2, 4, 8];
 
+const COLOR_NAMES = ["Ink", "Blue", "Red", "Green", "Amber"] as const;
+function colorName(color: string, colors: string[]): string {
+  const index = colors.indexOf(color);
+  if (index >= 0) return COLOR_NAMES[index] ?? "Colour";
+  return "Custom";
+}
+function widthName(width: number): string {
+  if (width <= 2) return "thin";
+  if (width <= 4) return "medium";
+  return "thick";
+}
+
 /** Ctrl+D and Alt+drag land the copy this far from the original, so it reads as one. */
 const DUPLICATE_STEP = 12;
 
@@ -236,6 +248,8 @@ export default function DrawWindow() {
   const [canvasOpen, setCanvasOpen] = useState(false);
   const canvasWell = useRef<HTMLInputElement>(null);
   const canvasChoice = useRef<HTMLDivElement>(null);
+  const styleRef = useRef<HTMLDivElement>(null);
+  const styleButtonRef = useRef<HTMLButtonElement>(null);
   const penCustom = !colors.includes(color);
   /** The colour a stroke would actually take: an ink follows the page. */
   const paintColor = INKS.includes(color) ? ink : color;
@@ -259,6 +273,7 @@ export default function DrawWindow() {
   /** A ref beside the state: a double Enter must not save twice in one frame. */
   const savingRef = useRef(false);
   const [help, setHelp] = useState(false);
+  const [styleOpen, setStyleOpen] = useState(false);
 
   /**
    * A drawing that has not been saved. Save puts it in Bard and closes the
@@ -1071,6 +1086,46 @@ export default function DrawWindow() {
     return () => document.removeEventListener("pointerdown", onPointer);
   }, [canvasOpen]);
 
+  // The style popover owns Escape in the capture phase, the way Menu does, so
+  // Draw's own window-level Escape chain never sees it while it is open. Focus
+  // returns to the style button when it closes.
+  useEffect(() => {
+    if (!styleOpen) return;
+    const container = styleRef.current;
+    const previous = document.activeElement as HTMLElement | null;
+    const firstSelected = container?.querySelector<HTMLButtonElement>("button[aria-pressed='true']");
+    (firstSelected ?? container?.querySelector<HTMLButtonElement>("button"))?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setStyleOpen(false);
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      const buttons = [...(container?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+      if (buttons.length === 0) return;
+      event.preventDefault();
+      const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      let next = current < 0 ? 0 : current;
+      if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = buttons.length - 1;
+      else if (event.key === "ArrowDown" || event.key === "ArrowRight") next = (current + 1) % buttons.length;
+      else next = (current - 1 + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    };
+    const onPointer = (event: PointerEvent) => {
+      if (!container?.contains(event.target as Node)) setStyleOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointer);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [styleOpen]);
+
   // A custom page previews live while the picker moves and is saved once,
   // when the picker closes.
   useEffect(() => {
@@ -1098,7 +1153,7 @@ export default function DrawWindow() {
         <div className="draw-head-lead" data-tauri-drag-region>
           <p className="companion-title" data-tauri-drag-region>
             Draw
-            {dirty ? <span className="draw-dirty" title="Unsaved drawing" aria-hidden="true" /> : null}
+            {dirty ? <span className="draw-dirty" role="img" aria-label="Not yet saved to Bard" title="Not yet saved to Bard" /> : null}
           </p>
           <div className="canvas-choice" ref={canvasChoice}>
             <button
@@ -1250,51 +1305,122 @@ export default function DrawWindow() {
         </div>
       ) : null}
 
-      {/*
-        Two rows, always: the tools above; the inks, widths and the three
-        actions below. The one row this replaces broke at the 480px floor.
-      */}
-      <div className="draw-toolbar">
-        <div className="draw-row">
-          <div className="draw-group">
-            {TOOLS.map(({ tool: id, label, key, Icon }, index) => (
-              <button
-                key={id}
-                className={`draw-tool${tool === id ? " on" : ""}`}
-                title={`${label} · ${key} · ${index + 1}`}
-                aria-label={label}
-                aria-pressed={tool === id}
-                onClick={() => chooseTool(id)}
-              >
-                <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
-              </button>
-            ))}
-          </div>
-
-          <div className="draw-sep" />
-
-          <div className="draw-group">
+      <div className="draw-toolbar" role="toolbar" aria-label="Drawing tools">
+        <div className="draw-group">
+          {TOOLS.map(({ tool: id, label, key, Icon }, index) => (
             <button
-              className="draw-tool"
-              onClick={undoOnce}
-              disabled={historyCounts.undo === 0}
-              title="Undo · Ctrl+Z"
-              aria-label="Undo"
+              key={id}
+              className={`draw-tool${tool === id ? " on" : ""}`}
+              title={`${label} · ${key} · ${index + 1}`}
+              aria-label={label}
+              aria-pressed={tool === id}
+              onClick={() => chooseTool(id)}
             >
-              <Undo2 size={16} strokeWidth={1.8} aria-hidden="true" />
+              <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
             </button>
-            <button
-              className="draw-tool"
-              onClick={redoOnce}
-              disabled={historyCounts.redo === 0}
-              title="Redo · Ctrl+Shift+Z"
-              aria-label="Redo"
-            >
-              <Redo2 size={16} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-          </div>
+          ))}
+        </div>
 
-          <div className="draw-spacer" />
+        <div className="draw-sep" aria-hidden="true" />
+
+        <div className="draw-group">
+          <button
+            className="draw-tool"
+            onClick={undoOnce}
+            disabled={historyCounts.undo === 0}
+            title="Undo · Ctrl+Z"
+            aria-label="Undo"
+          >
+            <Undo2 size={16} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+          <button
+            className="draw-tool"
+            onClick={redoOnce}
+            disabled={historyCounts.redo === 0}
+            title="Redo · Ctrl+Shift+Z"
+            aria-label="Redo"
+          >
+            <Redo2 size={16} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="draw-sep" aria-hidden="true" />
+
+        <div className="draw-group">
+          <div className="draw-style" ref={styleRef}>
+            <button
+              ref={styleButtonRef}
+              type="button"
+              className="draw-style-btn"
+              aria-label={`Style: ${colorName(color, colors)}, ${widthName(width)}`}
+              aria-expanded={styleOpen}
+              aria-haspopup="dialog"
+              title="Style"
+              onClick={() => setStyleOpen((open) => !open)}
+            >
+              <span
+                className="draw-style-swatch"
+                style={{ ["--swatch" as string]: paintColor }}
+                aria-hidden="true"
+              />
+              <span className="draw-style-width" aria-hidden="true">
+                <span style={{ height: width }} />
+              </span>
+            </button>
+            {styleOpen ? (
+              <div className="draw-style-pop" role="group" aria-label="Style">
+                <div className="draw-group">
+                  {colors.map((c) => (
+                    <button
+                      key={c}
+                      className={`draw-swatch${color === c ? " on" : ""}`}
+                      style={{ ["--swatch" as string]: c }}
+                      title={c === ink ? "Ink" : c}
+                      aria-label={c === ink ? "Ink" : `Colour ${c}`}
+                      aria-pressed={color === c}
+                      onClick={() => {
+                        setColor(c);
+                        setStyleOpen(false);
+                      }}
+                    />
+                  ))}
+                  <label
+                    className={`draw-swatch custom${penCustom ? " on" : ""}`}
+                    style={{ ["--swatch" as string]: customColor }}
+                    title="Custom colour"
+                  >
+                    <input
+                      type="color"
+                      aria-label="Custom pen colour"
+                      value={customColor}
+                      onChange={(event) => {
+                        setCustomColor(event.target.value);
+                        setColor(event.target.value);
+                      }}
+                    />
+                  </label>
+                </div>
+                <div className="draw-sep" aria-hidden="true" />
+                <div className="draw-group">
+                  {WIDTHS.map((w) => (
+                    <button
+                      key={w}
+                      className={`draw-width${width === w ? " on" : ""}`}
+                      title={`${w}px`}
+                      aria-label={`Width ${w}`}
+                      aria-pressed={width === w}
+                      onClick={() => {
+                        setWidth(w);
+                        setStyleOpen(false);
+                      }}
+                    >
+                      <span style={{ height: w }} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <button
             className="draw-tool"
@@ -1317,55 +1443,8 @@ export default function DrawWindow() {
           </button>
         </div>
 
-        <div className="draw-row">
-          <div className="draw-group">
-            {colors.map((c) => (
-              <button
-                key={c}
-                className={`draw-swatch${color === c ? " on" : ""}`}
-                style={{ ["--swatch" as string]: c }}
-                title={c === ink ? "Ink" : c}
-                aria-label={c === ink ? "Ink" : `Colour ${c}`}
-                aria-pressed={color === c}
-                onClick={() => setColor(c)}
-              />
-            ))}
-            <label
-              className={`draw-swatch custom${penCustom ? " on" : ""}`}
-              style={{ ["--swatch" as string]: customColor }}
-              title="Custom colour"
-            >
-              <input
-                type="color"
-                aria-label="Custom pen colour"
-                value={customColor}
-                onChange={(event) => {
-                  setCustomColor(event.target.value);
-                  setColor(event.target.value);
-                }}
-              />
-            </label>
-          </div>
-
-          <div className="draw-sep" />
-
-          <div className="draw-group">
-            {WIDTHS.map((w) => (
-              <button
-                key={w}
-                className={`draw-width${width === w ? " on" : ""}`}
-                title={`${w}px`}
-                aria-label={`Width ${w}`}
-                aria-pressed={width === w}
-                onClick={() => setWidth(w)}
-              >
-                <span style={{ height: w }} />
-              </button>
-            ))}
-          </div>
-
-          <div className="draw-spacer" />
-
+        <div className="draw-group draw-actions">
+          <div className="draw-sep" aria-hidden="true" />
           <button
             className="draw-text-btn"
             onClick={() => void save("keep")}

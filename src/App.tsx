@@ -125,6 +125,12 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     subscribe(listen("capture-paused", scheduleRefresh));
     subscribe(
       listen<CapturedEvent>("captured", (event) => {
+        // The same guard the refresh path carries. An event that arrives
+        // after this window has gone must not call a setter on an unmounted
+        // component: React warns about it today and drops the update, but the
+        // window is torn down on a hide, and the event that crossed the gap
+        // belonged to a shelf that is no longer on screen.
+        if (!alive) return;
         const payload = event.payload;
         const id = typeof payload === "number" ? payload : Number(payload?.id);
         if (Number.isFinite(id)) setActiveItemId(id);

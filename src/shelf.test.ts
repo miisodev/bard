@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   ago,
+  agoLong,
   fileFolder,
   fileName,
   filePaths,
   filterShelf,
+  fuzzyScore,
   insertCaptured,
   itemKind,
   itemPreview,
@@ -115,6 +117,54 @@ describe("ago", () => {
     expect(ago(now - 2 * 86_400_000, now)).toBe("2d");
     expect(ago(now - 21 * 86_400_000, now)).toBe("3w");
   });
+
+  it("says the same moment in words, so '34m' is never read as months", () => {
+    const now = 1_000_000_000;
+    expect(agoLong(now - 10_000, now)).toBe("just now");
+    expect(agoLong(now - 5 * 60_000, now)).toBe("5 minutes ago");
+    expect(agoLong(now - 3 * 3_600_000, now)).toBe("3 hours ago");
+    expect(agoLong(now - 2 * 86_400_000, now)).toBe("2 days ago");
+    expect(agoLong(now - 21 * 86_400_000, now)).toBe("3 weeks ago");
+    expect(agoLong(now - 60_000, now)).toBe("1 minute ago");
+  });
+});
+
+describe("search", () => {
+  const history = [
+    item({ id: 1, content: "https://github.com/miisodev/bard-releases" }),
+    item({ id: 2, content: "Book the Cape Town venue for the twelfth" }),
+    item({ id: 3, content: "Ship the V2 release notes before Friday" }),
+    item({ id: 4, content: "remember: the three tests" }),
+  ];
+
+  it("keeps a substring match exactly where it was", () => {
+    const view = filterShelf(history, "venue", "all");
+    expect(view.visible.map((entry) => entry.id)).toEqual([2]);
+  });
+
+  it("does not let a fuzzy match sit beside a precise one", () => {
+    // "venue" reaches "V2 release notes" as a subsequence of loose characters.
+    // The person typed a word; a word match is the answer, not a scattershot.
+    const view = filterShelf(history, "venue", "all");
+    expect(view.visible.map((entry) => entry.id)).not.toContain(3);
+  });
+
+  it("widens to a subsequence match when nothing matches as typed", () => {
+    const view = filterShelf(history, "ghcr", "all");
+    expect(view.visible.map((entry) => entry.id)).toEqual([1]);
+  });
+
+  it("scores a tight match above a scattered one", () => {
+    expect(fuzzyScore("gh", "github")).toBeGreaterThan(-1);
+    expect(fuzzyScore("zzz", "github")).toBe(-1);
+    expect(fuzzyScore("bard", "bard")).toBeGreaterThan(fuzzyScore("bard", "b a r d"));
+  });
+
+  it("counts the kinds of what it found", () => {
+    const view = filterShelf(history, "venue", "all");
+    expect(view.counts.all).toBe(1);
+    expect(view.counts.link).toBe(0);
+  });
 });
 
 describe("keys", () => {
@@ -143,5 +193,13 @@ describe("keys", () => {
     expect(listCommand(key({ key: "/", ctrlKey: true, inSearch: true }))).toEqual({ type: "guide" });
     expect(listCommand(key({ key: "Escape", inSearch: true }))).toEqual({ type: "escape" });
     expect(listCommand(key({ key: "?" }))).toEqual({ type: "guide" });
+  });
+
+  it("reach the row's menu and its editor from the search field too", () => {
+    // Both are navigation keys, not typing: the person searches, then acts on
+    // what they found without the keyboard leaving the field.
+    expect(listCommand(key({ key: "ContextMenu", inSearch: true }))).toEqual({ type: "menu" });
+    expect(listCommand(key({ key: "F10", shiftKey: true, inSearch: true }))).toEqual({ type: "menu" });
+    expect(listCommand(key({ key: "F2", inSearch: true }))).toEqual({ type: "edit" });
   });
 });
