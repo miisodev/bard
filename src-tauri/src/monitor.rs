@@ -1234,9 +1234,21 @@ fn clip_state() -> (u32, bool) {
     x11watch::state()
 }
 
-/// The sequence and the exclusion flag together on non-Linux platforms, where
-/// there is no stored flag to pair the sequence with.
-#[cfg(not(target_os = "linux"))]
+/// The sequence and the exclusion flag together on Windows.
+///
+/// Windows has no stored exclusion flag: the answer is read from the
+/// clipboard's own formats at the moment it is asked, so the two are always
+/// about the same clipboard. The formats are the ones a password manager or
+/// another privacy-aware application sets to say "this is not for a history",
+/// and they are the reason the check exists at all.
+#[cfg(windows)]
+fn clip_state() -> (u32, bool) {
+    (clip_seq(), clip_excluded())
+}
+
+/// The sequence and the exclusion flag together on the platforms that have
+/// neither: there is nothing to exclude and nothing to pair.
+#[cfg(not(any(windows, target_os = "linux")))]
 fn clip_state() -> (u32, bool) {
     (clip_seq(), false)
 }
