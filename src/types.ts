@@ -52,12 +52,6 @@ export interface PackSummary {
   previewItemIds: number[];
 }
 
-export interface PackDetail {
-  pack: PackSummary;
-  /** The members in pack order. */
-  items: Item[];
-}
-
 export type Architecture =
   | "whisper"
   | "parakeet"
@@ -136,45 +130,6 @@ export interface ModelInfo {
     url?: string;
     status?: string;
   } | null;
-}
-
-export interface DetectedModel {
-  id: string;
-  name?: string;
-  repo: string;
-  file: string;
-  size: number;
-  localPath: string;
-  parameters?: string;
-  quantization?: string;
-  quant?: string;
-  sourceRevision?: string;
-  compatibility?: BackendModelCompatibility;
-  compatibilityMessage?: string;
-  registered?: boolean;
-  owned?: boolean;
-}
-
-export interface ModelStatus {
-  id: string;
-  name: string;
-  sizeMb: number;
-  sizeBytes: number;
-  downloaded: boolean;
-  architecture: Architecture;
-  role?: string | null;
-  compatibility: BackendModelCompatibility;
-  localPath: string | null;
-  owned: boolean;
-}
-
-export type OverlayVertical = "top" | "bottom";
-export type OverlayHorizontal = "left" | "middle" | "right";
-export type OverlayPosition = `${OverlayVertical}-${OverlayHorizontal}`;
-
-/** The `dictation-review` payload: the finished take, open for review. */
-export interface DictationReviewPayload {
-  text: string;
 }
 
 /** The timeline's order; newest first is the default. */
@@ -306,39 +261,6 @@ export interface ModelProgress {
   etaSeconds?: number;
   error?: string;
 }
-
-export interface HfFile {
-  path: string;
-  size: number;
-  sha256: string;
-  quant?: string;
-  sourceRepo?: string;
-  sourceRevision?: string;
-  compatibility?: BackendModelCompatibility;
-  compatibilityMessage?: string;
-}
-
-export interface CachedHfModel {
-  id?: string;
-  repo: string;
-  file: string;
-  size: number;
-  localPath: string;
-  quant?: string;
-  compatibility?: BackendModelCompatibility;
-  registered?: boolean;
-  owned?: boolean;
-}
-
-export interface ModelCompatibilityResult {
-  path?: string;
-  status?: BackendModelCompatibility;
-  message?: string;
-  compatibility?: BackendModelCompatibility;
-  compatibilityMessage?: string;
-}
-
-export type HfInstallResult = string | { id: string } | null;
 
 export interface CrashReport {
   path: string;
