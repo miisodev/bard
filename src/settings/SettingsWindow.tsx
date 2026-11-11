@@ -29,7 +29,7 @@ import AboutPane from "./panes/About";
   panel as a frameless surface of the same material, at the panel's height.
   The sections are ordered the way the product is used rather than the way it
   is built: how it looks and talks, then the clipboard, dictation and its
-  models (with optional Refine), then keys, data and provenance.
+  models, then keys, data and provenance.
 */
 
 const SECTIONS = [
@@ -132,9 +132,6 @@ export default function SettingsWindow() {
     };
 
     refresh();
-    void api.refreshLicense().then((license) => {
-      if (alive) setState((current) => (current ? { ...current, license } : current));
-    }).catch(() => undefined);
     // `refresh` keeps shell state current. Dedicated model events drive the
     // inventory pane so a compatibility probe's state refresh cannot restart
     // the same probe. `model-ready` remains the terminal success signal.

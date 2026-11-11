@@ -281,9 +281,6 @@ pub fn note_own_text(text: &str) {
 }
 
 pub fn capture_text(app: &AppHandle, text: &str) {
-    if crate::license::require(app).is_err() {
-        return;
-    }
     // The duplicate check hashes what the watcher reads back, untrimmed:
     // " foo " and "foo" are different copies, and the same copy is not
     // captured twice.
@@ -932,9 +929,6 @@ unsafe extern "system" fn clipboard_wnd_proc(
 /// caller that reads the value (the double-Shift gesture) uses it to decide
 /// whether to put the clipboard back, which is the same decision either way.
 pub fn capture_image(app: &AppHandle, img: arboard::ImageData<'static>) -> bool {
-    if crate::license::require(app).is_err() {
-        return false;
-    }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     img.bytes.hash(&mut hasher);
     let hash = hasher.finish();
@@ -1063,9 +1057,6 @@ fn store_image(job: ImageJob) {
 
 /// Files copied in a file manager are kept as file items.
 fn capture_files(app: &AppHandle, files: Vec<std::path::PathBuf>) {
-    if crate::license::require(app).is_err() {
-        return;
-    }
     let paths: Vec<String> = files
         .iter()
         .map(|f| f.to_string_lossy().into_owned())

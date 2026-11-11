@@ -258,7 +258,6 @@ export interface AppState {
   modelReady: boolean;
   micReady: boolean;
   activeItemId: number | null;
-  license: LicenseStatus;
   /** "direct" for the miiso.dev download, "store" for the Microsoft Store copy. */
   channel: "direct" | "store" | "flatpak";
   desktop?: { session: "windows" | "x11" | "wayland"; shortcutsReady: boolean };
@@ -280,39 +279,6 @@ export interface AppState {
    * temporarily. Absent (or null) when opening was quiet.
    */
   storageNotice?: string | null;
-}
-
-export interface LicenseStatus {
-  state: "trial" | "active" | "restricted" | "unavailable" | string;
-  canUse: boolean;
-  keyConfigured: boolean;
-  trialStartedAt: number | null;
-  trialExpiresAt: number | null;
-  expiresAt: number | null;
-  lastCheckedAt: number | null;
-  message: string | null;
-  /**
-   * Activations in use, and the ceiling. A licence is three computers — a
-   * headline term of a $20 purchase — but the signed lease carries no count and
-   * the broker sends none: this value is what the local install has observed of
-   * its own activations, so the card renders the limit only and never presents
-   * this as the buyer's live figure. Optional because the backend does not
-   * always report it: absent means "not reported", never "zero used".
-   */
-  activationCount?: number | null;
-  activationLimit?: number | null;
-  /**
-   * Days left on the signed offline lease. The backend's own "Offline licence
-   * check pending." message is rendered; this is the number behind it.
-   */
-  offlineLeaseDaysLeft?: number | null;
-  /**
-   * True while licence revalidation has failed for two or more cycles in a
-   * row: the service cannot be reached and Bard keeps retrying on its normal
-   * schedule. The licence keeps working on its offline lease; this only makes
-   * the retrying visible, and it clears the moment a check succeeds.
-   */
-  revalidationFailing?: boolean;
 }
 
 export interface UpdateInfo {
@@ -365,20 +331,6 @@ export interface ModelCompatibilityResult {
 }
 
 export type HfInstallResult = string | { id: string } | null;
-
-export interface PostprocessingSettings {
-  enabled: boolean;
-  modelId?: string;
-  modelIds?: string[];
-  modelName?: string;
-  keyConfigured?: boolean;
-  /** Compatibility aliases used by early backend status shapes. */
-  apiKeyConfigured?: boolean;
-  hasApiKey?: boolean;
-  hasValidModel?: boolean;
-  ready?: boolean;
-  statusMessage?: string;
-}
 
 export interface CrashReport {
   path: string;
@@ -433,19 +385,3 @@ export interface RestorePreview {
   fresh: boolean;
 }
 
-export interface SavePostprocessingInput {
-  enabled: boolean;
-  modelId?: string;
-  modelIds?: string[];
-  /** Sent only while saving. It is never returned or placed in AppState. */
-  apiKey?: string;
-  clearKey?: boolean;
-}
-
-export interface PostprocessingTestResult {
-  ok: boolean;
-  message?: string;
-  modelName?: string;
-}
-
-export type PostprocessingTestResponse = boolean | PostprocessingTestResult;

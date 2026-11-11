@@ -757,7 +757,7 @@ body {
 /* ---------- onboarding ---------- */
 
 /* Setup uses a normal, resizable desktop window with a scrolling step body.
-   Navigation remains visible when a permission message or licence error grows. */
+   Navigation remains visible when a permission message grows. */
 .app.setup {
   border: 0;
   border-radius: 0;

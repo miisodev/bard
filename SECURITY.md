@@ -4,8 +4,8 @@
 
 Bard is a local desktop application: it has no server, no account and no
 telemetry. A security issue in Bard is therefore almost always a problem on
-one machine — a path that escapes its folder, a licence check that can be
-bypassed, an update that can be forged — rather than a breach of a service
+one machine — a path that escapes its folder, a private copy that is kept when it
+should not be, an update that can be forged — rather than a breach of a service
 that holds anyone's data.
 
 Report privately through the [miiso.dev support route](https://miiso.dev/contact)
@@ -26,8 +26,6 @@ a fix to reference.
 - The Microsoft Store copy is signed by Microsoft.
 - Downloads are published with `SHA256SUMS`, a software bill of materials and
   a provenance document naming the exact source commit.
-- The licence key, the signed lease and any OpenRouter key live only in the
-  operating system's credential store — never in the database, the logs, the
-  events or a crash report.
-- Refine sends the finished transcript text only, and only when switched on.
-  Audio, captures and history never leave the machine.
+- Audio, captures and history never leave the machine. Bard contacts the
+  network only to download a speech model you chose and to check for updates.
+- The source is public, so every claim here can be checked.

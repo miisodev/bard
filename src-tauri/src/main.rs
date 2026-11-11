@@ -3,10 +3,8 @@
 mod backup;
 mod catalog;
 mod clip;
-mod cloud;
 mod commands;
 mod crash;
-mod credential;
 mod db;
 mod desktop;
 mod dictation;
@@ -14,7 +12,6 @@ mod feedback;
 mod geometry;
 mod guardian;
 mod hf;
-mod license;
 #[cfg(target_os = "linux")]
 mod linux_portal;
 mod monitor;
@@ -302,7 +299,6 @@ fn main() {
                 log::warn!("image covers will fall back to nothing: {error}");
             }
             app.manage(commands::ImagesDir(images_dir));
-            crate::license::spawn_revalidation(handle.clone());
             let startup_args: Vec<String> = std::env::args().collect();
             let launched_with_paths = ingest_startup_paths(&handle, &startup_args);
 
@@ -522,20 +518,10 @@ fn main() {
             commands::hf_use_cached,
             commands::remove_custom_model,
             commands::get_custom_models,
-            commands::get_postprocessing,
-            commands::save_postprocessing,
-            commands::test_postprocessing,
-            commands::test_postprocessing_cancel,
             commands::get_crash_report,
             commands::copy_diagnostic_report,
             backup::backup_now,
             backup::restore_from_backup,
-            commands::get_license,
-            commands::start_trial,
-            commands::activate_license,
-            commands::refresh_license,
-            commands::deactivate_license,
-            commands::clear_license,
             commands::check_for_update,
             commands::install_update,
             commands::set_dock,

@@ -8,7 +8,6 @@ use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt;
-use zeroize::Zeroize;
 
 use crate::db;
 
@@ -39,18 +38,6 @@ pub fn announce_appearance(app: &AppHandle) {
     let _ = app.emit("appearance", read_appearance(app));
 }
 
-fn license_blocked(app: &AppHandle, error: String) -> bool {
-    let _ = app.emit("license-restricted", error);
-    true
-}
-
-fn require_licensed_or_onboarding(app: &AppHandle) -> Result<(), String> {
-    if crate::db::get_setting(app, "onboarding_completed") != Some("1".into()) {
-        return Ok(());
-    }
-    crate::license::require(app)
-}
-
 #[tauri::command]
 pub async fn hf_cached_models(app: AppHandle) -> Vec<crate::hf::CachedHfModel> {
     crate::hf::cached_models(&app)
@@ -71,7 +58,6 @@ pub async fn check_model(
 
 #[tauri::command]
 pub async fn activate_detected_model(app: AppHandle, id: String) -> Result<(), String> {
-    require_licensed_or_onboarding(&app)?;
     crate::hf::activate_detected_model(&app, &id)
 }
 
@@ -101,7 +87,6 @@ pub async fn hf_install(
     size: u64,
     sha256: String,
 ) -> Result<String, String> {
-    require_licensed_or_onboarding(&app)?;
     crate::hf::install_custom_model(&app, &repo, &file, size, &sha256).await
 }
 
@@ -113,7 +98,6 @@ pub async fn hf_use_cached(
     local_path: String,
     size: u64,
 ) -> Result<(), String> {
-    require_licensed_or_onboarding(&app)?;
     // One load, not two. This used to register the path and then activate it,
     // and each of those opened the file with the engine — so choosing a detected
     // model meant two full opens of a multi-gigabyte GGUF for one click.
@@ -130,142 +114,6 @@ pub fn remove_custom_model(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_custom_models(app: AppHandle) -> Vec<db::CustomModel> {
     db::list_custom_models(&app)
-}
-
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PostprocessingSettings {
-    pub enabled: bool,
-    pub model_id: String,
-    pub model_ids: Vec<String>,
-    pub model_name: Option<String>,
-    pub key_configured: bool,
-    pub status_message: Option<String>,
-}
-
-fn postprocessing_config(app: &AppHandle) -> crate::cloud::Config {
-    crate::cloud::Config::from_setting_values(
-        db::get_setting(app, crate::cloud::ENABLED_SETTING_KEY),
-        db::get_setting(app, crate::cloud::MODEL_IDS_SETTING_KEY),
-    )
-}
-
-fn postprocessing_settings(app: &AppHandle) -> Result<PostprocessingSettings, String> {
-    let config = postprocessing_config(app);
-    let (status, credential_error) = match crate::cloud::status(&config) {
-        Ok(status) => (status, false),
-        Err(crate::cloud::Error::CredentialStore { .. }) => (
-            crate::cloud::Status {
-                enabled: config.enabled,
-                has_api_key: false,
-                has_valid_model: config.has_valid_model(),
-                ready: false,
-                model_ids: config.model_ids.clone(),
-            },
-            true,
-        ),
-        Err(error) => return Err(error.to_string()),
-    };
-    let model_id = config.active_model_id().unwrap_or_default().to_string();
-    let status_message = if credential_error {
-        Some("Windows Credential Manager is unavailable; cloud processing is off.".into())
-    } else if !status.ready && config.enabled {
-        Some("Refine needs a saved key and model ID.".into())
-    } else {
-        None
-    };
-    Ok(PostprocessingSettings {
-        enabled: config.enabled && !credential_error,
-        model_id: model_id.clone(),
-        model_ids: config.model_ids.clone(),
-        model_name: (!model_id.is_empty()).then_some(model_id),
-        key_configured: status.has_api_key,
-        status_message,
-    })
-}
-
-#[tauri::command]
-pub fn get_postprocessing(app: AppHandle) -> Result<PostprocessingSettings, String> {
-    postprocessing_settings(&app)
-}
-
-#[tauri::command]
-pub fn save_postprocessing(
-    app: AppHandle,
-    enabled: bool,
-    model_id: Option<String>,
-    model_ids: Option<Vec<String>>,
-    mut api_key: Option<String>,
-    clear_key: Option<bool>,
-) -> Result<PostprocessingSettings, String> {
-    if enabled {
-        crate::license::require(&app)?;
-    }
-    let clearing_key = clear_key.unwrap_or(false) || api_key.as_deref().is_some_and(str::is_empty);
-    let current = postprocessing_config(&app);
-    let ids = if clearing_key {
-        // Clearing a credential must remain possible even if a stale model
-        // setting is malformed; preserve the last known model list verbatim.
-        current.model_ids
-    } else {
-        let raw_models = model_ids
-            .filter(|ids| !ids.is_empty())
-            .map(|ids| ids.join(","))
-            .or(model_id)
-            .unwrap_or_default();
-        crate::cloud::parse_model_ids_checked(&raw_models).map_err(|error| error.to_string())?
-    };
-
-    let credential_result: Result<(), String> = if clearing_key {
-        crate::cloud::delete_api_key_bounded().map_err(|error| error.to_string())
-    } else if let Some(key) = api_key.as_deref().filter(|key| !key.trim().is_empty()) {
-        crate::cloud::set_api_key_bounded(key.to_owned()).map_err(|error| error.to_string())
-    } else {
-        Ok(())
-    };
-    if let Some(key) = api_key.as_mut() {
-        key.zeroize();
-    }
-    credential_result?;
-
-    let next_enabled = enabled
-        && !ids.is_empty()
-        && crate::cloud::has_api_key().map_err(|error| error.to_string())?;
-    let next_config = crate::cloud::Config {
-        enabled: next_enabled,
-        model_ids: ids,
-    };
-    db::set_settings_checked(
-        &app,
-        &[
-            (
-                crate::cloud::ENABLED_SETTING_KEY,
-                next_config.enabled_setting_value(),
-            ),
-            (
-                crate::cloud::MODEL_IDS_SETTING_KEY,
-                &next_config.model_ids_setting_value(),
-            ),
-        ],
-    )?;
-    postprocessing_settings(&app)
-}
-
-#[tauri::command]
-pub async fn test_postprocessing(app: AppHandle) -> Result<serde_json::Value, String> {
-    crate::crash::record_event("cloud:test-start");
-    let config = postprocessing_config(&app);
-    let result = crate::cloud::test_connection(&config, Duration::from_secs(15))
-        .await
-        .map_err(|error| error.to_string());
-    crate::crash::record_event("cloud:test-end");
-    let message = result?;
-    Ok(serde_json::json!({ "ok": true, "message": message }))
-}
-
-#[tauri::command]
-pub fn test_postprocessing_cancel() {
-    crate::cloud::cancel_test_connection();
 }
 
 #[derive(Serialize)]
@@ -307,12 +155,6 @@ fn diagnostic_report(app: &AppHandle) -> String {
     if let Some(notice) = db::storage_notice(app) {
         out.push_str(&format!("storage: {notice}\n"));
     }
-    let status = crate::license::status(app);
-    out.push_str(&format!("licence_state: {}\n", status.state));
-    out.push_str(&format!(
-        "licence_revalidation_failing: {}\n",
-        status.revalidation_failing
-    ));
     out.push_str("\n--- latest crash report ---\n");
     match crate::crash::read_latest_log(&logs) {
         Ok(Some(log)) => {
@@ -335,11 +177,8 @@ fn diagnostic_report(app: &AppHandle) -> String {
     out
 }
 
-/// Updates are not a licensed feature. Gating them on the licence trapped a
-/// lapsed buyer on a version they could not leave — the one control that could
-/// fix a broken release was the one the expiry took away. The updater refuses
-/// the Store and Linux channels itself and verifies the signed manifest, so
-/// nothing here needs the licence.
+/// The updater refuses the Store and Linux channels itself and verifies the
+/// signed manifest.
 #[tauri::command]
 pub async fn check_for_update(
     app: AppHandle,
@@ -353,53 +192,9 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn start_trial(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::license::start_trial(&app).map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|_| "Bard could not finish setting up its trial. Try again.".to_string())?
-}
-
-#[tauri::command]
-pub async fn get_license(app: AppHandle) -> crate::license::LicenseStatus {
-    crate::license::status(&app)
-}
-
-#[tauri::command]
-pub async fn activate_license(
-    app: AppHandle,
-    key: String,
-) -> Result<crate::license::LicenseStatus, String> {
-    crate::license::activate(&app, key)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn refresh_license(app: AppHandle) -> crate::license::LicenseStatus {
-    crate::license::refresh(&app).await
-}
-
-#[tauri::command]
-pub async fn deactivate_license(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
-    crate::license::deactivate(&app)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn clear_license(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
-    crate::license::clear(&app).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
 pub async fn get_setting_str(app: AppHandle, key: String) -> String {
     const PUBLIC_SETTING_KEYS: &[&str] = &[
         "selected_microphone",
-        "openrouter_postprocess_enabled",
-        "openrouter_postprocess_model_ids",
-        "openrouter_postprocess_model_id",
         "theme",
         "clipboard_retention_days",
         "dictation_retention_days",
@@ -438,10 +233,6 @@ pub fn dirs_documents() -> String {
 
 #[tauri::command]
 pub fn create_section(app: AppHandle, name: String) -> i64 {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
-        return 0;
-    }
     let id = db::find_or_create_section(&app, &name);
     db::set_active_section(&app, Some(id));
     refresh(&app);
@@ -456,20 +247,12 @@ pub fn set_active_section(app: AppHandle, id: Option<i64>) {
 
 #[tauri::command]
 pub fn rename_section(app: AppHandle, id: i64, name: String) {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
-        return;
-    }
     db::rename_section(&app, id, &name);
     refresh(&app);
 }
 
 #[tauri::command]
 pub fn delete_section(app: AppHandle, id: i64) {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
-        return;
-    }
     db::delete_section(&app, id);
     refresh(&app);
 }
@@ -490,10 +273,6 @@ pub fn create_pack(
     name: String,
     item_ids: Vec<i64>,
 ) -> Result<db::PackSummary, String> {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error.clone());
-        return Err(error);
-    }
     let pack = db::create_pack(&app, &name, &item_ids)?;
     refresh(&app);
     Ok(pack)
@@ -501,10 +280,6 @@ pub fn create_pack(
 
 #[tauri::command]
 pub fn rename_pack(app: AppHandle, id: i64, name: String) -> Result<(), String> {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error.clone());
-        return Err(error);
-    }
     db::rename_pack(&app, id, &name)?;
     refresh(&app);
     Ok(())
@@ -512,10 +287,6 @@ pub fn rename_pack(app: AppHandle, id: i64, name: String) -> Result<(), String> 
 
 #[tauri::command]
 pub fn delete_pack(app: AppHandle, id: i64) -> Result<(), String> {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error.clone());
-        return Err(error);
-    }
     db::delete_pack(&app, id)?;
     refresh(&app);
     Ok(())
@@ -523,10 +294,6 @@ pub fn delete_pack(app: AppHandle, id: i64) -> Result<(), String> {
 
 #[tauri::command]
 pub fn pack_add_items(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), String> {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error.clone());
-        return Err(error);
-    }
     db::pack_add_items(&app, id, &item_ids)?;
     refresh(&app);
     Ok(())
@@ -534,10 +301,6 @@ pub fn pack_add_items(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(),
 
 #[tauri::command]
 pub fn pack_remove_items(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), String> {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error.clone());
-        return Err(error);
-    }
     db::pack_remove_items(&app, id, &item_ids)?;
     refresh(&app);
     Ok(())
@@ -545,10 +308,6 @@ pub fn pack_remove_items(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<
 
 #[tauri::command]
 pub fn pack_reorder(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), String> {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error.clone());
-        return Err(error);
-    }
     db::pack_reorder(&app, id, &item_ids)?;
     refresh(&app);
     Ok(())
@@ -556,7 +315,6 @@ pub fn pack_reorder(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), S
 
 #[tauri::command]
 pub fn update_item(app: AppHandle, id: i64, content: String) -> Result<(), String> {
-    crate::license::require(&app)?;
     if content.trim().is_empty() {
         return Err("Add some text, or cancel to keep the original note.".into());
     }
@@ -633,10 +391,6 @@ fn path_key(path: &Path) -> String {
 /// It is deliberately not a Tauri command: a renderer can read a File object
 /// it owns, but it cannot ask Rust to copy an arbitrary path by name.
 pub fn ingest_paths(app: &AppHandle, paths: Vec<String>) -> usize {
-    if let Err(error) = crate::license::require(app) {
-        license_blocked(app, error);
-        return 0;
-    }
     let images = app.state::<ImagesDir>().0.clone();
     // The duplicate check reads the library once. It used to call `list_items`
     // inside the loop, so importing n text files scanned the whole table n
@@ -781,7 +535,6 @@ pub async fn attach_image(
     data_base64: String,
     ext: String,
 ) -> Result<i64, String> {
-    crate::license::require(&app)?;
     let (bytes, ext) = decode_image_payload(&data_base64, &ext)?;
     let images = app.state::<ImagesDir>().0.clone();
     let path = unique_image_path(&images, &ext);
@@ -800,10 +553,6 @@ pub async fn attach_image(
 
 #[tauri::command]
 pub fn detach_attachment(app: AppHandle, id: i64) -> Result<(), String> {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error.clone());
-        return Err(error);
-    }
     if let Some(path) = db::delete_attachment(&app, id)? {
         // The row is gone; a file that cannot be unlinked is reported rather
         // than silently left behind.
@@ -815,10 +564,6 @@ pub fn detach_attachment(app: AppHandle, id: i64) -> Result<(), String> {
 
 #[tauri::command]
 pub fn add_note_to_image(app: AppHandle, id: i64) {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
-        return;
-    }
     db::add_note_to_image(&app, id);
     refresh(&app);
 }
@@ -1071,8 +816,7 @@ pub fn set_microphone(app: AppHandle, name: String) {
 ///
 /// `async` for the threading, not for concurrency: Tauri runs a synchronous
 /// command inline on the Windows main thread, and this one reads the whole
-/// timeline, every attachment, the settings, the licence (Credential Manager
-/// four to six times) and enumerates microphones — all on the thread every
+/// timeline, every attachment, the settings, and enumerates microphones — all on the thread every
 /// window shares, where a slow disk or vault stalls painting and input. An
 /// `async fn` with no `.await` is spawned by Tauri instead, and the compiler
 /// still refuses to let the `Db` mutex guard cross an await. The same reasoning
@@ -1086,7 +830,6 @@ pub async fn get_state(app: AppHandle) -> db::AppState {
 
 #[tauri::command]
 pub fn add_item(app: AppHandle, content: String) -> Result<(), String> {
-    crate::license::require(&app)?;
     if content.trim().is_empty() {
         return Err("Add some text before saving a note.".into());
     }
@@ -1103,7 +846,6 @@ pub fn add_item(app: AppHandle, content: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn add_image(app: AppHandle, data_base64: String, ext: String) -> Result<i64, String> {
-    crate::license::require(&app)?;
     let (bytes, ext) = decode_image_payload(&data_base64, &ext)?;
     let images = app.state::<ImagesDir>().0.clone();
     let path = unique_image_path(&images, &ext);
@@ -1296,19 +1038,11 @@ pub fn toggle_companion(app: AppHandle, label: String) -> Result<(), String> {
     if !matches!(label.as_str(), "draw" | "settings") {
         return Err("Bard has no such window.".into());
     }
-    // An open companion just goes away, and putting a window away never needs a
-    // licence. Only opening one does, and until then nothing is created: a
-    // restricted click must not leave a hidden window behind it.
+    // An open companion just goes away.
     if let Some(win) = app.get_webview_window(&label) {
         if win.is_visible().unwrap_or(false) && !win.is_minimized().unwrap_or(false) {
             crate::panel::hide_companion(&app, &win);
             crate::panel::focus_panel(&app);
-            return Ok(());
-        }
-    }
-    if label == "draw" {
-        if let Err(error) = crate::license::require(&app) {
-            license_blocked(&app, error);
             return Ok(());
         }
     }
@@ -1341,10 +1075,6 @@ fn toggle_secondary_alone(app: &AppHandle, label: &str) {
 pub fn draw_shortcut(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
-        if let Err(error) = crate::license::require(&handle) {
-            license_blocked(&handle, error);
-            return;
-        }
         toggle_secondary_alone(&handle, "draw");
     });
 }
@@ -1358,10 +1088,6 @@ pub fn settings_shortcut(app: &AppHandle) {
 
 #[tauri::command]
 pub fn open_draw(app: AppHandle) {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
-        return;
-    }
     show_secondary(&app, "draw", true);
 }
 
@@ -1426,10 +1152,6 @@ fn svg_file_name(suggested: &str) -> String {
 /// the item id and nothing else.
 #[tauri::command]
 pub fn open_draw_with_image(app: AppHandle, item_id: i64) -> Result<(), String> {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error.clone());
-        return Err(error);
-    }
     show_secondary(&app, "draw", false);
     // The window may have just been created, in which case its bundle is still
     // loading and its listener does not exist yet: the seed is held until the
@@ -1525,10 +1247,6 @@ pub fn delete_item(app: AppHandle, id: i64) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_favorite(app: AppHandle, id: i64, favorite: bool) {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
-        return;
-    }
     db::set_favorite(&app, id, favorite);
     refresh(&app);
 }
@@ -1538,10 +1256,6 @@ pub fn set_favorite(app: AppHandle, id: i64, favorite: bool) {
 /// silently unpinning something would move what a learned slot pastes.
 #[tauri::command]
 pub fn set_pinned(app: AppHandle, id: i64, pinned: bool) -> Result<(), String> {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error.clone());
-        return Err(error);
-    }
     let result = db::set_pinned(&app, id, pinned).map_err(|error| error.to_string());
     refresh(&app);
     result
@@ -1549,10 +1263,6 @@ pub fn set_pinned(app: AppHandle, id: i64, pinned: bool) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_done(app: AppHandle, id: i64, done: bool) {
-    if let Err(error) = crate::license::require(&app) {
-        license_blocked(&app, error);
-        return;
-    }
     db::set_done(&app, id, done);
     refresh(&app);
 }
@@ -1793,8 +1503,6 @@ pub async fn get_retention_days(app: AppHandle, origin: String) -> Option<i64> {
 #[tauri::command]
 pub async fn delete_all_data(app: AppHandle) -> Result<(), String> {
     db::delete_all_data(&app)?;
-    crate::license::erase_local(&app).map_err(|error| error.to_string())?;
-    crate::cloud::delete_api_key().map_err(|error| error.to_string())?;
     let _ = std::fs::remove_file(crate::guardian::marker_path());
     refresh(&app);
     Ok(())
@@ -2062,8 +1770,7 @@ fn login_item_absent(message: &str) -> bool {
     message.contains("(os error 2)")
 }
 
-/// Opens a miiso.dev page — purchase, licence management, terms, privacy,
-/// support — in the default browser. The webview has no opener of its own, so a
+/// Opens a miiso.dev page — terms, privacy, support — in the default browser. The webview has no opener of its own, so a
 /// plain link went nowhere; only Bard's own site is allowed through.
 #[tauri::command]
 pub fn open_link(url: String) -> Result<(), String> {
@@ -2147,13 +1854,11 @@ pub fn get_model(app: AppHandle) -> crate::dictation::ModelStatus {
 
 #[tauri::command]
 pub async fn set_model(app: AppHandle, id: String) -> Result<(), String> {
-    require_licensed_or_onboarding(&app)?;
     crate::hf::activate_model(&app, &id)
 }
 
 #[tauri::command]
 pub async fn download_model(app: AppHandle, id: String) -> Result<(), String> {
-    require_licensed_or_onboarding(&app)?;
     crate::dictation::download_model(&app, &id).await
 }
 
@@ -2184,14 +1889,10 @@ pub fn dictate_cancel(app: AppHandle) {
     crate::dictation::cancel(&app);
 }
 
-/// The clipboard's image as a data URL, or null when it holds none (or the
-/// licence restricts content). Draw's Ctrl+V intake — the pixels come from the
+/// The clipboard's image as a data URL, or null when it holds none. Draw's Ctrl+V intake — the pixels come from the
 /// same clipboard Bard's monitor reads, with the same size caps.
 #[tauri::command]
-pub fn clipboard_image_data(app: AppHandle) -> Option<String> {
-    if crate::license::require(&app).is_err() {
-        return None;
-    }
+pub fn clipboard_image_data() -> Option<String> {
     let mut clipboard = crate::clip::handle().ok()?;
     let image = clipboard.get_image().ok()?;
     let encoded = crate::monitor::encode_png(&image)?;

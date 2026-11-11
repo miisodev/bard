@@ -437,7 +437,7 @@ export default function DataPane({ refresh }: PaneProps) {
         </Row>
         <Row
           label="Delete local data"
-          hint="Removes Bard's data, models, logs, settings and saved licence from this Windows account, including everything above."
+          hint="Removes Bard's history, models, logs and settings from this computer, including everything above."
         >
           <Button variant="danger" onClick={() => setConfirm("delete")}>
             Delete everything
@@ -468,9 +468,7 @@ export default function DataPane({ refresh }: PaneProps) {
             onConfirm={() => void runDanger(api.deleteAllData, "Couldn't delete Bard's data. Try again.")}
             confirmLabel="Delete everything"
           >
-            Delete all Bard data from this computer? This cannot be undone. The 14-day
-            trial clock and this PC's installation identity stay, so the trial does not
-            restart and a paid licence does not lose its seat.
+            Delete all Bard data from this computer? This cannot be undone.
           </InlineConfirm>
         ) : null}
         {dangerError ? <Note tone="danger">{dangerError}</Note> : null}

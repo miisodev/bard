@@ -19,10 +19,7 @@ per-application permissions never decide whether your words arrive.
 - **Dictate** — hold one key to talk, or tap it to start and tap again to stop.
   Transcription runs on your own machine through a local `transcribe-cpp` GGUF
   model: choose **Bard Fast** or **Bard General** in **Settings → Models**.
-  Audio capture and local transcription never leave the device. Optional
-  text-only **Refine** runs after local transcription, only when switched on,
-  and only ever sends the finished transcript text to OpenRouter on your own
-  key; any failure keeps the local transcript. Every transcript is also kept
+  Audio capture and local transcription never leave the device. Every transcript is also kept
   in Bard's history, so a later copy cannot lose it. The model unloads after
   five idle minutes and a single take can run for up to 20 minutes.
 - **Draw** — pen, arrows, shapes and text on a page of its own. Copy the page
@@ -53,19 +50,9 @@ window, and the context-menu key opens the row's menu.
 
 ## Licence
 
-**One payment. Nothing renews, and there is no subscription and no account.**
-
-Bard includes a 14-day local trial that needs no account and no key. A licence
-costs **US$20 once** and runs for **365 days from the day you first activate
-it**, on up to **three** activated computers. When those 365 days are over the
-licence ends: nothing is charged again, there is no renewal step, and there is
-no account to sign into. Buy again to carry on.
-
-The raw key is stored in the operating system's credential store (Windows
-Credential Manager, or the D-Bus Secret Service on Linux), and Bard keeps a
-signed offline lease so a network outage does not discard a valid entitlement.
-When the paid term ends, existing captures stay readable, copyable and
-exportable while new capture, dictation and drawing are paused.
+Bard is free and open source under the [MIT licence](LICENSE). There is no
+account, no key, no trial and no telemetry. A tool that reads everything you
+copy should be one you can read back.
 
 ## Building
 
@@ -158,10 +145,4 @@ fails the job and an informational one is reported on a Check.
 
 The model release gate is `cargo test smoke_test_exact_models_when_requested` against the staged files. Set
 `BARD_SMOKE_MODELS` (and `BARD_SMOKE_WAV` for transcription) only when running
-against the staged model files; the smoke tests are no-ops otherwise. The
-OpenRouter pane is optional and should be exercised with a disposable key
-entered in the UI, never pasted into chat or committed to the repository.
-
-Idle cost is near zero: an event-driven clipboard watcher, a heartbeat that
-records that it is still alive, and no model in memory until the first
-dictation.
+against the staged model files; the smoke tests are no-ops otherwise.

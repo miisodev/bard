@@ -938,7 +938,7 @@ export default function DrawWindow() {
       }
       await win.close();
     } catch (reason) {
-      // Rust's refusal says what actually happened — a licence that ran out, a
+      // Rust's refusal says what actually happened — a
       // file that could not be written — and the window keeps the drawing.
       setSaveError(reasonText(reason, "Couldn't save this drawing. Try again."));
     } finally {

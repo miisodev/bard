@@ -169,9 +169,7 @@ export default function DictationPane() {
       {!loading && error ? <Note tone="danger">{error}</Note> : null}
 
       <Note>
-        Audio and transcription stay on this device. If Refine is on (Settings ›
-        Models), the finished transcript text — and nothing else — is sent to
-        OpenRouter.
+        Audio and transcription stay on this device.
       </Note>
     </Pane>
   );

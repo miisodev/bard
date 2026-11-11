@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Download } from "lucide-react";
 import type { PaneProps } from "../SettingsWindow";
-import LicenseCard from "../../components/LicenseCard";
 import { api } from "../../store";
 import { updateDelivery } from "../../distribution";
 import appIcon from "../../../src-tauri/icons/128x128.png";
 import { Button, Group, Pane, Row } from "../ui";
 
-export default function AboutPane({ state, refresh }: PaneProps) {
+export default function AboutPane({ state }: PaneProps) {
   const [checking, setChecking] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<{ version: string; notes: string | null; publishedAt: string | null } | null>(null);
@@ -66,8 +65,6 @@ export default function AboutPane({ state, refresh }: PaneProps) {
           </p>
         </div>
       </header>
-
-      <LicenseCard status={state.license} onStatus={refresh} />
 
       <Group title="Updates">
         {!delivery.inApp ? (
@@ -133,7 +130,7 @@ export default function AboutPane({ state, refresh }: PaneProps) {
       <Group title="Privacy">
         <Row
           label="Everything stays on this PC"
-          hint="Speech recognition, captures and history never leave it. Bard has no account, sync or analytics. Refine, if you turn it on, sends only the finished transcript to OpenRouter."
+          hint="Speech recognition, captures and history never leave it. Bard has no account, sync or analytics, and its source is open."
         />
       </Group>
 

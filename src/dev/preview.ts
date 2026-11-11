@@ -7,7 +7,7 @@
   a shelf that is DWM-composited and always on top is awkward to capture, and a
   fixture is reproducible where a person's live data is neither.
 
-  Query parameters: theme=light|dark, scene=empty|trial|restricted|onboarding
+  Query parameters: theme=light|dark, scene=empty|onboarding|paused
   (main), scene=copied|selected|listening|working|done|preview|error|paused
   (pill), pane=<settings section>, dock=float|left|right, platform=linux.
 */
@@ -34,8 +34,6 @@ const dockParam = params.get("dock");
 const dock: AppState["dock"] = dockParam === "left" || dockParam === "right" ? dockParam : "float";
 const now = Date.now();
 const minutes = (n: number) => now - n * 60_000;
-/** Licence timestamps are Unix seconds. */
-const secs = (ms: number) => Math.floor(ms / 1000);
 
 let nextId = 100;
 
@@ -143,54 +141,6 @@ function text(
   };
 }
 
-const license: AppState["license"] =
-  scene === "onboarding"
-    ? {
-        state: "trial_available",
-        canUse: false,
-        keyConfigured: false,
-        trialStartedAt: null,
-        trialExpiresAt: null,
-        expiresAt: null,
-        lastCheckedAt: null,
-        message: null,
-        activationLimit: 3,
-      }
-    : scene === "restricted"
-    ? {
-        state: "restricted",
-        canUse: false,
-        keyConfigured: false,
-        trialStartedAt: secs(now - 15 * 864e5),
-        trialExpiresAt: secs(now - 864e5),
-        expiresAt: null,
-        lastCheckedAt: secs(now),
-        message: "Your 14-day trial has ended.",
-      }
-    : scene === "trial"
-      ? {
-          state: "trial",
-          canUse: true,
-          keyConfigured: false,
-          trialStartedAt: secs(now - 3 * 864e5),
-          trialExpiresAt: secs(now + 11 * 864e5),
-          expiresAt: null,
-          lastCheckedAt: secs(now),
-          message: null,
-        }
-      : {
-          state: "active",
-          canUse: true,
-          keyConfigured: true,
-          trialStartedAt: null,
-          trialExpiresAt: null,
-          expiresAt: secs(now + 340 * 864e5),
-          lastCheckedAt: secs(now),
-          message: null,
-          activationCount: 2,
-          activationLimit: 3,
-        };
-
 const state: AppState = {
   sections: [
     { id: 1, name: "Inbox" },
@@ -209,7 +159,6 @@ const state: AppState = {
   micReady: true,
   // `active=<id>` marks an item as the one on the clipboard, for the gallery.
   activeItemId: params.has("active") ? Number(params.get("active")) : null,
-  license,
   channel: params.get("channel") === "flatpak" ? "flatpak" : params.get("channel") === "store" ? "store" : "direct",
   platform: params.get("platform") ?? "windows",
   desktop: { session: params.get("platform") === "linux" ? "wayland" : "windows", shortcutsReady: params.get("platform") === "linux" },
@@ -371,15 +320,6 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
         drawColor: "#1d1d1f",
         drawWidth: 4,
       };
-    case "get_license":
-    case "refresh_license":
-      return license;
-    case "start_trial":
-      Object.assign(license, {
-        state: "trial", canUse: true,
-        trialStartedAt: secs(now), trialExpiresAt: secs(now + 14 * 864e5),
-      });
-      return structuredClone(license);
     case "get_models":
       return models;
     case "get_model":
@@ -398,8 +338,6 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "hf_cached_models":
     case "get_custom_models":
       return [];
-    case "get_postprocessing":
-      return { enabled: false, keyConfigured: false, modelIds: [] };
     case "get_microphones":
       return ["Default microphone", "Studio USB Mic"];
     case "get_setting_str":

@@ -152,13 +152,6 @@ test("feedback channels switch independently", async ({ page }) => {
   await expect(pill).toHaveAttribute("aria-checked", "true");
 });
 
-test("Refine lives under Models", async ({ page }) => {
-  await page.setViewportSize({ width: 720, height: 620 });
-  await page.goto("/settings.html?pane=models&bare=1");
-  await expect(page.getByRole("heading", { name: "Refine", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Refine" })).toHaveCount(0);
-});
-
 for (const theme of ["light", "dark"]) {
   test(`${theme} settings at minimum size have no serious accessibility violations`, async ({ page }) => {
     await page.setViewportSize({ width: 600, height: 440 });

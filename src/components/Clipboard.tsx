@@ -828,7 +828,6 @@ export default function Clipboard({
     }
   };
 
-  const restricted = !state.license.canUse;
   const mainChord = shortcuts?.rows.find((row) => row.id === "main")?.display;
 
   return (
@@ -1007,21 +1006,10 @@ export default function Clipboard({
       </div>
 
       <footer className="clip-foot">
-        {restricted ? (
-          <>
-            <span className="foot-warn">{state.license.message ?? "Bard needs a licence to keep new copies."}</span>
-            <button type="button" className="btn small primary" onClick={() => void api.openSettings()}>
-              Activate
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="foot-count">
-              {state.items.length.toLocaleString()} {state.items.length === 1 ? "item" : "items"}
-            </span>
-            {mainChord && <span className="foot-hint">{mainChord}</span>}
-          </>
-        )}
+          <span className="foot-count">
+            {state.items.length.toLocaleString()} {state.items.length === 1 ? "item" : "items"}
+          </span>
+          {mainChord && <span className="foot-hint">{mainChord}</span>}
       </footer>
 
       {menu && <Menu entries={menu.entries} anchor={menu.at ? "point" : "top-right"} at={menu.at} onClose={() => setMenu(null)} />}

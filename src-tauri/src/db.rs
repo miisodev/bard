@@ -137,7 +137,6 @@ pub struct AppState {
     pub model_ready: bool,
     pub mic_ready: bool,
     pub active_item_id: Option<i64>,
-    pub license: crate::license::LicenseStatus,
     /// "direct" for the miiso.dev download, "store" for the Microsoft Store
     /// copy, "flatpak" inside a Flatpak sandbox.
     pub channel: String,
@@ -2424,7 +2423,6 @@ pub fn get_state(app: &AppHandle) -> AppState {
             model_ready: false,
             mic_ready: false,
             active_item_id: None,
-            license: crate::license::LicenseStatus::unavailable(),
             channel: crate::packaging::channel().into(),
             background: "theme".into(),
             background_color: String::new(),
@@ -2450,7 +2448,6 @@ pub fn get_state(app: &AppHandle) -> AppState {
         model_ready: crate::dictation::model_ready(app),
         mic_ready: crate::dictation::mic_ready(),
         active_item_id: active_item(app),
-        license: crate::license::status(app),
         channel: crate::packaging::channel().into(),
         background: get_setting(app, "background").unwrap_or_else(|| "theme".into()),
         background_color: get_setting(app, "background_color").unwrap_or_default(),

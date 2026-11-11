@@ -60,6 +60,7 @@ impl<T: Clone> Ttl<T> {
     }
 
     /// Drop the stored value, so the next `get` recomputes.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn invalidate(&self) {
         let mut guard = self
             .value

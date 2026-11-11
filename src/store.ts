@@ -15,11 +15,7 @@ import type {
   CrashReport,
   PackDetail,
   PackSummary,
-  PostprocessingSettings,
-  PostprocessingTestResponse,
   RestoreOutcome,
-  SavePostprocessingInput,
-  LicenseStatus,
   SortOrder,
   UpdateInfo,
   Dock,
@@ -127,13 +123,6 @@ export const api = {
     invoke<number | null>("get_retention_days", { origin }),
   pruneHistoryNow: () => invoke<number>("prune_history_now"),
 
-  getLicense: () => invoke<LicenseStatus>("get_license"),
-  startTrial: () => invoke<LicenseStatus>("start_trial"),
-  activateLicense: (key: string) =>
-    invoke<LicenseStatus>("activate_license", { key }),
-  refreshLicense: () => invoke<LicenseStatus>("refresh_license"),
-  deactivateLicense: () => invoke<LicenseStatus>("deactivate_license"),
-  clearLicense: () => invoke<LicenseStatus>("clear_license"),
   checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
   installUpdate: () => invoke<void>("install_update"),
 
@@ -165,13 +154,6 @@ export const api = {
 
   // Optional cloud post-processing. The API key is accepted only by save and
   // is never returned in application state or emitted in an event.
-  getPostprocessing: () =>
-    invoke<PostprocessingSettings>("get_postprocessing"),
-  savePostprocessing: (input: SavePostprocessingInput) =>
-    invoke<PostprocessingSettings | void>("save_postprocessing", { ...input }),
-  testPostprocessing: () =>
-    invoke<PostprocessingTestResponse>("test_postprocessing"),
-  testPostprocessingCancel: () => invoke<void>("test_postprocessing_cancel"),
   getCrashReport: () => invoke<CrashReport | null>("get_crash_report"),
   /** Versions, storage state, the latest crash report and the lifecycle tail,
    * copied to the clipboard. Local only; nothing leaves the machine. */

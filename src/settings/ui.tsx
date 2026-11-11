@@ -65,7 +65,7 @@ export function Group({ title, note, children }: {
  * One setting: a label, an optional explanation, and its control.
  *
  * `htmlFor` makes the label a real `<label>` for the control it names, so
- * clicking "OpenRouter API key" puts the caret in the field. Without it the
+ * clicking a label puts the caret in the field. Without it the
  * label is a `<div>` that only looks like one.
  */
 export function Row({ label, hint, children, stacked, htmlFor }: {
@@ -341,7 +341,7 @@ export function formatBytes(bytes: number): string {
  * The one confirmation an irreversible action gets.
  *
  * It was `window.confirm` in the two places that mattered — clearing the whole
- * timeline and releasing a licence activation — which is an OS-drawn, locale-
+ * timeline — which is an OS-drawn, locale-
  * varying, unstyleable dialog in a product that has decided not to use one, and
  * which cannot carry the sentence explaining what is about to happen.
  *
