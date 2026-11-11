@@ -139,7 +139,9 @@ jobs:
           retention-days: 3
 
   linux:
-    runs-on: ubuntu-latest
+    # Pinned like every other job: the container below sets the ABI, and a
+    # moving host image only adds ways for the build to fail.
+    runs-on: ubuntu-24.04
     # Packages link against glibc from the oldest supported Ubuntu baseline.
     # The host image may advance without raising the delivered binary's ABI.
     container: ubuntu:22.04
