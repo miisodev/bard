@@ -27,10 +27,10 @@ serde_json = "1"
 # landed after 2.2.0 shipped, so the audit gate caught it on the way to 3.0.0.
 rusqlite = { version = "0.41", features = ["bundled"] }
 arboard = "3"
-base64 = "0.22"
+base64 = "0.23"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
-cpal = "0.16"
-rubato = "0.16"
+cpal = "0.18"
+rubato = "5.0"
 earshot = "1.2"
 # transcribe-cpp covers the whole field, and it is the only engine bard needs.
 #
@@ -47,15 +47,15 @@ earshot = "1.2"
 #
 # Runtime CPU dispatch keeps the core safe on baseline x64 while selecting
 # faster instruction sets only when supported. build.rs bundles its libraries.
-transcribe-cpp = { version = "=0.2.3", default-features = false, features = ["dynamic-backends"] }
+transcribe-cpp = { version = "=0.4.1", default-features = false, features = ["dynamic-backends"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli", "stream"] }
-sha2 = "0.10"
+sha2 = "0.11"
 zeroize = "1"
 futures-util = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 log = "0.4"
 anyhow = "1"
-ed25519-dalek = "2.1"
+ed25519-dalek = "3.0"
 # The updater's zip feature is compiled out. It pulls zip 4, which carries
 # RUSTSEC-2026-0367/0368/0369 (one critical) with the fix only in zip >= 9,
 # and the plugin's ^4 constraint cannot reach it. Bard's updates are bare
@@ -76,18 +76,18 @@ keyring = { version = "4.2", default-features = false, features = ["v1", "window
 # Bard's own StatusNotifierItem tray: libappindicator never reports a left
 # click, so the shelf could not be opened from the icon. Uses the zbus stack
 # the portals already depend on.
-ksni = { version = "=0.3.6", default-features = false, features = ["tokio"] }
-ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "global_shortcuts", "background"] }
+ksni = { version = "=0.3.7", default-features = false, features = ["tokio"] }
+ashpd = { version = "=0.14.0", default-features = false, features = ["tokio", "global_shortcuts", "background"] }
 keyring = { version = "4.2", default-features = false, features = ["v1", "zbus-secret-service-keyring-store"] }
 # Clipboard change notifications (XFixes) and global shortcut grabs on X11
 # and XWayland. Protocol features only; they add no crates.
-x11rb = { version = "=0.13.2", features = ["xfixes", "xkb", "xtest"] }
+x11rb = { version = "=0.14.0", features = ["xfixes", "xkb", "xtest"] }
 # Metadata-only creation time recovers an interrupted legacy Linux trial
 # without granting a fresh trial or reading unrelated keyring items.
 secret-service = { version = "=5.2.0", default-features = false, features = ["rt-tokio-crypto-rust"] }
 
 [dev-dependencies]
-minisign-verify = "0.2.5"
+minisign-verify = "0.3.0"
 
 [profile.release]
 panic = "abort"
