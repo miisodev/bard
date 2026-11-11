@@ -16,7 +16,7 @@
   --pill-fill: rgba(255, 255, 255, 0.09);
   --pill-text: #f4f4f6;
   --pill-text-2: #a3a3ad;
-  --pill-text-3: #74747e;
+  --pill-text-3: #9494a1;
   --pill-shadow: 0 8px 24px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.2);
   --pill-copy: #7aa5ff;
   --pill-done: #5fd08f;
@@ -330,7 +330,7 @@ html:not([data-preview]) #root {
   height: 18px;
   border-radius: 5px;
   background: var(--pill-fill);
-  color: var(--pill-text-3);
+  color: var(--pill-text-2);
   font-style: normal;
   font-weight: var(--fw-medium);
   font-variant-numeric: tabular-nums;

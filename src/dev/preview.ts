@@ -320,6 +320,12 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
         drawColor: "#1d1d1f",
         drawWidth: 4,
       };
+    case "get_stay_open":
+      return false;
+    case "set_stay_open":
+      return Boolean(args.stay);
+    case "hold_windows":
+      return undefined;
     case "get_models":
       return models;
     case "get_model":

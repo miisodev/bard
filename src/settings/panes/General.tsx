@@ -31,6 +31,10 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
 
   const [feedback, setFeedback] = useState<FeedbackChannels>({ pill: true, sound: true });
   const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [stayOpen, setStayOpen] = useState(false);
+  useEffect(() => {
+    void api.getStayOpen().then(setStayOpen).catch(() => undefined);
+  }, []);
   useEffect(() => {
     void api.getFeedback().then(setFeedback).catch(() => undefined);
   }, []);
@@ -105,7 +109,7 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
       </Group>
 
       <Group title="Main window">
-        <Row label="Position" hint="Float it anywhere, or dock it to the side of the screen. Docked, it tucks away when you click elsewhere.">
+        <Row label="Position" hint="Float it anywhere, or dock it to the side of the screen.">
           <Segmented
             label="Main window position"
             value={state.dock}
@@ -116,6 +120,25 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
               { value: "left", label: "Left" },
               { value: "right", label: "Right" },
             ]}
+          />
+        </Row>
+      </Group>
+
+      <Group title="Windows">
+        <Row
+          label="Stay open"
+          hint="Off, Bard's windows tuck away when you click elsewhere and come back with their shortcut."
+        >
+          <Toggle
+            label="Stay open"
+            checked={stayOpen}
+            onChange={(stay) => {
+              setStayOpen(stay);
+              void api.setStayOpen(stay).catch((reason) => {
+                setStayOpen(!stay);
+                setError(reason instanceof Error ? reason.message : String(reason));
+              });
+            }}
           />
         </Row>
       </Group>

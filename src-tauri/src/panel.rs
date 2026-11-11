@@ -222,15 +222,46 @@ static FOCUS_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Whether a focus check is already waiting to run.
 static FOCUS_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// A docked window goes away when you click elsewhere; a floating one stays.
+/// Set while one of Bard's own native dialogs (a save or folder picker) is
+/// open: it takes the focus without the person having left Bard.
+static HOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn hold(on: bool) {
+    HOLD.store(on, Ordering::SeqCst);
+    if !on {
+        // Coming back from the dialog is not clicking away.
+        mark_shown();
+    }
+}
+
+/// A window was just shown: the focus change that follows is its own.
+pub fn mark_shown() {
+    SHOWN_AT.store(crate::db::now_ms() as u64, Ordering::SeqCst);
+}
+
+/// "1" when the person asked for Bard's windows to stay where they are.
+pub const STAY_SETTING: &str = "windows_stay";
+
+pub fn stay_open(app: &AppHandle) -> bool {
+    crate::db::get_setting(app, STAY_SETTING).as_deref() == Some("1")
+}
+
+/// Bard's windows are summoned, so they go away when the person clicks into
+/// something else — the main window, Draw and Settings alike, floating or
+/// docked. Moving between Bard's own windows is not leaving.
 pub fn on_focus_change(app: &AppHandle, focused: bool) {
     let generation = FOCUS_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-    if focused || !crate::db::is_ready(app) {
+    if focused {
+        // Back from whatever took the focus, a dialog of ours included.
+        if HOLD.swap(false, Ordering::SeqCst) {
+            mark_shown();
+        }
         return;
     }
-    if crate::db::get_setting(app, "onboarding_completed") != Some("1".into())
-        || dock(app) == Dock::Float
-    {
+    if !crate::db::is_ready(app) {
+        return;
+    }
+    if crate::db::get_setting(app, "onboarding_completed") != Some("1".into()) || stay_open(app) {
         return;
     }
     // The panel is focused and blurred constantly, and each change used to
@@ -244,11 +275,13 @@ pub fn on_focus_change(app: &AppHandle, focused: bool) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(160));
         FOCUS_PENDING.store(false, Ordering::SeqCst);
-        if FOCUS_GENERATION.load(Ordering::SeqCst) != generation || just_shown() {
+        if FOCUS_GENERATION.load(Ordering::SeqCst) != generation
+            || just_shown()
+            || HOLD.load(Ordering::SeqCst)
+        {
             return;
         }
-        // Focus moved to another Bard window (Settings, Draw): stay.
-        let ours_focused = ["settings", "draw"].iter().any(|label| {
+        let ours_focused = ["main", "settings", "draw"].iter().any(|label| {
             app.get_webview_window(label)
                 .and_then(|w| w.is_focused().ok())
                 .unwrap_or(false)
@@ -256,7 +289,17 @@ pub fn on_focus_change(app: &AppHandle, focused: bool) {
         if ours_focused {
             return;
         }
-        hide_now(&app);
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            for label in ["settings", "draw"] {
+                if let Some(win) = handle.get_webview_window(label) {
+                    if win.is_visible().unwrap_or(false) {
+                        hide_companion(&handle, &win);
+                    }
+                }
+            }
+            hide_now_inner(&handle);
+        });
     });
 }
 

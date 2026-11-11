@@ -177,6 +177,9 @@ export const api = {
 
   // v3: dock, feedback channels, capture pause and global shortcuts.
   setDock: (dock: Dock) => invoke<void>("set_dock", { dock }),
+  getStayOpen: () => invoke<boolean>("get_stay_open"),
+  setStayOpen: (stay: boolean) => invoke<boolean>("set_stay_open", { stay }),
+  holdWindows: (hold: boolean) => invoke<void>("hold_windows", { hold }),
   getFeedback: () => invoke<FeedbackChannels>("get_feedback"),
   setFeedback: (pill: boolean, sound: boolean) =>
     invoke<FeedbackChannels>("set_feedback", { pill, sound }),

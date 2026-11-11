@@ -6,6 +6,17 @@ import type { CrashReport, RestorePreview } from "../../types";
 import type { PaneProps } from "../SettingsWindow";
 import { Button, Group, InlineConfirm, Note, Pane, Row, Select } from "../ui";
 
+/** The folder picker takes the focus; Bard's windows must not read that as
+    the person clicking away. */
+async function pickFolder() {
+  await api.holdWindows(true).catch(() => undefined);
+  try {
+    return await open({ directory: true });
+  } finally {
+    await api.holdWindows(false).catch(() => undefined);
+  }
+}
+
 type Notice = { tone: "success" | "danger"; text: string };
 
 function failureText(error: unknown): string {
@@ -135,7 +146,7 @@ export default function DataPane({ refresh }: PaneProps) {
   const backUpNow = async () => {
     if (backupBusy) return;
     setBackupNotice(null);
-    const dir = await open({ directory: true });
+    const dir = await pickFolder();
     if (typeof dir !== "string") return;
     setBackupBusy(true);
     try {
@@ -155,7 +166,7 @@ export default function DataPane({ refresh }: PaneProps) {
     if (restoreBusy) return;
     setRestoreNotice(null);
     setRestorePreview(null);
-    const dir = await open({ directory: true });
+    const dir = await pickFolder();
     if (typeof dir !== "string") return;
     setRestoreBusy(true);
     try {

@@ -1025,6 +1025,7 @@ fn show_secondary_window(app: &AppHandle, win: &tauri::WebviewWindow) {
             crate::panel::COMPANION_HEIGHT,
         );
     }
+    crate::panel::mark_shown();
     let _ = win.show();
     let _ = win.set_focus();
     crate::panel::companions_changed(app);
@@ -1102,6 +1103,7 @@ pub async fn save_svg(
     suggested_name: String,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
+    crate::panel::hold(true);
     let picked = app
         .dialog()
         .file()
@@ -1109,6 +1111,7 @@ pub async fn save_svg(
         .add_filter("SVG image", &["svg"])
         .set_file_name(svg_file_name(&suggested_name))
         .blocking_save_file();
+    crate::panel::hold(false);
     let Some(picked) = picked else {
         return Ok(None);
     };
@@ -1462,6 +1465,28 @@ pub fn get_feedback() -> Feedback {
         pill: crate::feedback::pill_on(),
         sound: crate::feedback::sound_on(),
     }
+}
+
+#[tauri::command]
+pub fn get_stay_open(app: AppHandle) -> bool {
+    crate::panel::stay_open(&app)
+}
+
+#[tauri::command]
+pub fn set_stay_open(app: AppHandle, stay: bool) -> Result<bool, String> {
+    db::set_setting_checked(
+        &app,
+        crate::panel::STAY_SETTING,
+        if stay { "1" } else { "0" },
+    )?;
+    Ok(stay)
+}
+
+/// A window is about to open, or has just closed, one of the platform's own
+/// dialogs. While it is open, losing focus to it is not leaving Bard.
+#[tauri::command]
+pub fn hold_windows(hold: bool) {
+    crate::panel::hold(hold);
 }
 
 #[tauri::command]

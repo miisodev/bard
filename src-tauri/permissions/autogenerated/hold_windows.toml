@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hold-windows"
+description = "Enables the hold_windows command without any pre-configured scope."
+commands.allow = ["hold_windows"]
+
+[[permission]]
+identifier = "deny-hold-windows"
+description = "Denies the hold_windows command without any pre-configured scope."
+commands.deny = ["hold_windows"]

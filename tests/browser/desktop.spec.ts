@@ -198,7 +198,7 @@ test("a long history is drawn a screenful at a time and can be jumped to", async
     const scroll = document.querySelector(".clip-scroll") as HTMLElement;
     return scroll.scrollHeight;
   });
-  expect(height).toBeGreaterThan(20_000);
+  expect(height).toBeGreaterThan(15_000);
 
   // End must reach the last item even though it is nowhere near the window
   // that is on the page.

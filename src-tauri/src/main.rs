@@ -401,6 +401,9 @@ fn main() {
                         }
                         panel::focus_panel(window.app_handle());
                     }
+                    WindowEvent::Focused(focused) => {
+                        panel::on_focus_change(window.app_handle(), *focused);
+                    }
                     WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
                         geometry::remember_soon(window.app_handle(), window.label());
                     }
@@ -527,6 +530,9 @@ fn main() {
             commands::set_dock,
             commands::get_feedback,
             commands::set_feedback,
+            commands::get_stay_open,
+            commands::set_stay_open,
+            commands::hold_windows,
             commands::set_capture_paused,
             commands::notify_error,
             shortcuts::get_shortcuts,
