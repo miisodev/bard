@@ -70,6 +70,39 @@ pub fn hide_companion(app: &AppHandle, win: &tauri::WebviewWindow) {
     }
     let _ = win.hide();
     companions_changed(app);
+    if win.label() == "settings" {
+        release_settings_later(app);
+    }
+}
+
+/// How long Settings stays loaded after it is put away.
+const SETTINGS_LINGER: std::time::Duration = std::time::Duration::from_secs(120);
+static SETTINGS_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Settings holds nothing that is not saved, and it is opened rarely, so it
+/// is let go once it has been away for a while rather than keeping a whole
+/// web process in memory for the life of the app. It is created again, the
+/// way it was the first time, when it is next asked for.
+fn release_settings_later(app: &AppHandle) {
+    let generation = SETTINGS_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(SETTINGS_LINGER);
+        if SETTINGS_GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if SETTINGS_GENERATION.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            if let Some(win) = handle.get_webview_window("settings") {
+                if !win.is_visible().unwrap_or(false) {
+                    let _ = win.destroy();
+                }
+            }
+        });
+    });
 }
 
 pub fn companions_changed(app: &AppHandle) {
