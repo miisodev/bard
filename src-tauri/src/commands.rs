@@ -1339,6 +1339,39 @@ fn slot_items(app: &AppHandle) -> Vec<db::Item> {
     db::slot_items(app)
 }
 
+/// The slots as the pill lists them.
+pub fn slot_rail(items: &[db::Item]) -> Vec<crate::feedback::Slot> {
+    items
+        .iter()
+        .map(|item| crate::feedback::Slot {
+            kind: item.kind.clone(),
+            label: match item.kind.as_str() {
+                "image" => "Image".to_string(),
+                "file" => {
+                    let mut names = item
+                        .content
+                        .lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(|path| {
+                            path.rsplit(['/', '\\'])
+                                .find(|part| !part.is_empty())
+                                .unwrap_or(path)
+                                .to_string()
+                        });
+                    let first = names.next().unwrap_or_default();
+                    match names.count() {
+                        0 => first,
+                        more => format!("{first} +{more}"),
+                    }
+                }
+                _ => crate::feedback::excerpt(&item.content, 48),
+            },
+            pinned: item.pinned_at.is_some(),
+        })
+        .collect()
+}
+
 /// Put slot `slot` (1–3) on the clipboard.
 pub fn select_slot(app: &AppHandle, slot: u8) {
     let items = slot_items(app);
@@ -1360,7 +1393,8 @@ pub fn select_slot(app: &AppHandle, slot: u8) {
             refresh(app);
             crate::feedback::notify(
                 app,
-                crate::feedback::Note::selected(Some(slot), Some(filled), detail),
+                crate::feedback::Note::selected(Some(slot), Some(filled), detail)
+                    .with_rail(slot_rail(&items)),
             );
         }
         Err(error) => crate::feedback::notify(

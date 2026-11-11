@@ -212,9 +212,9 @@ pub fn set_paused(app: &AppHandle, paused: bool) -> bool {
     crate::feedback::notify(
         app,
         if paused {
-            crate::feedback::Note::info("pause", "Clipboard capture paused")
+            crate::feedback::Note::info("pause", "Capture paused")
         } else {
-            crate::feedback::Note::info("resume", "Clipboard capture on")
+            crate::feedback::Note::info("resume", "Capture on")
         },
     );
     let _ = app.emit("capture-paused", paused);

@@ -305,12 +305,7 @@ fn deliver(app: &AppHandle, text: &str) {
         crate::commands::refresh(app);
     }
     match crate::clip::set_text(app, text) {
-        Ok(()) => feedback::notify(
-            app,
-            Note::info("done", "Transcript copied")
-                .with_detail(feedback::excerpt(text, 64))
-                .hold(2_600),
-        ),
+        Ok(()) => feedback::notify(app, Note::transcript(text)),
         Err(_) if stored != crate::db::INSERT_FAILED => feedback::notify(
             app,
             Note::error("Couldn't copy the transcript")

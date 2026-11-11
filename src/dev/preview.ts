@@ -545,26 +545,50 @@ export function install(label: "main" | "settings" | "draw" | "pill") {
   }
 }
 
+const RAIL: PillNote["rail"] = [
+  { kind: "text", label: "ffmpeg -i take.wav -ar 16000 -ac 1 take-16k.wav", pinned: true },
+  { kind: "text", label: "https://handy.computer/docs/models", pinned: false },
+  { kind: "image", label: "Image", pinned: false },
+];
+
 const PILL_SCENES: Record<string, PillNote> = {
   copied: { kind: "copy", text: "Copied", detail: "https://handy.computer/docs/models", sticky: true, holdMs: 0 },
-  selected: { kind: "select", text: "On your clipboard", detail: "https://handy.computer/docs/models", slot: 2, slots: 3, sticky: true, holdMs: 0 },
+  image: { kind: "copy", text: "Image copied", sticky: true, holdMs: 0 },
+  selected: { kind: "select", text: "On your clipboard", detail: "https://handy.computer/docs/models", sticky: true, holdMs: 0 },
+  cycle: { kind: "select", text: "On your clipboard", detail: "https://handy.computer/docs/models", slot: 2, slots: 3, rail: RAIL, sticky: true, holdMs: 0 },
   listening: { kind: "listen", text: "Listening", sticky: true, holdMs: 0 },
   working: { kind: "work", text: "Transcribing", sticky: true, holdMs: 0 },
-  done: { kind: "done", text: "Transcript copied", detail: "Book the Cape Town venue for the twelfth", sticky: true, holdMs: 0 },
-  paused: { kind: "pause", text: "Clipboard capture paused", sticky: true, holdMs: 0 },
-  error: { kind: "error", text: "Nothing in slot 3 yet", sticky: true, holdMs: 0 },
-  preview: {
-    kind: "preview",
-    text: "Clipboard",
+  done: {
+    kind: "done",
+    text: "Transcript on your clipboard",
     sticky: true,
     holdMs: 0,
     preview: {
       kind: "text",
-      text: "Dictation is local. The audio never leaves this computer, and Refine only ever sees the finished text.\n\nKeep the release notes under 150 words, and lead with what changed for the person using it.",
-      length: 214,
+      text: "Send the release notes to the team before noon, and book the venue for the Cape Town evening on the twelfth.",
+      length: 108,
       files: [],
     },
   },
+  paused: { kind: "pause", text: "Capture paused", sticky: true, holdMs: 0 },
+  resumed: { kind: "resume", text: "Capture on", sticky: true, holdMs: 0 },
+  error: { kind: "error", text: "Nothing in slot 3 yet", sticky: true, holdMs: 0 },
+  preview: {
+    kind: "preview",
+    text: "Clipboard",
+    slot: 2,
+    slots: 3,
+    rail: RAIL,
+    sticky: true,
+    holdMs: 0,
+    preview: {
+      kind: "text",
+      text: "Dictation is local. The audio never leaves this computer.\n\nKeep the release notes under 150 words, and lead with what changed for the person using it.",
+      length: 152,
+      files: [],
+    },
+  },
+  empty: { kind: "preview", text: "Clipboard", sticky: true, holdMs: 0, preview: { kind: "empty", files: [] } },
 };
 
 /** One pill note, as Rust would send it; listening also moves the meter. */

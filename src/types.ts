@@ -218,9 +218,17 @@ export interface PillNote {
   detail?: string | null;
   slot?: number | null;
   slots?: number | null;
+  /** The three slots, when the note is about them. */
+  rail?: PillSlot[];
   preview?: ClipboardPreview | null;
   sticky: boolean;
   holdMs: number;
+}
+
+export interface PillSlot {
+  kind: "text" | "image" | "file" | string;
+  label: string;
+  pinned: boolean;
 }
 
 export interface ClipboardPreview {

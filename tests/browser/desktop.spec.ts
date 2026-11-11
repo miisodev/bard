@@ -62,7 +62,7 @@ test("clicking an item puts it on the clipboard and marks it current", async ({ 
 test("the first three items carry their slot numbers", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 620 });
   await page.goto("/?bare=1");
-  const slots = page.locator(".badge.slot");
+  const slots = page.locator(".item-slot");
   await expect(slots).toHaveText(["1", "2", "3"]);
 });
 

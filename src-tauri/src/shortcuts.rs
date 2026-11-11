@@ -510,7 +510,17 @@ pub fn press(app: &AppHandle, action: Action) {
         Action::Cycle => crate::commands::cycle_slot(app),
         Action::Preview => {
             let preview = crate::clip::preview();
-            crate::feedback::notify(app, crate::feedback::Note::preview(preview));
+            let items = crate::db::slot_items(app);
+            let active = crate::db::get_setting(app, "active_item_id")
+                .and_then(|value| value.parse::<i64>().ok());
+            let mut note = crate::feedback::Note::preview(preview)
+                .with_rail(crate::commands::slot_rail(&items));
+            note.slot = items
+                .iter()
+                .position(|item| Some(item.id) == active)
+                .map(|index| index as u8 + 1);
+            note.slots = Some(items.len() as u8);
+            crate::feedback::notify(app, note);
         }
         Action::Pause => {
             crate::monitor::toggle_paused(app);

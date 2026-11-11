@@ -1,7 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  Check,
   Droplet,
   File as FileIcon,
   Image as ImageIcon,
@@ -12,7 +11,6 @@ import {
   PenTool,
   Pin,
   PinOff,
-  Play,
   Search,
   Settings as SettingsIcon,
   Star,
@@ -82,8 +80,8 @@ const OVERSCAN = 8;
  * scrollbar out of step with the rows, and the list would jump when it was
  * scrolled.
  */
-const FALLBACK_ROW_HEIGHT = 56;
-const FALLBACK_HEADING_HEIGHT = 30;
+const FALLBACK_ROW_HEIGHT = 36;
+const FALLBACK_HEADING_HEIGHT = 26;
 
 /** How an item arrived, in the words a screen reader should read. */
 const ARRIVED: Record<string, string> = {
@@ -250,9 +248,15 @@ const Row = memo(function Row({
         onMenu(item, { x: event.clientX, y: event.clientY });
       }}
     >
-      <span className="item-glyph" aria-hidden="true">
-        <Glyph size={14} strokeWidth={2} />
-      </span>
+      {slot !== null ? (
+        <kbd className="item-slot" title={`Alt+Shift+${slot} copies this`} aria-hidden="true">
+          {slot}
+        </kbd>
+      ) : (
+        <span className="item-glyph" aria-hidden="true">
+          <Glyph size={14} strokeWidth={2} />
+        </span>
+      )}
       <span className="item-body">{body}</span>
       {/* What the row means, in words. The compact time on the right is for
           the eye; this is for anyone listening, and it carries the moment the
@@ -266,17 +270,10 @@ const Row = memo(function Row({
       </span>
       <span className="item-end">
         <span className="item-meta">
-          {current && (
-            <span className="badge current" title="On the clipboard">
-              <Check size={11} strokeWidth={3} aria-hidden="true" />
-            </span>
-          )}
-          {item.favorite !== 0 && <Star className="item-flag" size={12} fill="currentColor" aria-label="Kept forever" />}
-          {pinned && <Pin className="item-flag" size={12} aria-label="Pinned" />}
-          {slot !== null ? (
-            <kbd className="badge slot" title={`Alt+Shift+${slot}`}>
-              {slot}
-            </kbd>
+          {item.favorite !== 0 && <Star className="item-flag" size={11} fill="currentColor" aria-label="Kept forever" />}
+          {pinned && <Pin className="item-flag" size={11} aria-label="Pinned" />}
+          {current ? (
+            <span className="item-now">On clipboard</span>
           ) : (
             <span className="item-time" title={agoLong(item.createdAt)}>
               {ago(item.createdAt)}
@@ -842,27 +839,21 @@ export default function Clipboard({
           void getCurrentWindow().startDragging();
         }}
       >
-        {/* What the dot means, said once: the panel's capture switch, which is
-            also in the footer and in Settings. */}
-        <span
-          className={`status-dot${state.capturePaused ? " paused" : ""}`}
-          role="img"
-          aria-label={state.capturePaused ? "Not keeping what you copy" : "Keeping what you copy"}
-          title={state.capturePaused ? "Not keeping what you copy" : "Keeping what you copy"}
-        />
-        <h1 className="clip-title">Clipboard</h1>
-        {state.capturePaused && <span className="badge paused-badge">Paused</span>}
-        <span className="clip-head-spring" />
+        {/* The one switch, and it says its own state: whether Bard is keeping
+            what is copied. Nothing else in the window has to explain it. */}
+        <h1 className="sr-only">Bard</h1>
         <button
           type="button"
-          className="head-btn"
-          aria-label={state.capturePaused ? "Resume keeping what you copy" : "Pause keeping what you copy"}
-          title={state.capturePaused ? "Resume" : "Pause"}
-          aria-pressed={state.capturePaused}
+          className={`capture${state.capturePaused ? " is-paused" : ""}`}
+          role="switch"
+          aria-checked={!state.capturePaused}
+          title={state.capturePaused ? "Resume keeping what you copy" : "Pause keeping what you copy"}
           onClick={togglePause}
         >
-          {state.capturePaused ? <Play size={15} /> : <Pause size={15} />}
+          {state.capturePaused ? <Pause size={12} strokeWidth={2.6} aria-hidden="true" /> : <span className="capture-dot" aria-hidden="true" />}
+          {state.capturePaused ? "Paused" : "Keeping copies"}
         </button>
+        <span className="clip-head-spring" />
         <button type="button" className="head-btn" aria-label="Draw" title="Draw" onClick={() => void api.toggleCompanion("draw")}>
           <PenTool size={15} />
         </button>
@@ -1009,7 +1000,16 @@ export default function Clipboard({
           <span className="foot-count">
             {state.items.length.toLocaleString()} {state.items.length === 1 ? "item" : "items"}
           </span>
-          {mainChord && <span className="foot-hint">{mainChord}</span>}
+          {slotIds.length > 0 ? (
+            <span className="foot-legend">
+              <kbd>Alt</kbd>
+              <kbd>Shift</kbd>
+              <kbd>1–{Math.max(slotIds.length, 1)}</kbd>
+              copies that item
+            </span>
+          ) : (
+            mainChord && <span className="foot-hint">{mainChord}</span>
+          )}
       </footer>
 
       {menu && <Menu entries={menu.entries} anchor={menu.at ? "point" : "top-right"} at={menu.at} onClose={() => setMenu(null)} />}
