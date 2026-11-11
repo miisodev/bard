@@ -175,8 +175,6 @@
   margin: 0 var(--sp-2) 0 0;
 }
 
-.draw-spacer { flex: 1; }
-
 /* The two page actions sit at the end of the bar. `margin-left: auto` keeps
    them at the right whether the bar is on one line or has wrapped, so they
    never end up stranded in a corner. */

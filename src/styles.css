@@ -215,104 +215,126 @@ body {
 /* ---------- shelf zones ---------- */
 
 /*
-  The body is two zones divided where the mockup puts the rule: the All zone's
-  page of cards on one side, the packs pane on the other. The band's edge
+The body is two zones divided where the mockup puts the rule: the All zone's
+  page of cards on one side,
+the packs pane on the other. The band's edge
   decides the axis — a horizontal band lays the zones out left to right with
-  the cards in a row; a vertical band stacks them, and the cards with them.
+  the cards in a row; a vertical band stacks them,
+and the cards with them.
 */
 
 /* The zone whose page size is measured. Only whole cards ever render: the page
    size comes from this box and the card's own size in the tokens. */
 
-/* The zone is a tab stop when it is empty (there is no card to point at), so
+/* The zone is a tab stop when it is empty (there is no card to point at),
+so
    it owes the keyboard a visible focus ring of its own. */
 
 /* ---------- pager ---------- */
 
 /* The current page is bolder as well as tinted: colour is never the only
-   carrier, and at a glance bold is what makes the position readable. */
+   carrier,
+and at a glance bold is what makes the position readable. */
 
 /* ---------- packs pane ---------- */
 
 /* The zone's tab stop is the packs page — the roving card while it holds one,
-   the page itself while it does not — so the ring is drawn there, as the All
+the page itself while it does not — so the ring is drawn there,
+as the All
    zone's is. */
 
-/* A read that failed is not a shelf with no packs: it names the failure, and
+/* A read that failed is not a shelf with no packs: it names the failure,
+and
    the retry is the one thing that can answer it. */
 
 /* ---------- packs ---------- */
 
 /*
-  The packs zone's page, on the same measurement contract as the All zone's:
-  the cards that fit whole are the page, and the axis is the one the zone
-  stacks along — a column on the bottom and top edges, a row on the sides.
-  A clipped card would be a scroller, which this shelf does not have.
+  The packs zone's page,
+on the same measurement contract as the All zone's:
+  the cards that fit whole are the page,
+and the axis is the one the zone
+  stacks along — a column on the bottom and top edges,
+a row on the sides.
+  A clipped card would be a scroller,
+which this shelf does not have.
 */
 
 /*
-  One pack: the collage of its leading members, its name and how much it
+  One pack: the collage of its leading members,
+its name and how much it
   holds. The whole card is the paste — the same primary action an item card
-  has — with Open and More beside the name for the rest, visible at rest
+  has — with Open and More beside the name for the rest,
+visible at rest
   because nothing on this shelf hides behind hover.
 */
 
-/* The keyboard cursor, on the item card's terms: the pack the arrows point at
+/* The keyboard cursor,
+on the item card's terms: the pack the arrows point at
    reads as lifted even while focus is elsewhere in the window. */
 
-/* A pack with no text to paste is not a paste; the meta line says why, and
+/* A pack with no text to paste is not a paste; the meta line says why,
+and
    the cursor stops promising an action that will be refused. */
 
-/* The collage: up to four leading members, in pack order, sharing the strip
+/* The collage: up to four leading members,
+in pack order,
+sharing the strip
    evenly at any count. Media tiles crop to fill; word tiles are tinted by
-   kind, which is the third signal after the text and the shape of the tile. */
+   kind,
+which is the third signal after the text and the shape of the tile. */
 
-/* The swatch is the item's own colour, set inline; the inset ring keeps a
+/* The swatch is the item's own colour,
+set inline; the inset ring keeps a
    white swatch from vanishing into the card it sits on. */
 
 /* The count rides the name's line: at 82px of card height on the bottom and
-   top edges, a line of its own would be the collage's. */
+   top edges,
+a line of its own would be the collage's. */
 
-/* The refusal, where the count would be: the reason is what the person needs
-   most from this line, and it cannot be pasted at all. */
+/* The refusal,
+where the count would be: the reason is what the person needs
+   most from this line,
+and it cannot be pasted at all. */
 
 /* ---------- pack view ---------- */
 
 /*
-  The pack's own dialog: the members in order with their commands, and the
-  pack's commands in the foot. It rides the sheet's scrim and card, and it is
-  the one surface that changes a pack's membership while it is up.
-*/
-
-/* The commands stay reachable in a shelf band: the member list scrolls
-   under the foot rather than taking it out of view. */
-
-/* ---------- card ---------- */
-
-/* Only a capture that has not been on screen before arrives with motion. The
-   animation used to sit on `.item-card` itself, so every card in the timeline
+  The pack's own dialog: the members in order with their commands,
+and the
+  pack's commands in the foot. It rides the sheet's scrim and card,
+so every card in the timeline
    re-ran it on every render — and a render happens after every click,
-   keypress, capture and sort change. Two hundred items meant two hundred
-   animations per interaction, on a list the user was trying to read. */
+keypress,
+capture and sort change. Two hundred items meant two hundred
+   animations per interaction,
+on a list the user was trying to read. */
 
-/* Selection is a ring, never a fill and never a scale: a filled card competes
-   with the done state, and a scaled one reflows the text inside it. */
+/* Selection is a ring,
+never a fill and never a scale: a filled card competes
+   with the done state,
+and a scaled one reflows the text inside it. */
 
 /* The keyboard cursor: a lifted surface and a soft accent hairline — present
-   enough to follow, quiet enough to sit beside a selection ring. */
+   enough to follow,
+quiet enough to sit beside a selection ring. */
 
 /* ---------- card head ---------- */
 
 /*
-  The head: the kind, written and glyphed. The glyph sits in a small tonal
-  circle of the kind's own colour — the third signal, never the only one; the
+  The head: the kind,
+written and glyphed. The glyph sits in a small tonal
+  circle of the kind's own colour — the third signal,
+never the only one; the
   pairs are AA-checked in tokens.css. The head itself stays the card's
-  surface, so a page of cards reads as content rather than as coloured strips.
+  surface,
+so a page of cards reads as content rather than as coloured strips.
 */
 
 /* The quick-paste badge: every card on the page whose digit is bound. */
 
-/* The checkbox: 24px of hit area around a 17px ring, on the head strip. */
+/* The checkbox: 24px of hit area around a 17px ring,
+on the head strip. */
 
 /* ---------- card body ---------- */
 
@@ -322,7 +344,8 @@ body {
 /* ---------- colour card ---------- */
 
 /* The swatch and its name sit side by side rather than stacked: a 64px chip
-   above a name and a hex is 105px of content in an 88px body, and the line
+   above a name and a hex is 105px of content in an 88px body,
+and the line
    that fell off the bottom was the value — the one the card exists to show. */
 
 /* On a side band the card is shorter than its width; the chip steps down so
@@ -332,8 +355,11 @@ body {
 
 /*
   The foot answers the one question the content cannot: where a link points,
-  how long a note is, how large an image is. A colour card puts its own three
-  controls here instead — favourite, preview, more — and keeps the Copy.
+how long a note is,
+how large an image is. A colour card puts its own three
+  controls here instead — favourite,
+preview,
+more — and keeps the Copy.
 */
 
 /* Visible at rest. The design system states it twice — "The Copy button is
@@ -342,13 +368,17 @@ body {
    shelf's only direct command was invisible on a product whose entire claim is
    that it is a natural extension of your input. */
 
-/* On a clipboard manager the content is the product, so it is selectable: a
+/* On a clipboard manager the content is the product,
+so it is selectable: a
    note you cannot drag out of the window is a note you can only copy back
    through Bard. The card is still the click target. */
 
-/* The clamp's hard edge gets a fade only where text is actually hidden, which
-   CSS cannot tell on its own. The class is measured, not assumed: a three-line
-   note gets no fade, because a fade over text that is all there is worse than
+/* The clamp's hard edge gets a fade only where text is actually hidden,
+which
+   CSS cannot tell on its own. The class is measured,
+not assumed: a three-line
+   note gets no fade,
+because a fade over text that is all there is worse than
    a clean cut. */
 
 /* ---------- composer ---------- */
@@ -1277,55 +1307,8 @@ mark {
   animation: spin var(--t-slow) linear infinite;
 }
 
-.license-card {
-  display: grid;
-  gap: var(--sp-3);
-  padding: var(--sp-7);
-  border-radius: var(--r-card);
-  background: var(--surface);
-  box-shadow: var(--el-card);
-}
-
-.pane > .license-card {
-  margin-bottom: var(--sp-9);
-}
-
-.license-card.compact {
-  padding: var(--sp-6) var(--sp-7);
-}
-
-.license-card-head,
-.license-card-actions,
-.license-activation {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-4);
-}
-
-.license-card-head h2 {
-  margin: var(--sp-2) 0 0;
-  color: var(--text);
-  font-family: var(--font-display);
-  font-size: var(--fs-md);
-  font-weight: 600;
-}
-
-.license-card-copy,
-.license-card-note {
-  margin: 0;
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.license-card-note {
-  color: var(--text-3);
-}
-
 /* The expiry note: a quiet strip inside the card. It states a date rather than
-   an event, so it is not a toast — and it can be put away. */
-.license-banner {
+an event {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1337,36 +1320,6 @@ mark {
   color: var(--text-2);
   font-size: var(--fs-sm);
   line-height: 1.5;
-}
-
-.license-activation {
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  margin-top: var(--sp-3);
-}
-
-.license-card-actions {
-  justify-content: flex-start;
-  gap: var(--sp-7);
-  margin-top: var(--sp-3);
-}
-
-.license-input {
-  min-width: 0;
-  flex: 1 1 220px;
-  height: 32px;
-  padding: 0 var(--sp-4);
-  border: 1px solid transparent;
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-}
-
-.license-input:focus {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
 
 .link-button {
@@ -1422,35 +1375,7 @@ mark {
   gap: 8px;
 }
 
-.license-input-wrap {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  flex: 1;
-  position: relative;
-}
-
-.license-input-wrap .license-input {
-  width: 100%;
-  padding-right: 32px;
-}
-
 /* The reveal control lives inside the field, as a ghost — not a second field. */
-.license-input-wrap .icon-btn {
-  position: absolute;
-  right: 3px;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--r-sm);
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-3);
-}
-
-.license-input-wrap .icon-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
 
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
@@ -1626,9 +1551,6 @@ mark {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
 }
 
-
-
-
 .clip-head-spring {
   flex: 1;
 }
@@ -1684,7 +1606,6 @@ mark {
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
-
 
 .clip-tools {
   display: flex;
