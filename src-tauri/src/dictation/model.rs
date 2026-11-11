@@ -66,21 +66,6 @@ pub struct ModelInfo {
     pub catalog: bool,
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelStatus {
-    pub id: String,
-    pub name: String,
-    pub size_mb: u64,
-    pub size_bytes: u64,
-    pub downloaded: bool,
-    pub architecture: crate::catalog::Architecture,
-    pub role: Option<crate::catalog::ModelRole>,
-    pub compatibility: crate::hf::ModelCompatibility,
-    pub local_path: Option<String>,
-    pub owned: bool,
-}
-
 /// The resident session: the path it was built from, the session, and the token
 /// that aborts an in-flight run.
 type SessionSlot = (String, Session, CancelToken);
@@ -442,65 +427,6 @@ pub(crate) fn ensure_model_ready(app: &AppHandle) -> Result<(), String> {
         );
     }
     verify_model_cached(app, &id, &path)
-}
-
-pub fn model_status(app: &AppHandle) -> ModelStatus {
-    let id = crate::db::get_setting(app, "model_id").unwrap_or_default();
-    if let Some(model) = crate::catalog::find(&id) {
-        let path = crate::hf::local_models_dir(app).join(&model.file.filename);
-        return ModelStatus {
-            id: model.id.clone(),
-            name: model.name.clone(),
-            size_mb: model.file.size_bytes / 1_048_576,
-            size_bytes: model.file.size_bytes,
-            downloaded: path.is_file(),
-            architecture: model.architecture,
-            role: Some(model.role),
-            compatibility: crate::hf::cached_compatibility(&path),
-            local_path: Some(path.to_string_lossy().to_string()),
-            owned: true,
-        };
-    }
-    if let Some(custom) = crate::db::custom_model_by_id(app, &id) {
-        let path = PathBuf::from(&custom.local_path);
-        let measured_size = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
-        let size_bytes = if custom.size_bytes > 0 {
-            custom.size_bytes
-        } else {
-            measured_size
-        };
-        let owned = custom.owned();
-        let architecture = crate::hf::architecture_from_filename(&custom.file);
-        return ModelStatus {
-            id: custom.id,
-            name: custom.file,
-            size_mb: size_bytes / 1_048_576,
-            size_bytes,
-            downloaded: path.is_file(),
-            architecture,
-            role: None,
-            compatibility: custom.compatibility,
-            local_path: Some(custom.local_path),
-            owned,
-        };
-    }
-
-    // Nothing chosen yet: report the top recommendation, so the UI has a
-    // concrete thing to offer rather than an empty state.
-    let model = crate::catalog::ordered()[0];
-    let path = crate::hf::local_models_dir(app).join(&model.file.filename);
-    ModelStatus {
-        id: model.id.clone(),
-        name: model.name.clone(),
-        size_mb: model.file.size_bytes / 1_048_576,
-        size_bytes: model.file.size_bytes,
-        downloaded: path.is_file(),
-        architecture: model.architecture,
-        role: Some(model.role),
-        compatibility: crate::hf::cached_compatibility(&path),
-        local_path: Some(path.to_string_lossy().to_string()),
-        owned: true,
-    }
 }
 
 pub fn cancel_transcription() {

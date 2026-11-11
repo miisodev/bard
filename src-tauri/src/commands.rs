@@ -38,84 +38,6 @@ pub fn announce_appearance(app: &AppHandle) {
     let _ = app.emit("appearance", read_appearance(app));
 }
 
-#[tauri::command]
-pub async fn hf_cached_models(app: AppHandle) -> Vec<crate::hf::CachedHfModel> {
-    crate::hf::cached_models(&app)
-}
-
-#[tauri::command]
-pub async fn get_detected_models(app: AppHandle) -> Vec<crate::hf::CachedHfModel> {
-    crate::hf::cached_models(&app)
-}
-
-#[tauri::command]
-pub async fn check_model(
-    app: AppHandle,
-    local_path: String,
-) -> Result<crate::hf::CompatibilityResult, String> {
-    crate::hf::probe_local_model(&app, &local_path)
-}
-
-#[tauri::command]
-pub async fn activate_detected_model(app: AppHandle, id: String) -> Result<(), String> {
-    crate::hf::activate_detected_model(&app, &id)
-}
-
-#[tauri::command]
-pub fn forget_detected_model(app: AppHandle, id: String) -> Result<(), String> {
-    if !crate::catalog::find(&id).is_some() && crate::db::custom_model_by_id(&app, &id).is_none() {
-        // An unregistered cache/app-directory candidate has no Bard-owned row;
-        // forgetting it simply removes the transient inventory entry.
-        refresh(&app);
-        return Ok(());
-    }
-    crate::dictation::delete_model(&app, &id)?;
-    refresh(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn hf_list_repo(repo: String) -> Result<Vec<crate::hf::HfFile>, String> {
-    crate::hf::list_repo_files(&repo).await
-}
-
-#[tauri::command]
-pub async fn hf_install(
-    app: AppHandle,
-    repo: String,
-    file: String,
-    size: u64,
-    sha256: String,
-) -> Result<String, String> {
-    crate::hf::install_custom_model(&app, &repo, &file, size, &sha256).await
-}
-
-#[tauri::command]
-pub async fn hf_use_cached(
-    app: AppHandle,
-    repo: String,
-    file: String,
-    local_path: String,
-    size: u64,
-) -> Result<(), String> {
-    // One load, not two. This used to register the path and then activate it,
-    // and each of those opened the file with the engine — so choosing a detected
-    // model meant two full opens of a multi-gigabyte GGUF for one click.
-    crate::hf::register_and_activate_cached(&app, &repo, &file, &local_path, size)
-}
-
-#[tauri::command]
-pub fn remove_custom_model(app: AppHandle, id: String) -> Result<(), String> {
-    crate::dictation::delete_model(&app, &id)?;
-    refresh(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn get_custom_models(app: AppHandle) -> Vec<db::CustomModel> {
-    db::list_custom_models(&app)
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CrashReport {
@@ -229,88 +151,6 @@ pub fn dirs_documents() -> String {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| std::env::temp_dir().to_string_lossy().to_string())
     }
-}
-
-#[tauri::command]
-pub fn create_section(app: AppHandle, name: String) -> i64 {
-    let id = db::find_or_create_section(&app, &name);
-    db::set_active_section(&app, Some(id));
-    refresh(&app);
-    id
-}
-
-#[tauri::command]
-pub fn set_active_section(app: AppHandle, id: Option<i64>) {
-    db::set_active_section(&app, id);
-    refresh(&app);
-}
-
-#[tauri::command]
-pub fn rename_section(app: AppHandle, id: i64, name: String) {
-    db::rename_section(&app, id, &name);
-    refresh(&app);
-}
-
-#[tauri::command]
-pub fn delete_section(app: AppHandle, id: i64) {
-    db::delete_section(&app, id);
-    refresh(&app);
-}
-
-#[tauri::command]
-pub fn list_packs(app: AppHandle) -> Vec<db::PackSummary> {
-    db::list_packs(&app)
-}
-
-#[tauri::command]
-pub fn get_pack(app: AppHandle, id: i64) -> Result<db::PackDetail, String> {
-    db::get_pack(&app, id)
-}
-
-#[tauri::command]
-pub fn create_pack(
-    app: AppHandle,
-    name: String,
-    item_ids: Vec<i64>,
-) -> Result<db::PackSummary, String> {
-    let pack = db::create_pack(&app, &name, &item_ids)?;
-    refresh(&app);
-    Ok(pack)
-}
-
-#[tauri::command]
-pub fn rename_pack(app: AppHandle, id: i64, name: String) -> Result<(), String> {
-    db::rename_pack(&app, id, &name)?;
-    refresh(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn delete_pack(app: AppHandle, id: i64) -> Result<(), String> {
-    db::delete_pack(&app, id)?;
-    refresh(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn pack_add_items(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), String> {
-    db::pack_add_items(&app, id, &item_ids)?;
-    refresh(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn pack_remove_items(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), String> {
-    db::pack_remove_items(&app, id, &item_ids)?;
-    refresh(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn pack_reorder(app: AppHandle, id: i64, item_ids: Vec<i64>) -> Result<(), String> {
-    db::pack_reorder(&app, id, &item_ids)?;
-    refresh(&app);
-    Ok(())
 }
 
 #[tauri::command]
@@ -526,46 +366,6 @@ fn decode_image_payload(data_base64: &str, ext: &str) -> Result<(Vec<u8>, String
         return Err("That image format is not supported.".into());
     }
     Ok((bytes, ext))
-}
-
-#[tauri::command]
-pub async fn attach_image(
-    app: AppHandle,
-    item_id: i64,
-    data_base64: String,
-    ext: String,
-) -> Result<i64, String> {
-    let (bytes, ext) = decode_image_payload(&data_base64, &ext)?;
-    let images = app.state::<ImagesDir>().0.clone();
-    let path = unique_image_path(&images, &ext);
-    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-    let id = db::insert_attachment(&app, item_id, &path.to_string_lossy());
-    if id == db::INSERT_FAILED {
-        // The file is on disk with no row referencing it. `Ok(0)` would tell the
-        // renderer it has an attachment id it does not have, and the file would
-        // never be collected.
-        let _ = std::fs::remove_file(&path);
-        return Err("Bard could not attach this file. Check that the drive has free space.".into());
-    }
-    refresh(&app);
-    Ok(id)
-}
-
-#[tauri::command]
-pub fn detach_attachment(app: AppHandle, id: i64) -> Result<(), String> {
-    if let Some(path) = db::delete_attachment(&app, id)? {
-        // The row is gone; a file that cannot be unlinked is reported rather
-        // than silently left behind.
-        db::remove_owned_image_file(&app, &path)?;
-    }
-    refresh(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn add_note_to_image(app: AppHandle, id: i64) {
-    db::add_note_to_image(&app, id);
-    refresh(&app);
 }
 
 #[tauri::command]
@@ -1265,29 +1065,10 @@ pub fn set_pinned(app: AppHandle, id: i64, pinned: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn set_done(app: AppHandle, id: i64, done: bool) {
-    db::set_done(&app, id, done);
-    refresh(&app);
-}
-
-#[tauri::command]
-pub async fn clear_completed(app: AppHandle) -> Result<(), String> {
-    let ids = db::completed_item_ids(&app)?;
-    db::delete_items_with_files(&app, &ids)?;
-    refresh(&app);
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn clear_history(app: AppHandle) -> Result<(), String> {
     db::clear_history(&app)?;
     refresh(&app);
     Ok(())
-}
-
-#[tauri::command]
-pub async fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
-    crate::clip::set_text(&app, &text)
 }
 
 #[tauri::command]
@@ -1509,18 +1290,6 @@ pub fn notify_error(app: AppHandle, text: String) {
 }
 
 #[tauri::command]
-pub fn copy_attachment(app: AppHandle, id: i64) -> Result<(), String> {
-    let path = db::attachment_path(&app, id).ok_or("Attachment not found")?;
-    crate::clip::set_image(&app, &path)
-}
-
-#[tauri::command]
-pub fn set_active_item(app: AppHandle, id: Option<i64>) {
-    db::set_active_item(&app, id);
-    refresh(&app);
-}
-
-#[tauri::command]
 pub fn set_retention_days(app: AppHandle, origin: String, days: Option<i64>) -> Result<(), String> {
     db::set_retention_days(&app, &origin, days)?;
     // Applying a shorter lifespan should take effect now, not at the next
@@ -1583,12 +1352,6 @@ pub async fn item_image_data(app: AppHandle, id: i64) -> Option<String> {
     crate::clip::image_data(&app, &item.image_path?)
 }
 
-#[tauri::command]
-pub async fn attachment_image_data(app: AppHandle, id: i64) -> Option<String> {
-    let path = db::attachment_path(&app, id)?;
-    crate::clip::image_data(&app, &path)
-}
-
 /// An image card's picture: the file's asset URL, not its bytes.
 ///
 /// The card is 236 × 148 CSS pixels. It used to receive the whole file as a
@@ -1606,13 +1369,6 @@ pub async fn item_cover_url(app: AppHandle, id: i64) -> Option<String> {
         return None;
     }
     crate::clip::image_url(&item.image_path?)
-}
-
-/// An attachment thumbnail's picture, on the same terms as [`item_cover_url`].
-#[tauri::command]
-pub async fn attachment_cover_url(app: AppHandle, id: i64) -> Option<String> {
-    let path = db::attachment_path(&app, id)?;
-    crate::clip::image_url(&path)
 }
 
 /// What every window needs to paint itself: the theme and the background.
@@ -1897,18 +1653,8 @@ pub fn hide_panel(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn toggle_panel(app: AppHandle) {
-    crate::panel::toggle_now(&app);
-}
-
-#[tauri::command]
 pub fn get_models(app: AppHandle) -> Vec<crate::dictation::ModelInfo> {
     crate::dictation::models(&app)
-}
-
-#[tauri::command]
-pub fn get_model(app: AppHandle) -> crate::dictation::ModelStatus {
-    crate::dictation::model_status(&app)
 }
 
 #[tauri::command]
@@ -1931,21 +1677,6 @@ pub fn delete_model(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn download_model_cancel() {
     crate::dictation::cancel_download();
-}
-
-#[tauri::command]
-pub fn dictate_start(app: AppHandle) {
-    crate::dictation::start(&app);
-}
-
-#[tauri::command]
-pub fn dictate_stop(app: AppHandle) {
-    crate::dictation::stop(&app);
-}
-
-#[tauri::command]
-pub fn dictate_cancel(app: AppHandle) {
-    crate::dictation::cancel(&app);
 }
 
 /// The clipboard's image as a data URL, or null when it holds none. Draw's Ctrl+V intake — the pixels come from the

@@ -21,20 +21,13 @@ const TAKE_REALTIME_FACTOR: u64 = 3;
 
 const TAKE_WATCHDOG_TICK: Duration = Duration::from_millis(250);
 
-pub use model::{
-    cancel_download, delete_model, download_model, model_ready, model_status, models, ModelInfo,
-    ModelStatus,
-};
-
-pub fn reset_cancel() {
-    cancel_download_reset();
-}
+pub use model::{cancel_download, delete_model, download_model, model_ready, models, ModelInfo};
 
 pub fn is_cancel_pending() -> bool {
     cancel_pending()
 }
 
-use model::{cancel_download_reset, cancel_pending};
+use model::cancel_pending;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
