@@ -68,12 +68,12 @@ function shot(id: number, origin: Item["origin"], age: number, caption = ""): It
 const items: Item[] = [
 
   text(5, "ffmpeg -i take.wav -ar 16000 -ac 1 take-16k.wav", "clipboard", 41, { favorite: 1, pinnedAt: minutes(30) }),
-  text(2, "https://handy.computer/docs/models", "clipboard", 8),
+  text(2, "https://handy.computer/docs/models", "clipboard", 1),
   text(13, "#6f4a4a", "clipboard", 60),
   shot(11, "clipboard", 2),
   shot(12, "manual", 34),
-  text(3, "Dictation is local. The audio never leaves this computer, and Refine only ever sees the finished text.", "dictation", 14),
-  text(1, "Ship the V2 release notes before Friday — keep them under 150 words.", "manual", 3),
+  text(3, "Dictation is local. The audio never leaves this computer.", "dictation", 14),
+  text(1, "Ship the release notes before Friday — keep them under 150 words.", "manual", 9),
   text(4, "#2f6fed", "clipboard", 26),
   text(6, "Call Lerato about the Cape Town launch venue", "manual", 75, { done: 1 }),
   text(7, "Remember: the three tests. Copper, Handy, and would Apple ship this.", "dictation", 180),
