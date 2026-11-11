@@ -152,6 +152,36 @@ test("feedback channels switch independently", async ({ page }) => {
   await expect(pill).toHaveAttribute("aria-checked", "true");
 });
 
+// A stylesheet can lose a rule without any test of words or contrast noticing.
+// These hold the shape of each window: where its parts sit, not what they say.
+test("Settings keeps its sections beside its content", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 620 });
+  await page.goto("/settings.html?bare=1");
+  await page.getByRole("heading", { name: "General" }).waitFor();
+  const nav = await page.locator(".settings-nav").boundingBox();
+  const content = await page.locator(".settings-content").boundingBox();
+  expect(nav!.x + nav!.width).toBeLessThanOrEqual(content!.x + 1);
+  expect(Math.abs(nav!.y - content!.y)).toBeLessThan(4);
+  expect(nav!.height).toBeGreaterThan(500);
+});
+
+test("the main window stacks its header, search, list and footer", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 620 });
+  await page.goto("/?bare=1");
+  await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
+  const top = async (selector: string) => (await page.locator(selector).first().boundingBox())!.y;
+  const head = await top(".clip-head");
+  const tools = await top(".clip-tools");
+  const list = await top(".clip-scroll");
+  const foot = await top(".clip-foot");
+  expect(head).toBeLessThan(tools);
+  expect(tools).toBeLessThan(list);
+  expect(list).toBeLessThan(foot);
+  const row = (await page.locator(".clip-list .item").first().boundingBox())!;
+  expect(row.height).toBeGreaterThanOrEqual(32);
+  expect(row.height).toBeLessThanOrEqual(40);
+});
+
 for (const theme of ["light", "dark"]) {
   test(`${theme} settings at minimum size have no serious accessibility violations`, async ({ page }) => {
     await page.setViewportSize({ width: 600, height: 440 });

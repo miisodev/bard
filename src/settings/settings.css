@@ -1,17 +1,16 @@
 /*
-The settings window.
+  The settings window.
 
   A sidebar and a scrolling pane in a frameless companion (`.companion` in
   styles.css). Everything here is built from the tokens and the primitives in
-  ui.tsx — if a pane ever needs a one-off rule,
-the primitive is missing.
+  ui.tsx — if a pane ever needs a one-off rule, the primitive is missing.
 */
 
-/* A failure the user has to act on,
-in the danger tone. Also undefined
-   everywhere,
-which is why an activation failure read as an ordinary line of
-   body copy {
+/* A failure the user has to act on, in the danger tone. Also undefined
+   everywhere, which is why an activation failure read as an ordinary line of
+   body copy, indistinguishable from the label above it. The card's own gap
+   supplies the spacing. */
+.form-error {
   margin: 0;
   color: var(--danger-text);
   font-size: var(--fs-sm);
@@ -219,6 +218,11 @@ which is why an activation failure read as an ordinary line of
   white-space: nowrap;
 }
 
+.repo-form {
+  display: flex;
+  gap: var(--sp-4);
+}
+
 .field-control {
   display: grid;
   gap: var(--sp-2);
@@ -229,6 +233,9 @@ which is why an activation failure read as an ordinary line of
   color: var(--text-2);
   font-size: var(--fs-sm);
 }
+
+.repo-form .field { flex: 1; min-width: 0; }
+.repo-form .field-control { flex: 1; min-width: 0; }
 
 .btn:focus-visible,
 .toggle:focus-visible,
@@ -255,6 +262,7 @@ because the panel and the Draw window both render
 .btn svg,
 .loading-row svg,
 .error-empty > svg,
+.postprocessing-status svg,
 .model-trailing svg {
   width: 1em;
   height: 1em;
@@ -414,6 +422,67 @@ because the panel and the Draw window both render
   overflow-wrap: anywhere;
 }
 
+.model-disclosure {
+  margin-bottom: var(--sp-9);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--el-card);
+  overflow: hidden;
+  color: var(--text);
+}
+
+.model-disclosure summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-6) var(--sp-7);
+  cursor: pointer;
+  list-style: none;
+}
+
+.model-disclosure summary::-webkit-details-marker { display: none; }
+
+.model-disclosure summary::after {
+  content: "";
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg);
+  transition: transform var(--t-fast) var(--ease-out);
+}
+
+.model-disclosure[open] summary::after { transform: rotate(45deg); }
+
+.model-disclosure summary strong,
+.model-disclosure summary small { display: block; }
+.model-disclosure summary strong { font-size: var(--fs-base); font-weight: var(--fw-normal); }
+.model-disclosure summary small {
+  margin-top: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.disclosure-body {
+  padding: var(--sp-6) var(--sp-7) var(--sp-7);
+  border-top: 1px solid var(--rule);
+}
+
+.import-intro {
+  margin: var(--sp-4) var(--sp-1) 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-base);
+  color: var(--text-3);
+}
+
+.repo-form .btn { flex: none; }
+
+.repo-results {
+  margin: var(--sp-6) calc(-1 * var(--sp-7)) calc(-1 * var(--sp-7));
+  border-top: 1px solid var(--rule);
+}
+
 .pane-footnote {
   margin: 0 var(--sp-1);
   font-size: var(--fs-caption);
@@ -448,6 +517,27 @@ because the panel and the Draw window both render
   padding: var(--sp-5) var(--sp-7);
   border-top: 1px solid var(--rule);
   background: var(--surface-2);
+}
+
+.refine-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-7);
+  border-top: 1px solid var(--rule);
+  background: var(--surface-2);
+}
+
+.postprocessing-status {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
+.row-buttons {
+  display: flex;
+  gap: var(--sp-3);
 }
 
 /*
@@ -491,6 +581,10 @@ because the panel and the Draw window both render
 
 .group-note a:hover,
 .row-hint a:hover { text-decoration: underline; }
+
+.postprocessing-status.success { color: var(--success-text); }
+.postprocessing-status.danger { color: var(--danger-text); }
+.postprocessing-status.muted { color: var(--text-2); }
 
 /* The release notes the updater fetched and the pane never showed. No panel of
    its own: this is text in a card, not a card in a card. */
@@ -581,6 +675,7 @@ because the panel and the Draw window both render
 @media (max-width: 720px) {
   .settings-nav { width: 168px; }
   .pane { padding: var(--sp-8) var(--sp-7) var(--sp-10); }
+  .repo-form { align-items: stretch; flex-direction: column; }
 }
 
 /* ---------- background ---------- */
