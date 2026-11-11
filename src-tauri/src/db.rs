@@ -105,11 +105,7 @@ pub struct CustomModel {
     pub compatibility: crate::hf::ModelCompatibility,
 }
 
-impl CustomModel {
-    pub fn owned(&self) -> bool {
-        self.ownership == ModelOwnership::App
-    }
-}
+impl CustomModel {}
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -1859,20 +1855,6 @@ pub fn register_custom_model(
     })
 }
 
-pub fn custom_model_by_id(app: &AppHandle, id: &str) -> Option<CustomModel> {
-    if !is_ready(app) {
-        return None;
-    }
-    with_conn(app, |c| {
-        c.query_row(
-            &format!("SELECT {CUSTOM_MODEL_COLUMNS} FROM custom_models WHERE id = ?1"),
-            params![id],
-            custom_model_from_row,
-        )
-        .ok()
-    })
-}
-
 pub fn list_custom_models(app: &AppHandle) -> Vec<CustomModel> {
     if !is_ready(app) {
         return Vec::new();
@@ -1916,27 +1898,6 @@ pub fn set_custom_model_compatibility(
             params![value, local_path],
         );
     });
-}
-
-/// Unregister a custom model. This never clears or changes the active model and
-/// never touches its file; ownership-aware file removal is the model manager's
-/// job before this is called.
-pub fn delete_custom_model(app: &AppHandle, id: &str) -> Result<CustomModel, String> {
-    if !is_ready(app) {
-        return Err("Database is not ready.".into());
-    }
-    if get_setting(app, "model_id").as_deref() == Some(id) {
-        return Err("The active voice model cannot be deleted. Choose another model first.".into());
-    }
-    let model = custom_model_by_id(app, id).ok_or_else(|| format!("Unknown model: {id}"))?;
-    let removed = with_conn_mut(app, |c| {
-        c.execute("DELETE FROM custom_models WHERE id = ?1", params![id])
-            .map_err(|e| e.to_string())
-    })?;
-    if removed == 0 {
-        return Err(format!("Unknown model: {id}"));
-    }
-    Ok(model)
 }
 
 pub fn get_state(app: &AppHandle) -> AppState {

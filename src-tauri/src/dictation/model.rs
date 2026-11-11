@@ -278,14 +278,11 @@ fn find(id: &str) -> Option<ModelDef> {
 }
 
 fn resolve_path(app: &AppHandle, id: &str) -> Option<PathBuf> {
-    if let Some(def) = find(id) {
-        return Some(model_path(app, &def));
-    }
-    crate::db::custom_model_by_id(app, id).map(|custom| PathBuf::from(custom.local_path))
+    find(id).map(|def| model_path(app, &def))
 }
 
 pub fn models(app: &AppHandle) -> Vec<ModelInfo> {
-    let mut list: Vec<ModelInfo> = crate::catalog::ordered()
+    let list: Vec<ModelInfo> = crate::catalog::ordered()
         .into_iter()
         .map(|model| {
             let path = crate::hf::local_models_dir(app).join(&model.file.filename);
@@ -318,61 +315,6 @@ pub fn models(app: &AppHandle) -> Vec<ModelInfo> {
         })
         .collect();
 
-    // A model installed from Hugging Face is not in the catalog, so it carries
-    // no invented curation. It is listed with what Bard actually knows and its
-    // verified/incompatible engine state.
-    let custom_models = if crate::db::is_ready(app) {
-        crate::db::list_custom_models(app)
-    } else {
-        Vec::new()
-    };
-    for custom in custom_models {
-        let path = PathBuf::from(&custom.local_path);
-        let measured_size = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
-        let size_bytes = if custom.size_bytes > 0 {
-            custom.size_bytes
-        } else {
-            measured_size
-        };
-        list.push(ModelInfo {
-            id: custom.id.clone(),
-            name: custom.file.clone(),
-            description: custom.repo.clone(),
-            size_mb: size_bytes / 1_048_576,
-            size_bytes,
-            downloaded: path.is_file(),
-            architecture: crate::hf::architecture_from_filename(&custom.file),
-            family: "custom".into(),
-            parameters: None,
-            role: None,
-            quant: crate::hf::quant_from_filename(&custom.file),
-            languages: 0,
-            capabilities: crate::catalog::Capabilities {
-                streaming: false,
-                translate: false,
-                language_detect: false,
-            },
-            accuracy: 0,
-            speed: 0,
-            value: 0,
-            recommended: false,
-            recommended_rank: None,
-            source: Some(crate::catalog::Source {
-                repo: custom.repo.clone(),
-                revision: String::new(),
-                url: Some(format!("https://huggingface.co/{}", custom.repo)),
-                upstream_repo: None,
-                upstream_revision: None,
-                upstream_url: None,
-                license: None,
-            }),
-            host: None,
-            compatibility: custom.compatibility,
-            local_path: Some(custom.local_path.clone()),
-            owned: custom.owned(),
-            catalog: false,
-        });
-    }
     list
 }
 

@@ -34,49 +34,6 @@ pub struct CompatibilityResult {
     pub message: Option<String>,
 }
 
-/// Pull a quantization label out of common GGUF/GGML filenames. This is display
-/// metadata only; the engine remains the authority on whether a file loads.
-pub fn architecture_from_filename(name: &str) -> crate::catalog::Architecture {
-    let lower = name.to_ascii_lowercase();
-    if lower.contains("parakeet") {
-        crate::catalog::Architecture::Parakeet
-    } else if lower.contains("qwen3") || lower.contains("qwen-3") {
-        crate::catalog::Architecture::Qwen3Asr
-    } else if lower.contains("canary") {
-        crate::catalog::Architecture::Canary
-    } else if lower.contains("moonshine") {
-        crate::catalog::Architecture::Moonshine
-    } else if lower.contains("sensevoice") {
-        crate::catalog::Architecture::SenseVoice
-    } else if lower.contains("gigaam") {
-        crate::catalog::Architecture::GigaAm
-    } else if lower.contains("cohere") {
-        crate::catalog::Architecture::Cohere
-    } else {
-        crate::catalog::Architecture::Whisper
-    }
-}
-
-pub fn quant_from_filename(name: &str) -> Option<String> {
-    let stem = name
-        .rsplit_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(name)
-        .to_ascii_uppercase();
-    const QUANTS: &[&str] = &[
-        "IQ4_XS", "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q6_K", "Q4_0", "Q4_1", "Q5_0", "Q5_1",
-        "Q8_0", "BF16", "F16", "F32",
-    ];
-    QUANTS
-        .iter()
-        .find(|quant| {
-            stem.contains(&format!("-{quant}"))
-                || stem.ends_with(*quant)
-                || stem.contains(&format!("_{quant}"))
-        })
-        .map(|quant| (*quant).to_string())
-}
-
 /// Accept a canonical repo ID, a Hugging Face repository URL, or a URL to a
 /// page below that repository. The API always receives only `owner/name`.
 pub fn normalize_repo_id(input: &str) -> Result<String, String> {
@@ -828,11 +785,8 @@ fn probe_local_model_inner(
 }
 
 fn model_path_for_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
-    if let Some(model) = crate::catalog::find(id) {
-        return Ok(local_models_dir(app).join(&model.file.filename));
-    }
-    crate::db::custom_model_by_id(app, id)
-        .map(|model| PathBuf::from(model.local_path))
+    crate::catalog::find(id)
+        .map(|model| local_models_dir(app).join(&model.file.filename))
         .ok_or_else(|| format!("Unknown model: {id}"))
 }
 
@@ -840,36 +794,11 @@ fn model_path_for_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
 /// closes the gap where a previously installed path was replaced after the
 /// catalogue/custom row was written.
 pub fn verify_model_file(app: &AppHandle, id: &str, path: &Path) -> Result<(), String> {
-    if let Some(model) = crate::catalog::find(id) {
-        if !path_is_within(&local_models_dir(app), path) {
-            return Err("The selected catalogue model is outside Bard's model directory.".into());
-        }
-        return verify_pinned_file(path, model.file.size_bytes, &model.file.sha256);
+    let model = crate::catalog::find(id).ok_or_else(|| format!("Unknown model: {id}"))?;
+    if !path_is_within(&local_models_dir(app), path) {
+        return Err("The selected model is outside Bard's model directory.".into());
     }
-
-    let custom =
-        crate::db::custom_model_by_id(app, id).ok_or_else(|| format!("Unknown model: {id}"))?;
-    let link_metadata = fs::symlink_metadata(path)
-        .map_err(|_| "The selected model file is no longer available.".to_string())?;
-    let target_metadata = fs::metadata(path)
-        .map_err(|_| "The selected model file is no longer available.".to_string())?;
-    if !target_metadata.is_file() {
-        return Err("The selected model path is not a regular file.".into());
-    }
-    let canonical = fs::canonicalize(path)
-        .map_err(|_| "The selected model file is no longer available.".to_string())?;
-    if link_metadata.file_type().is_symlink() && !path_is_within(&hf_cache_dir(), &canonical) {
-        return Err("Bard-managed model paths may not be symbolic links.".into());
-    }
-    let recorded = fs::canonicalize(&custom.local_path)
-        .map_err(|_| "The selected model registration is stale.".to_string())?;
-    if normalized_path_string(&canonical) != normalized_path_string(&recorded) {
-        return Err("The selected model path changed after registration; rescan it first.".into());
-    }
-    if custom.owned() || !custom.sha256.is_empty() {
-        verify_pinned_file(&canonical, custom.size_bytes, &custom.sha256)?;
-    }
-    Ok(())
+    verify_pinned_file(path, model.file.size_bytes, &model.file.sha256)
 }
 
 /// Verify first, persist second. No caller receives a successful activation
@@ -1446,15 +1375,7 @@ pub fn delete_model(app: &AppHandle, id: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let custom =
-        crate::db::custom_model_by_id(app, id).ok_or_else(|| format!("Unknown model: {id}"))?;
-    if custom.owned() {
-        let path = Path::new(&custom.local_path);
-        remove_owned_model_file(app, path)?;
-        let _ = remove_owned_model_file(app, &part_path(path));
-        let _ = remove_owned_model_file(app, &legacy_part_path(path));
-    }
-    crate::db::delete_custom_model(app, id).map(|_| ())
+    Err(format!("Unknown model: {id}"))
 }
 
 #[cfg(test)]
@@ -1717,18 +1638,6 @@ mod tests {
         assert_eq!(normalize_checksum(&value).unwrap(), "a".repeat(64));
         assert!(normalize_checksum("not-a-hash").is_err());
         assert_eq!(normalize_checksum("").unwrap(), "");
-    }
-
-    #[test]
-    fn extracts_common_quant_labels() {
-        assert_eq!(
-            quant_from_filename("Qwen3-ASR-0.6B-Q8_0.gguf").as_deref(),
-            Some("Q8_0")
-        );
-        assert_eq!(
-            quant_from_filename("ggml-medium-q5_0.bin").as_deref(),
-            Some("Q5_0")
-        );
     }
 
     #[test]
