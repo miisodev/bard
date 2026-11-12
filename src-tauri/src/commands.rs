@@ -690,14 +690,13 @@ fn companion(app: &AppHandle, label: &str) -> Option<tauri::WebviewWindow> {
     let (url, title, min) = match label {
         "draw" => ("draw.html", "Draw", (480.0, 400.0)),
         "settings" => ("settings.html", "Settings", (600.0, 440.0)),
+        "guide" => ("guide.html", "Shortcuts", (320.0, 320.0)),
         _ => return None,
     };
+    let size = companion_size(label);
     let built = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
         .title(title)
-        .inner_size(
-            crate::panel::COMPANION_WIDTH,
-            crate::panel::COMPANION_HEIGHT,
-        )
+        .inner_size(size.0, size.1)
         .min_inner_size(min.0, min.1)
         .resizable(true)
         .decorations(false)
@@ -716,6 +715,18 @@ fn companion(app: &AppHandle, label: &str) -> Option<tauri::WebviewWindow> {
     Some(built)
 }
 
+/// The first size of a companion window, in logical pixels.
+fn companion_size(label: &str) -> (f64, f64) {
+    if label == "guide" {
+        (crate::panel::GUIDE_WIDTH, crate::panel::GUIDE_HEIGHT)
+    } else {
+        (
+            crate::panel::COMPANION_WIDTH,
+            crate::panel::COMPANION_HEIGHT,
+        )
+    }
+}
+
 /// WebView2 creation must not run inside a synchronous IPC/menu callback.
 /// Its initialization needs that same UI event loop and otherwise deadlocks.
 /// Serialize first creation on a worker, then return display/focus operations
@@ -728,6 +739,7 @@ fn with_companion(
     let label = match label {
         "draw" => "draw",
         "settings" => "settings",
+        "guide" => "guide",
         _ => return,
     };
     let handle = app.clone();
@@ -818,16 +830,12 @@ fn show_secondary_window(app: &AppHandle, win: &tauri::WebviewWindow) {
     }
     let _ = win.unminimize();
     if !win.is_visible().unwrap_or(false) {
-        crate::geometry::restore(
-            app,
-            win,
-            crate::panel::COMPANION_WIDTH,
-            crate::panel::COMPANION_HEIGHT,
-        );
+        let size = companion_size(win.label());
+        crate::geometry::restore(app, win, size.0, size.1);
     }
     crate::panel::mark_shown();
     let _ = win.show();
-    let _ = win.set_focus();
+    crate::front::bring(win);
     crate::panel::companions_changed(app);
 }
 
@@ -885,6 +893,17 @@ pub fn draw_shortcut(app: &AppHandle) {
 pub fn settings_shortcut(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || toggle_secondary_alone(&handle, "settings"));
+}
+
+/// The shortcut guide, from its chord, the tray or the main window.
+pub fn guide_shortcut(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || toggle_secondary_alone(&handle, "guide"));
+}
+
+#[tauri::command]
+pub fn open_guide(app: AppHandle) {
+    show_secondary(&app, "guide", false);
 }
 
 #[tauri::command]

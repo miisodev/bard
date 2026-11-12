@@ -19,6 +19,7 @@
     "allow-add-item",
     "allow-add-image",
     "allow-open-draw",
+    "allow-open-guide",
     "allow-open-draw-with-image",
     "allow-open-settings",
     "allow-toggle-companion",

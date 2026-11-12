@@ -36,11 +36,14 @@ html[data-preview="main"] #root:has(.app[data-dock="left"]),
 html[data-preview="main"] #root:has(.app[data-dock="right"]) {
   --preview-w: 380px;
   --preview-h: 860px;
-  border-radius: 0;
 }
 html[data-preview="main"] #root:has(.app.setup) {
   --preview-w: 620px;
   --preview-h: 680px;
+}
+html[data-preview="guide"] #root {
+  --preview-w: 400px;
+  --preview-h: 684px;
 }
 /* The pill window is a transparent canvas; the pill draws at its top. */
 html[data-preview="pill"] #root {

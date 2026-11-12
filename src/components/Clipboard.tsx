@@ -39,7 +39,6 @@ import { api } from "../store";
 import type { AppState, Dock, Item, ShortcutState, SortOrder } from "../types";
 import Menu, { type MenuEntry } from "./Menu";
 import ResizeHandles from "./ResizeHandles";
-import ShortcutSheet, { type ShortcutGroup } from "./ShortcutSheet";
 
 const GLYPHS: Record<ShelfKind, LucideIcon> = {
   text: Type,
@@ -312,49 +311,6 @@ const Row = memo(function Row({
   );
 });
 
-function guideGroups(state: ShortcutState | null): ShortcutGroup[] {
-  const rows = state?.rows ?? [];
-  const keys = (id: string) => {
-    const row = rows.find((r) => r.id === id);
-    if (!row || !row.display) return ["Off"];
-    return row.display.split("+");
-  };
-  const row = (id: string, what: string) => ({ keys: keys(id), what });
-  return [
-    {
-      name: "Anywhere",
-      rows: [
-        row("main", "Show or hide Bard"),
-        row("dictate", "Dictate: hold, or tap twice"),
-        row("slot-1", "Copy slot 1 (2 and 3 likewise)"),
-        row("cycle", "Cycle through the slots"),
-        row("preview", "Show the clipboard"),
-        row("pause", "Pause or resume keeping copies"),
-        row("draw", "Open Draw"),
-        row("settings", "Open Settings"),
-        row("guide", "Show this guide"),
-      ],
-      note:
-        state?.backend === "portal"
-          ? "Your desktop owns these shortcuts. Change them in Settings › Shortcuts."
-          : "Escape cancels a dictation while it is listening. Change any shortcut in Settings › Shortcuts.",
-    },
-    {
-      name: "In this window",
-      rows: [
-        { keys: ["↑", "↓"], what: "Move" },
-        { keys: ["Enter"], what: "Copy and close" },
-        { keys: ["Shift", "Enter"], what: "Copy and stay" },
-        { keys: ["Ctrl", "P"], what: "Pin or unpin" },
-        { keys: ["Ctrl", "S"], what: "Keep forever" },
-        { keys: ["Delete"], what: "Delete" },
-        { keys: ["Ctrl", "F"], what: "Search" },
-        { keys: ["Esc"], what: "Clear search, then close" },
-      ],
-    },
-  ];
-}
-
 export default function Clipboard({
   state,
   onState,
@@ -373,7 +329,6 @@ export default function Clipboard({
   const [filter, setFilter] = useState<TypeFilter>("all");
   const [cursor, setCursor] = useState(-1);
   const [menu, setMenu] = useState<{ entries: MenuEntry[]; at?: { x: number; y: number } } | null>(null);
-  const [guide, setGuide] = useState(false);
   const [shortcuts, setShortcuts] = useState<ShortcutState | null>(null);
   const [rowHeight, setRowHeight] = useState(FALLBACK_ROW_HEIGHT);
   const [headingHeight, setHeadingHeight] = useState(FALLBACK_HEADING_HEIGHT);
@@ -468,10 +423,6 @@ export default function Clipboard({
   useEffect(() => {
     loadShortcuts();
     const offs = [
-      listen("show-guide", () => {
-        loadShortcuts();
-        setGuide(true);
-      }),
       listen("shortcuts-changed", loadShortcuts),
       listen("panel-shown", () => {
         setCursor(-1);
@@ -728,10 +679,7 @@ export default function Clipboard({
       })),
       {
         label: "Shortcuts",
-        onClick: () => {
-          loadShortcuts();
-          setGuide(true);
-        },
+        onClick: () => void api.openGuide(),
         trailing: "?",
         separated: true,
       },
@@ -747,7 +695,7 @@ export default function Clipboard({
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
-    if (menu || guide) return;
+    if (menu) return;
     const inSearch = document.activeElement === searchRef.current;
     const command = listCommand({
       key: event.key,
@@ -801,8 +749,7 @@ export default function Clipboard({
         break;
       case "guide":
         event.preventDefault();
-        loadShortcuts();
-        setGuide(true);
+        void api.openGuide();
         break;
       case "menu":
         event.preventDefault();
@@ -1013,7 +960,6 @@ export default function Clipboard({
       </footer>
 
       {menu && <Menu entries={menu.entries} anchor={menu.at ? "point" : "top-right"} at={menu.at} onClose={() => setMenu(null)} />}
-      {guide && <ShortcutSheet title="Shortcuts" groups={guideGroups(shortcuts)} onClose={() => setGuide(false)} />}
     </div>
   );
 }

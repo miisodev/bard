@@ -65,7 +65,10 @@ body {
   height: 100vh;
   background: var(--canvas);
   border-radius: var(--r-panel);
-  border: 1px solid var(--border);
+  /* The hairline is the window's whole edge wherever the desktop gives an
+     undecorated window no shadow, so it is drawn firmly enough to hold the
+     surface apart from a page of the same colour behind it. */
+  border: 1px solid color-mix(in srgb, var(--on-canvas) 16%, transparent);
   overflow: hidden;
   color: var(--on-canvas);
 }
@@ -1486,7 +1489,7 @@ mark {
   position: relative;
   height: 100vh;
   background: var(--canvas);
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--on-canvas) 16%, transparent);
   border-radius: var(--r-panel);
   overflow: hidden;
   color: var(--on-canvas);
@@ -1555,7 +1558,7 @@ mark {
    The clipboard history: a compact vertical list. A title bar that moves the
    window, a search field and a kind filter, then one row per item — glyph,
    content, and when — with the first three rows numbered for their slot
-   shortcuts. Docked, it loses its outer corners against the screen edge. */
+   shortcuts. Docked, it is the same surface, set in a little from the edge. */
 
 .clip {
   position: relative;
@@ -1563,12 +1566,6 @@ mark {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-}
-
-.app[data-dock="left"],
-.app[data-dock="right"] {
-  border-radius: 0;
-  border-width: 0;
 }
 
 .clip-head {

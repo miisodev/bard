@@ -1,10 +1,15 @@
 /*
   The status pill — what Bard just did, at the top middle of the screen.
 
-  It is dark in both themes on purpose: it floats over whatever the person is
-  doing, and a near-black surface with light type reads over any app. Colour
-  is spent only on the glyph, and the words always say what happened, so
-  colour never carries the meaning alone.
+  It follows the theme like every other Bard surface: near-black with light
+  type in dark, white with dark type in light. Colour is spent only on the
+  glyph, and the words always say what happened, so colour never carries the
+  meaning alone.
+
+  The window is a transparent canvas larger than the pill. The page must fill
+  that canvas (height: 100%) and the shadow must fade out inside it: the web
+  view paints only the document's own box, so a short document cuts the shadow
+  off in a hard rectangle that shows as a square behind the pill.
 
   Three shapes, by how much the moment deserves: a badge, the slots, a card.
 */
@@ -17,8 +22,10 @@
   --pill-text: #f4f4f6;
   --pill-text-2: #a3a3ad;
   --pill-text-3: #9494a1;
-  --pill-shadow: 0 8px 24px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.2);
+  --pill-well: rgba(255, 255, 255, 0.05);
+  --pill-shadow: 0 5px 16px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
   --pill-copy: #7aa5ff;
+  --pill-on-copy: #0d1730;
   --pill-done: #5fd08f;
   --pill-error: #ff7a7f;
   --pill-warn: #f0b95a;
@@ -29,6 +36,30 @@
   --pill-r-card: 16px;
   --pill-r-row: 9px;
   --pill-fs: 12.5px;
+}
+
+:root[data-theme="light"] {
+  --pill-bg: #ffffff;
+  --pill-ring: rgba(20, 20, 40, 0.12);
+  --pill-line: rgba(20, 20, 40, 0.08);
+  --pill-fill: rgba(20, 20, 40, 0.07);
+  --pill-text: #1b1b20;
+  --pill-text-2: #55565e;
+  --pill-text-3: #64656d;
+  --pill-well: rgba(20, 20, 40, 0.045);
+  --pill-shadow: 0 5px 16px rgba(20, 20, 40, 0.14), 0 1px 3px rgba(20, 20, 40, 0.1);
+  --pill-copy: #2c63e6;
+  --pill-on-copy: #ffffff;
+  --pill-done: #1f8a4c;
+  --pill-error: #d93a40;
+  --pill-warn: #b3761a;
+  --pill-rec: #e5484d;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 html:not([data-preview]),
@@ -43,7 +74,8 @@ html:not([data-preview]) #root {
   align-items: flex-start;
   width: 100%;
   height: 100%;
-  padding: var(--sp-2) var(--sp-6) 0;
+  /* Room for the whole shadow above and beside the pill. */
+  padding: 14px var(--sp-8) 0;
   pointer-events: none;
 }
 
@@ -131,7 +163,7 @@ html:not([data-preview]) #root {
   height: 8px;
   border-radius: var(--r-pill);
   background: var(--pill-rec);
-  box-shadow: 0 0 0 3px rgba(255, 90, 95, 0.22);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pill-rec) 22%, transparent);
   animation: pill-pulse var(--t-pulse) var(--ease-in-out) infinite alternate;
 }
 
@@ -243,7 +275,7 @@ html:not([data-preview]) #root {
 
 .pill-rail li.on kbd {
   background: var(--pill-copy);
-  color: #0d1730;
+  color: var(--pill-on-copy);
   font-weight: var(--fw-semibold);
 }
 
@@ -253,7 +285,7 @@ html:not([data-preview]) #root {
   margin: 0 var(--sp-2);
   padding: var(--sp-5) var(--sp-6);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--pill-well);
 }
 
 .pill-body-text {
@@ -338,7 +370,7 @@ html:not([data-preview]) #root {
 
 .pill-marks i.on {
   background: var(--pill-copy);
-  color: #0d1730;
+  color: var(--pill-on-copy);
   font-weight: var(--fw-semibold);
 }
 

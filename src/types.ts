@@ -158,6 +158,8 @@ export interface ShortcutRow {
   display: string;
   defaultChord: string;
   status: ShortcutStatus;
+  /** What the desktop itself does with this chord, when it keeps it. */
+  conflict?: string | null;
 }
 
 export interface ShortcutState {

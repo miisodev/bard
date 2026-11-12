@@ -9,6 +9,7 @@ mod db;
 mod desktop;
 mod dictation;
 mod feedback;
+mod front;
 mod geometry;
 mod guardian;
 mod hf;
@@ -390,7 +391,7 @@ fn main() {
             // None and "open settings" silently does nothing — which is what
             // made settings and the canvas unreachable once either had been
             // closed.
-            if matches!(window.label(), "settings" | "draw") {
+            if matches!(window.label(), "settings" | "draw" | "guide") {
                 match event {
                     WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
@@ -441,6 +442,7 @@ fn main() {
             commands::add_item,
             commands::add_image,
             commands::open_draw,
+            commands::open_guide,
             commands::open_draw_with_image,
             commands::save_svg,
             commands::set_draw_prefs,

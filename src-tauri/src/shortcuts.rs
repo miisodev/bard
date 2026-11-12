@@ -373,9 +373,14 @@ fn status(action: Action) -> Status {
 
 /// What the portal reports each shortcut is actually bound to on Wayland.
 static PORTAL_TRIGGERS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+/// Shortcut id → what the desktop itself already does with that chord.
+static PORTAL_CONFLICTS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 #[cfg(target_os = "linux")]
-pub fn set_portal_triggers(triggers: HashMap<String, String>) {
+pub fn set_portal_triggers(triggers: HashMap<String, String>, conflicts: HashMap<String, String>) {
+    if let Ok(mut slot) = PORTAL_CONFLICTS.lock() {
+        *slot = Some(conflicts.clone());
+    }
     if let Ok(mut slot) = PORTAL_TRIGGERS.lock() {
         *slot = Some(triggers.clone());
         for action in ACTIONS {
@@ -389,7 +394,9 @@ pub fn set_portal_triggers(triggers: HashMap<String, String>) {
                 .is_some_and(|trigger| !trigger.is_empty());
             set_status(
                 action,
-                if reported {
+                if conflicts.contains_key(action.id()) {
+                    Status::Taken
+                } else if reported {
                     Status::Ready
                 } else {
                     Status::Pending
@@ -399,9 +406,138 @@ pub fn set_portal_triggers(triggers: HashMap<String, String>) {
     }
 }
 
+/// A chord reduced to its modifiers and key, however it is spelled:
+/// `Ctrl+Alt+D`, `<Primary><Alt>d` and `CTRL+ALT+d` are one chord.
+#[cfg(target_os = "linux")]
+fn combo(text: &str) -> Option<(u8, String)> {
+    let mut mods = 0u8;
+    let mut key = None;
+    for token in text
+        .split(|c: char| matches!(c, '+' | '<' | '>') || c.is_whitespace())
+        .filter(|token| !token.is_empty())
+    {
+        match token.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" | "primary" => mods |= 1,
+            "alt" | "mod1" => mods |= 2,
+            "shift" => mods |= 4,
+            "super" | "meta" | "logo" | "mod4" | "win" => mods |= 8,
+            "," => key = Some("comma".to_string()),
+            "." => key = Some("period".to_string()),
+            "/" => key = Some("slash".to_string()),
+            other => key = Some(other.to_string()),
+        }
+    }
+    key.map(|key| (mods, key))
+}
+
+/// One line of `gsettings list-recursively`: the action's name and the
+/// chords bound to it. `schema show-desktop ['<Primary><Alt>d', '<Super>d']`.
+#[cfg(target_os = "linux")]
+fn gsettings_line(line: &str) -> Option<(String, Vec<(u8, String)>)> {
+    let mut parts = line.splitn(3, ' ');
+    let (_schema, name, value) = (parts.next()?, parts.next()?, parts.next()?);
+    let chords: Vec<_> = value
+        .split('\'')
+        .skip(1)
+        .step_by(2)
+        .filter_map(combo)
+        .collect();
+    if chords.is_empty() {
+        return None;
+    }
+    Some((name.replace('-', " "), chords))
+}
+
+/// The chords GNOME keeps for itself, each with the name of what it does.
+/// The desktop grants an app a chord it already uses without a word, and
+/// then never delivers it; this is how Bard finds out. Other desktops, and
+/// a GNOME without `gsettings`, report nothing.
+#[cfg(target_os = "linux")]
+fn desktop_bindings() -> HashMap<(u8, String), String> {
+    let mut found = HashMap::new();
+    let gnome = std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|value| value.to_ascii_uppercase().contains("GNOME"))
+        .unwrap_or(false);
+    if !gnome {
+        return found;
+    }
+    for schema in [
+        "org.gnome.desktop.wm.keybindings",
+        "org.gnome.shell.keybindings",
+        "org.gnome.mutter.keybindings",
+        "org.gnome.mutter.wayland.keybindings",
+        "org.gnome.settings-daemon.plugins.media-keys",
+    ] {
+        let Ok(output) = std::process::Command::new("gsettings")
+            .args(["list-recursively", schema])
+            .output()
+        else {
+            return found;
+        };
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Some((name, chords)) = gsettings_line(line) {
+                for chord in chords {
+                    found.entry(chord).or_insert_with(|| name.clone());
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Which of the desktop-assigned `triggers` the desktop also uses itself:
+/// shortcut id → the desktop's name for what the chord does.
+#[cfg(target_os = "linux")]
+pub fn desktop_conflicts(triggers: &HashMap<String, String>) -> HashMap<String, String> {
+    conflicts_among(triggers, &desktop_bindings())
+}
+
+#[cfg(target_os = "linux")]
+fn conflicts_among(
+    triggers: &HashMap<String, String>,
+    system: &HashMap<(u8, String), String>,
+) -> HashMap<String, String> {
+    triggers
+        .iter()
+        .filter_map(|(id, trigger)| {
+            let name = system.get(&combo(trigger)?)?;
+            Some((id.clone(), name.clone()))
+        })
+        .collect()
+}
+
+/// Say once, at the top of the screen, that a shortcut cannot work.
+#[cfg(target_os = "linux")]
+pub fn report_conflicts(app: &AppHandle) {
+    let rows: Vec<ShortcutRow> = state(app)
+        .rows
+        .into_iter()
+        .filter(|row| row.conflict.is_some())
+        .collect();
+    let Some(first) = rows.first() else {
+        return;
+    };
+    let text = if rows.len() == 1 {
+        format!(
+            "{} is your desktop's “{}”",
+            first.display,
+            first.conflict.as_deref().unwrap_or_default()
+        )
+    } else {
+        format!("{} shortcuts are used by your desktop", rows.len())
+    };
+    crate::feedback::notify(
+        app,
+        crate::feedback::Note::error(text).with_detail("Change it in Settings › Shortcuts"),
+    );
+}
+
 #[cfg(target_os = "linux")]
 pub fn clear_portal() {
     if let Ok(mut slot) = PORTAL_TRIGGERS.lock() {
+        *slot = None;
+    }
+    if let Ok(mut slot) = PORTAL_CONFLICTS.lock() {
         *slot = None;
     }
     for action in ACTIONS {
@@ -420,6 +556,8 @@ pub struct ShortcutRow {
     pub display: String,
     pub default_chord: &'static str,
     pub status: Status,
+    /// What the desktop itself does with this chord, when it keeps it.
+    pub conflict: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -444,6 +582,7 @@ pub fn backend() -> &'static str {
 
 pub fn state(app: &AppHandle) -> ShortcutState {
     let portal = PORTAL_TRIGGERS.lock().ok().and_then(|slot| slot.clone());
+    let conflicts = PORTAL_CONFLICTS.lock().ok().and_then(|slot| slot.clone());
     let rows = ACTIONS
         .iter()
         .map(|action| {
@@ -465,6 +604,9 @@ pub fn state(app: &AppHandle) -> ShortcutState {
                 } else {
                     status(*action)
                 },
+                conflict: conflicts
+                    .as_ref()
+                    .and_then(|found| found.get(action.id()).cloned()),
             }
         })
         .collect();
@@ -1220,12 +1362,43 @@ mod portal_triggers {
     use super::*;
 
     #[test]
+    fn a_chord_is_the_same_however_it_is_spelled() {
+        assert_eq!(combo("Ctrl+Alt+D"), combo("<Primary><Alt>d"));
+        assert_eq!(combo("CTRL+ALT+d"), combo("<Control><Alt>d"));
+        assert_eq!(combo("Shift+Alt+,"), combo("<Shift><Alt>comma"));
+        assert_ne!(combo("Ctrl+Alt+D"), combo("Ctrl+Shift+D"));
+        assert_eq!(combo("<Shift><Alt>"), None);
+    }
+
+    #[test]
+    fn a_chord_the_desktop_keeps_is_named() {
+        let (name, chords) = gsettings_line(
+            "org.gnome.desktop.wm.keybindings show-desktop ['<Primary><Super>d', '<Primary><Alt>d', '<Super>d']",
+        )
+        .expect("a bound action");
+        assert_eq!(name, "show desktop");
+        assert_eq!(chords.len(), 3);
+        assert!(gsettings_line("org.gnome.desktop.wm.keybindings lower @as []").is_none());
+
+        let system: HashMap<_, _> = chords.into_iter().map(|c| (c, name.clone())).collect();
+        let mut triggers = HashMap::new();
+        triggers.insert("dictate".to_string(), "Ctrl+Alt+D".to_string());
+        triggers.insert("main".to_string(), "Shift+Alt+V".to_string());
+        let found = conflicts_among(&triggers, &system);
+        assert_eq!(
+            found.get("dictate").map(String::as_str),
+            Some("show desktop")
+        );
+        assert!(!found.contains_key("main"));
+    }
+
+    #[test]
     fn only_portal_reported_shortcuts_are_ready() {
         let mut reported = HashMap::new();
         reported.insert("main".to_string(), "ALT+SHIFT+v".to_string());
         // An empty trigger is a report of nothing: treated as unreported.
         reported.insert("draw".to_string(), String::new());
-        set_portal_triggers(reported);
+        set_portal_triggers(reported, HashMap::new());
 
         assert_eq!(status(Action::Main), Status::Ready);
         assert_eq!(
@@ -1241,7 +1414,7 @@ mod portal_triggers {
 
         // The desktop's changed event re-reports the whole table: what it
         // omits falls back to pending, never stays ready.
-        set_portal_triggers(HashMap::new());
+        set_portal_triggers(HashMap::new(), HashMap::new());
         for action in ACTIONS {
             assert_eq!(
                 status(action),

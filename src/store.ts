@@ -22,6 +22,7 @@ export const api = {
   addItem: (content: string) => invoke<void>("add_item", { content }),
   openDraw: () => invoke<void>("open_draw"),
   openSettings: () => invoke<void>("open_settings"),
+  openGuide: () => invoke<void>("open_guide"),
   toggleCompanion: (label: "draw" | "settings") => invoke<void>("toggle_companion", { label }),
   setSort: (order: SortOrder) => invoke<void>("set_sort", { order }),
   addImage: (dataBase64: string, ext: string) =>

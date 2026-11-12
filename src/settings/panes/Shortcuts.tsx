@@ -72,6 +72,7 @@ function Keys({ display }: { display: string }) {
 }
 
 function StatusNote({ row }: { row: ShortcutRow }) {
+  if (row.conflict) return <span className="shortcut-status taken">Your desktop’s “{row.conflict}”</span>;
   if (row.status === "taken") return <span className="shortcut-status taken">Used by another app</span>;
   if (row.status === "pending") return <span className="shortcut-status">Waiting for your desktop</span>;
   return null;
@@ -122,6 +123,7 @@ export default function ShortcutsPane({ state }: PaneProps) {
   };
 
   const portal = shortcuts?.backend === "portal";
+  const kept = (shortcuts?.rows ?? []).filter((row) => row.conflict);
   const connectDesktop = async (feature: "shortcuts" | "edit-shortcuts") => {
     setWorking(true);
     setError(null);
@@ -141,6 +143,14 @@ export default function ShortcutsPane({ state }: PaneProps) {
       description="Work with Bard from any app. Every shortcut puts things on your clipboard; you paste."
     >
       {error ? <Note tone="danger">{error}</Note> : null}
+      {kept.length > 0 ? (
+        <Note tone="danger">
+          {kept.length === 1
+            ? `${kept[0].display} is also your desktop’s own shortcut for “${kept[0].conflict}”, so it never reaches Bard.`
+            : `${kept.length} of these are also your desktop’s own shortcuts, so they never reach Bard.`}{" "}
+          Choose other keys with Change keys.
+        </Note>
+      ) : null}
       {portal ? (
         <Group
           title="Your desktop"
@@ -217,7 +227,7 @@ export default function ShortcutsPane({ state }: PaneProps) {
         <Row label="Search" hint="Or just start typing.">
           <Keys display="Ctrl+F" />
         </Row>
-        <Row label="Guide" hint="The shortcut guide, over the list.">
+        <Row label="Guide" hint="Opens the shortcut guide in its own window.">
           <Keys display="?" />
         </Row>
       </Group>

@@ -1,6 +1,8 @@
 //! Wayland integration through consent-based desktop portals: global
 //! shortcuts and start-at-login. No raw keyboard device access, no keyboard
-//! injection, no compositor-specific helpers or shell commands.
+//! injection, no compositor-specific helpers. The one thing read outside the
+//! portal is GNOME's own key bindings, to say when it kept a chord it
+//! granted (see `shortcuts::desktop_conflicts`).
 use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut, Shortcut};
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -29,6 +31,17 @@ fn triggers(shortcuts: &[Shortcut]) -> HashMap<String, String> {
         .iter()
         .map(|s| (s.id().to_string(), s.trigger_description().to_string()))
         .collect()
+}
+
+/// Record what the desktop bound, and which of those chords it also keeps
+/// for itself.
+async fn publish(triggers: HashMap<String, String>) {
+    let asked = triggers.clone();
+    let conflicts =
+        tauri::async_runtime::spawn_blocking(move || shortcuts::desktop_conflicts(&asked))
+            .await
+            .unwrap_or_default();
+    shortcuts::set_portal_triggers(triggers, conflicts);
 }
 
 pub async fn configure_shortcuts(app: AppHandle) -> Result<(), String> {
@@ -71,7 +84,8 @@ pub async fn configure_shortcuts(app: AppHandle) -> Result<(), String> {
             crate::db::set_setting(&app, DECLINED_SETTING, "1");
             "Shortcuts were not enabled. You can allow them in Settings › Shortcuts.".to_string()
         })?;
-    shortcuts::set_portal_triggers(triggers(bound.shortcuts()));
+    publish(triggers(bound.shortcuts())).await;
+    shortcuts::report_conflicts(&app);
     crate::db::set_setting(&app, DECLINED_SETTING, "0");
     let own_session = serde_json::to_value(&session).map_err(|e| e.to_string())?;
     SHORTCUTS_READY.store(true, Ordering::Release);
@@ -105,7 +119,7 @@ pub async fn configure_shortcuts(app: AppHandle) -> Result<(), String> {
                 event = changed.next() => {
                     let Some(event) = event else { break; };
                     if !mine(event.session_handle().as_str()) { continue; }
-                    shortcuts::set_portal_triggers(triggers(event.shortcuts()));
+                    publish(triggers(event.shortcuts())).await;
                     let _ = app.emit("shortcuts-changed", ());
                 }
                 _ = closed.next() => break,

@@ -98,27 +98,54 @@ test("pinning moves an item into the pinned group, by pointer or keyboard", asyn
   await expect(page.getByRole("option", { name: /Book the Cape Town venue.*pinned/i })).toBeVisible();
 });
 
-test("the shortcut guide lists the global chords and closes with Escape", async ({ page }) => {
+test("the shortcut guide is a window of its own listing the global chords", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 684 });
+  await page.goto("/guide.html?bare=1");
+  const guide = page.getByRole("main", { name: "Shortcuts" });
+  await expect(guide).toBeVisible();
+  await expect(guide).toContainText("Show or hide Bard");
+  await expect(guide).toContainText("Space");
+  await expect(guide).toContainText("In the main window");
+  await expect(guide).not.toContainText("Left Shift");
+  await expect(guide).not.toContainText("paste");
+  // Every row fits: nothing is cut off at the guide's first size.
+  const overflow = await guide.evaluate((el) => el.scrollHeight - el.clientHeight);
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+for (const theme of ["light", "dark"] as const) {
+  test(`${theme} shortcut guide has no serious accessibility violations`, async ({ page }) => {
+    await page.setViewportSize({ width: 400, height: 684 });
+    await page.goto(`/guide.html?theme=${theme}&bare=1`);
+    await page.getByRole("main", { name: "Shortcuts" }).waitFor();
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(serious(violations)).toEqual([]);
+  });
+}
+
+test("the main window opens the guide instead of covering the history", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 620 });
   await page.goto("/?bare=1");
   await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
   await page.keyboard.press("Control+/");
-  const guide = page.getByRole("dialog", { name: "Shortcuts" });
-  await expect(guide).toBeVisible();
-  await expect(guide).toContainText("Show or hide Bard");
-  await expect(guide).toContainText("Space");
-  await expect(guide).not.toContainText("Left Shift");
-  await expect(guide).not.toContainText("paste");
-  await page.keyboard.press("Escape");
-  await expect(guide).not.toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Shortcuts" })).toHaveCount(0);
+  await expect(page.getByRole("listbox", { name: "Clipboard history" })).toBeVisible();
 });
 
 test("on Wayland the guide says the desktop owns the shortcuts", async ({ page }) => {
-  await page.setViewportSize({ width: 400, height: 620 });
-  await page.goto("/?platform=linux&bare=1");
-  await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
-  await page.keyboard.press("Control+/");
-  await expect(page.getByRole("dialog", { name: "Shortcuts" })).toContainText("Your desktop owns these shortcuts");
+  await page.setViewportSize({ width: 400, height: 684 });
+  await page.goto("/guide.html?platform=linux&bare=1");
+  await expect(page.getByRole("main", { name: "Shortcuts" })).toContainText("Your desktop owns these shortcuts");
+});
+
+test("a shortcut the desktop keeps for itself is named, with the way out", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 620 });
+  await page.goto("/settings.html?pane=shortcuts&platform=linux&kept=1&bare=1");
+  const pane = page.getByRole("tabpanel");
+  await expect(pane).toContainText("Ctrl+Alt+D is also your desktop’s own shortcut for “show desktop”");
+  await expect(pane.getByRole("button", { name: "Change keys" })).toBeVisible();
+  const { violations } = await new AxeBuilder({ page }).analyze();
+  expect(serious(violations)).toEqual([]);
 });
 
 test("a shortcut can be recorded, refused when taken, and turned off", async ({ page }) => {
@@ -204,15 +231,33 @@ for (const pane of ["clipboard", "dictation", "models", "shortcuts", "data", "ab
   });
 }
 
-for (const scene of ["copied", "selected", "listening", "done", "error", "preview"]) {
-  test(`the ${scene} pill has no serious accessibility violations`, async ({ page }) => {
-    await page.setViewportSize({ width: 480, height: 300 });
-    await page.goto(`/pill.html?scene=${scene}&bare=1`);
-    await page.getByRole("status").waitFor();
-    const { violations } = await new AxeBuilder({ page }).analyze();
-    expect(serious(violations)).toEqual([]);
-  });
+for (const theme of ["light", "dark"] as const) {
+  for (const scene of ["copied", "selected", "listening", "done", "error", "preview"]) {
+    test(`the ${theme} ${scene} pill has no serious accessibility violations`, async ({ page }) => {
+      await page.setViewportSize({ width: 480, height: 300 });
+      await page.goto(`/pill.html?scene=${scene}&theme=${theme}&bare=1`);
+      await page.getByRole("status").waitFor();
+      const { violations } = await new AxeBuilder({ page }).analyze();
+      expect(serious(violations)).toEqual([]);
+    });
+  }
 }
+
+test("the pill's page fills its window, so its shadow is never cut off", async ({ page }) => {
+  // The real window paints only the document's own box. A page shorter than
+  // the window cut the shadow off in a hard rectangle behind the pill.
+  await page.setViewportSize({ width: 480, height: 300 });
+  await page.goto("/pill.html?scene=copied&bare=1");
+  await page.getByRole("status").waitFor();
+  await page.evaluate(() => document.documentElement.removeAttribute("data-preview"));
+  const box = await page.evaluate(() => {
+    const pill = document.querySelector(".pill")!.getBoundingClientRect();
+    return { doc: document.documentElement.getBoundingClientRect().height, top: pill.top, left: pill.left };
+  });
+  expect(box.doc).toBe(300);
+  expect(box.top).toBeGreaterThanOrEqual(12);
+  expect(box.left).toBeGreaterThanOrEqual(18);
+});
 
 test("a long history is drawn a screenful at a time and can be jumped to", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 620 });

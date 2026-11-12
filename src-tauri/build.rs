@@ -17,6 +17,7 @@ const COMMANDS: &[&str] = &[
     "add_item",
     "add_image",
     "open_draw",
+    "open_guide",
     "open_draw_with_image",
     "save_svg",
     "set_draw_prefs",

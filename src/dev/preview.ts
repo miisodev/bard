@@ -203,6 +203,10 @@ function shortcutState(): ShortcutState {
     editable: !portal,
     rows: SHORTCUT_ROWS.map(([id, label, defaultChord]) => {
       const chord = chords.get(id) ?? "";
+      // ?kept=1: the desktop granted Dictate a chord it uses itself.
+      if (portal && id === "dictate" && params.has("kept")) {
+        return { id, label, chord, display: "Ctrl+Alt+D", defaultChord, status: "taken", conflict: "show desktop" };
+      }
       return { id, label, chord, display: shown(chord), defaultChord, status: chord ? "ready" : "off" };
     }),
   };
@@ -537,8 +541,8 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
   }
 }
 
-export function install(label: "main" | "settings" | "draw" | "pill") {
-  mockWindows(label, "main", "settings", "draw", "pill");
+export function install(label: "main" | "settings" | "draw" | "pill" | "guide") {
+  mockWindows(label, "main", "settings", "draw", "pill", "guide");
   mockIPC((cmd, payload) => handle(cmd, (payload ?? {}) as Record<string, unknown>), {
     shouldMockEvents: true,
   });
