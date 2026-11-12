@@ -15,9 +15,14 @@ export interface GuideGroup {
  */
 export function guideGroups(state: ShortcutState | null): GuideGroup[] {
   const rows = state?.rows ?? [];
+  const portal = state?.backend === "portal";
+  // On Wayland a chord exists only once the desktop has granted it. Until
+  // then the guide must not list keys that do nothing.
+  const unbound = portal && rows.length > 0 && rows.every((r) => r.status === "pending" || r.status === "off");
   const keys = (id: string) => {
     const row = rows.find((r) => r.id === id);
     if (!row || !row.display) return ["Off"];
+    if (portal && row.status === "pending") return ["Not set"];
     return row.display.split("+");
   };
   const row = (id: string, what: string) => ({ keys: keys(id), what });
@@ -35,8 +40,9 @@ export function guideGroups(state: ShortcutState | null): GuideGroup[] {
         row("settings", "Open Settings"),
         row("guide", "Show or hide this guide"),
       ],
-      note:
-        state?.backend === "portal"
+      note: unbound
+        ? "Your desktop has not been asked for these yet. Connect them in Settings › Shortcuts."
+        : portal
           ? "Your desktop owns these shortcuts. Change them in Settings › Shortcuts."
           : "Escape cancels a dictation while it is listening. Change any shortcut in Settings › Shortcuts.",
     },

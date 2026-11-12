@@ -203,6 +203,10 @@ function shortcutState(): ShortcutState {
     editable: !portal,
     rows: SHORTCUT_ROWS.map(([id, label, defaultChord]) => {
       const chord = chords.get(id) ?? "";
+      // ?unbound=1: the desktop has not granted anything yet.
+      if (portal && params.has("unbound")) {
+        return { id, label, chord, display: shown(chord), defaultChord, status: "pending" };
+      }
       // ?kept=1: the desktop granted Dictate a chord it uses itself.
       if (portal && id === "dictate" && params.has("kept")) {
         return { id, label, chord, display: "Ctrl+Alt+D", defaultChord, status: "taken", conflict: "show desktop" };

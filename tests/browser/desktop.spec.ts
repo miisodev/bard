@@ -138,6 +138,15 @@ test("on Wayland the guide says the desktop owns the shortcuts", async ({ page }
   await expect(page.getByRole("main", { name: "Shortcuts" })).toContainText("Your desktop owns these shortcuts");
 });
 
+test("the guide lists no keys the desktop has not granted", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 684 });
+  await page.goto("/guide.html?platform=linux&unbound=1&bare=1");
+  const guide = page.getByRole("main", { name: "Shortcuts" });
+  await expect(guide).toContainText("Your desktop has not been asked for these yet");
+  await expect(guide).toContainText("Not set");
+  await expect(guide).not.toContainText("Space");
+});
+
 test("a shortcut the desktop keeps for itself is named, with the way out", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 620 });
   await page.goto("/settings.html?pane=shortcuts&platform=linux&kept=1&bare=1");
