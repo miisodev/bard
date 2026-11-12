@@ -34,7 +34,10 @@ model, which he handed the project to.
 ## Shortcuts
 
 Every shortcut can be changed in **Settings → Shortcuts**. On Wayland the
-desktop owns them and asks once.
+desktop owns them and asks once. A desktop that already knows Bard from
+version 3 keeps the keys it assigned then, so the table below may not match;
+Settings → Shortcuts shows the keys actually bound, names any your desktop
+keeps for itself, and opens the desktop's own dialog to change them.
 
 | Action | Default |
 | --- | --- |
