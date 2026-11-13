@@ -76,14 +76,14 @@ impl Action {
             Action::Main => "Show or hide Bard",
             Action::Draw => "Open Draw",
             Action::Settings => "Open Settings",
-            Action::Guide => "Show the shortcut guide",
-            Action::Dictate => "Dictate (hold to talk, tap to toggle)",
+            Action::Guide => "Show the shortcuts",
+            Action::Dictate => "Dictate",
             Action::Slot1 => "Copy item 1",
             Action::Slot2 => "Copy item 2",
             Action::Slot3 => "Copy item 3",
-            Action::Cycle => "Cycle through items 1–3",
-            Action::Preview => "Preview the clipboard",
-            Action::Pause => "Pause or resume clipboard capture",
+            Action::Cycle => "Cycle items 1–3",
+            Action::Preview => "Show the clipboard",
+            Action::Pause => "Pause or resume copying",
         }
     }
 
@@ -430,6 +430,42 @@ fn combo(text: &str) -> Option<(u8, String)> {
     key.map(|key| (mods, key))
 }
 
+/// A desktop's description of a chord (`Press <Control><Alt>space`), written
+/// the way Bard writes its own: `Ctrl+Alt+Space`.
+#[cfg(target_os = "linux")]
+fn readable(trigger: &str) -> Option<String> {
+    let (mods, key) = combo(trigger)?;
+    let mut parts: Vec<String> = Vec::new();
+    for (bit, name) in [(1, "Ctrl"), (2, "Alt"), (4, "Shift"), (8, "Super")] {
+        if mods & bit != 0 {
+            parts.push(name.into());
+        }
+    }
+    parts.push(match key.as_str() {
+        "comma" => ",".into(),
+        "period" => ".".into(),
+        "slash" => "/".into(),
+        "semicolon" => ";".into(),
+        "apostrophe" => "'".into(),
+        "minus" => "-".into(),
+        "equal" => "=".into(),
+        one if one.chars().count() == 1 => one.to_uppercase(),
+        word => {
+            let mut letters = word.chars();
+            let first = letters.next()?;
+            first.to_uppercase().collect::<String>() + letters.as_str()
+        }
+    });
+    Some(parts.join("+"))
+}
+
+/// Whether two spellings name one chord. A spelling that cannot be read is
+/// not the same as anything.
+#[cfg(target_os = "linux")]
+pub fn same_chord(a: &str, b: &str) -> bool {
+    matches!((combo(a), combo(b)), (Some(a), Some(b)) if a == b)
+}
+
 /// One line of `gsettings list-recursively`: the action's name and the
 /// chords bound to it. `schema show-desktop ['<Primary><Alt>d', '<Super>d']`.
 #[cfg(target_os = "linux")]
@@ -590,7 +626,14 @@ pub fn state(app: &AppHandle) -> ShortcutState {
             let mut display = chord.as_ref().map(Chord::display).unwrap_or_default();
             if let Some(trigger) = portal.as_ref().and_then(|p| p.get(action.id())) {
                 if !trigger.is_empty() {
-                    display = trigger.clone();
+                    #[cfg(target_os = "linux")]
+                    {
+                        display = readable(trigger).unwrap_or_else(|| trigger.clone());
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        display = trigger.clone();
+                    }
                 }
             }
             ShortcutRow {
@@ -786,6 +829,178 @@ pub fn set_shortcut(app: AppHandle, id: String, chord: String) -> Result<Shortcu
     Ok(state(&app))
 }
 
+/// One reason a proposed set of shortcuts cannot be saved as it stands.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Conflict {
+    /// The shortcut the problem is with.
+    pub id: &'static str,
+    /// "invalid", "duplicate" or "system".
+    pub kind: &'static str,
+    /// What it collides with, in words: another Bard action, or what the
+    /// desktop or another app already does with the keys.
+    pub with: String,
+}
+
+/// The whole table as it would be after `changes`: every action, its chord or
+/// `None` when cleared. A chord that cannot be parsed is reported, not kept.
+fn proposed(
+    app: &AppHandle,
+    changes: &HashMap<String, String>,
+) -> (Vec<(Action, Option<Chord>)>, Vec<Conflict>) {
+    let mut conflicts = Vec::new();
+    let table = ACTIONS
+        .iter()
+        .map(|action| {
+            let chord = match changes.get(action.id()) {
+                None => chord_for(app, *action),
+                Some(text) if text.trim().is_empty() => None,
+                Some(text) => match Chord::parse(text) {
+                    Some(chord) if chord.is_usable() => Some(chord),
+                    Some(_) => {
+                        conflicts.push(Conflict {
+                            id: action.id(),
+                            kind: "invalid",
+                            with: "Add Ctrl, Alt or Super so it does not take a key from typing"
+                                .into(),
+                        });
+                        None
+                    }
+                    None => {
+                        conflicts.push(Conflict {
+                            id: action.id(),
+                            kind: "invalid",
+                            with: "Bard cannot use that key".into(),
+                        });
+                        None
+                    }
+                },
+            };
+            (*action, chord)
+        })
+        .collect();
+    (table, conflicts)
+}
+
+/// Two Bard actions on one chord: each is named to the other.
+fn duplicates(table: &[(Action, Option<Chord>)]) -> Vec<Conflict> {
+    let mut found = Vec::new();
+    for (action, chord) in table {
+        let Some(chord) = chord else { continue };
+        if let Some((other, _)) = table
+            .iter()
+            .find(|(other, theirs)| other != action && theirs.as_ref() == Some(chord))
+        {
+            found.push(Conflict {
+                id: action.id(),
+                kind: "duplicate",
+                with: other.label().to_string(),
+            });
+        }
+    }
+    found
+}
+
+/// Everything that stands in the way of saving `changes`: a key Bard cannot
+/// use, two actions on one chord, and a chord the desktop or another app
+/// already holds. Asked before anything is written, so the person fixes the
+/// table once instead of finding out one failed shortcut at a time.
+pub fn check(app: &AppHandle, changes: &HashMap<String, String>) -> Vec<Conflict> {
+    let (table, mut conflicts) = proposed(app, changes);
+    conflicts.extend(duplicates(&table));
+    conflicts.extend(held_elsewhere(app, &table));
+    conflicts
+}
+
+#[cfg(target_os = "linux")]
+fn held_elsewhere(_app: &AppHandle, table: &[(Action, Option<Chord>)]) -> Vec<Conflict> {
+    let system = desktop_bindings();
+    table
+        .iter()
+        .filter_map(|(action, chord)| {
+            let chord = chord.as_ref()?;
+            let name = system.get(&combo(&chord.canonical())?)?;
+            Some(Conflict {
+                id: action.id(),
+                kind: "system",
+                with: format!("your desktop’s “{name}”"),
+            })
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn held_elsewhere(app: &AppHandle, table: &[(Action, Option<Chord>)]) -> Vec<Conflict> {
+    // A chord Bard holds now would fail a trial registration against itself.
+    let mine: Vec<Chord> = bindings(app).into_iter().map(|(_, chord)| chord).collect();
+    table
+        .iter()
+        .filter_map(|(action, chord)| {
+            let chord = chord.as_ref()?;
+            if mine.contains(chord) || windows::free(chord) {
+                return None;
+            }
+            Some(Conflict {
+                id: action.id(),
+                kind: "system",
+                with: "another app".into(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn held_elsewhere(_app: &AppHandle, _table: &[(Action, Option<Chord>)]) -> Vec<Conflict> {
+    Vec::new()
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveOutcome {
+    /// Empty when the table was saved.
+    pub conflicts: Vec<Conflict>,
+    pub state: ShortcutState,
+}
+
+#[tauri::command]
+pub fn check_shortcuts(app: AppHandle, chords: HashMap<String, String>) -> Vec<Conflict> {
+    check(&app, &chords)
+}
+
+/// Save the whole table at once, or nothing: with any conflict the table is
+/// left as it was and the conflicts are returned.
+#[tauri::command]
+pub async fn save_shortcuts(
+    app: AppHandle,
+    chords: HashMap<String, String>,
+) -> Result<SaveOutcome, String> {
+    let conflicts = check(&app, &chords);
+    if !conflicts.is_empty() {
+        return Ok(SaveOutcome {
+            conflicts,
+            state: state(&app),
+        });
+    }
+    let (table, _) = proposed(&app, &chords);
+    for (action, chord) in table {
+        let stored = chord.map(|chord| chord.canonical()).unwrap_or_default();
+        if stored == action.default_chord() {
+            crate::db::delete_setting(&app, &action.setting_key());
+        } else {
+            crate::db::set_setting_checked(&app, &action.setting_key(), &stored)?;
+        }
+    }
+    reload(&app);
+    #[cfg(target_os = "linux")]
+    if crate::desktop::is_wayland() {
+        crate::linux_portal::rebind(app.clone()).await?;
+    }
+    Ok(SaveOutcome {
+        conflicts: Vec::new(),
+        state: state(&app),
+    })
+}
+
 #[tauri::command]
 pub fn reset_shortcuts(app: AppHandle) -> Result<ShortcutState, String> {
     for action in ACTIONS {
@@ -860,6 +1075,18 @@ mod windows {
 
     pub fn reload() {
         post(RELOAD);
+    }
+
+    /// Whether `chord` can be registered right now: tried and let go at once.
+    pub fn free(chord: &Chord) -> bool {
+        const TRIAL_ID: i32 = 0x0C00;
+        unsafe {
+            if RegisterHotKey(std::ptr::null_mut(), TRIAL_ID, modifiers(chord), chord.vk()) == 0 {
+                return false;
+            }
+            UnregisterHotKey(std::ptr::null_mut(), TRIAL_ID);
+        }
+        true
     }
 
     pub fn escape(on: bool) {
@@ -1360,6 +1587,21 @@ mod tests {
 #[cfg(all(test, target_os = "linux"))]
 mod portal_triggers {
     use super::*;
+
+    #[test]
+    fn a_desktop_trigger_reads_like_bards_own() {
+        assert_eq!(
+            readable("Press <Control><Alt>space").as_deref(),
+            Some("Ctrl+Alt+Space")
+        );
+        assert_eq!(
+            readable("<Shift><Alt>comma").as_deref(),
+            Some("Alt+Shift+,")
+        );
+        assert_eq!(readable("ALT+SHIFT+v").as_deref(), Some("Alt+Shift+V"));
+        assert!(same_chord("Alt+Shift+Space", "Press <Shift><Alt>space"));
+        assert!(!same_chord("Alt+Shift+Space", "Press <Control><Alt>d"));
+    }
 
     #[test]
     fn a_chord_is_the_same_however_it_is_spelled() {

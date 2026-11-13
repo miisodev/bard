@@ -178,22 +178,35 @@ const state: AppState = {
 
 const SHORTCUT_ROWS: [string, string, string][] = [
   ["main", "Show or hide Bard", "Alt+Shift+V"],
-  ["dictate", "Dictate (hold to talk, tap to toggle)", "Alt+Shift+Space"],
+  ["dictate", "Dictate", "Alt+Shift+Space"],
   ["slot-1", "Copy item 1", "Alt+Shift+1"],
   ["slot-2", "Copy item 2", "Alt+Shift+2"],
   ["slot-3", "Copy item 3", "Alt+Shift+3"],
-  ["cycle", "Cycle through items 1–3", "Alt+Shift+C"],
-  ["preview", "Preview the clipboard", "Alt+Shift+P"],
-  ["pause", "Pause or resume clipboard capture", "Alt+Shift+X"],
+  ["cycle", "Cycle items 1–3", "Alt+Shift+C"],
+  ["preview", "Show the clipboard", "Alt+Shift+P"],
+  ["pause", "Pause or resume copying", "Alt+Shift+X"],
   ["draw", "Open Draw", "Alt+Shift+D"],
   ["settings", "Open Settings", "Alt+Shift+Comma"],
-  ["guide", "Show the shortcut guide", "Alt+Shift+Slash"],
+  ["guide", "Show the shortcuts", "Alt+Shift+Slash"],
 ];
 
 const chords = new Map(SHORTCUT_ROWS.map(([id, , chord]) => [id, chord]));
 
 function shown(chord: string): string {
   return chord.replace("Comma", ",").replace("Slash", "/");
+}
+
+/** The preview's stand-in for the conflict check: doubles, and one chord the desktop keeps. */
+function shortcutConflicts(proposed: Record<string, string>) {
+  const table = SHORTCUT_ROWS.map(([id, label]) => ({ id, label, chord: proposed[id] ?? chords.get(id) ?? "" }));
+  const found: { id: string; kind: string; with: string }[] = [];
+  for (const row of table) {
+    if (!row.chord) continue;
+    const twin = table.find((other) => other.id !== row.id && other.chord === row.chord);
+    if (twin) found.push({ id: row.id, kind: "duplicate", with: twin.label });
+    else if (row.chord === "Ctrl+Alt+D") found.push({ id: row.id, kind: "system", with: "your desktop’s “show desktop”" });
+  }
+  return found;
 }
 
 function shortcutState(): ShortcutState {
@@ -384,6 +397,14 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "set_shortcut":
       chords.set(String(args.id), String(args.chord ?? ""));
       return shortcutState();
+    case "check_shortcuts":
+      return shortcutConflicts((args.chords ?? {}) as Record<string, string>);
+    case "save_shortcuts": {
+      const proposed = (args.chords ?? {}) as Record<string, string>;
+      const conflicts = shortcutConflicts(proposed);
+      if (conflicts.length === 0) for (const [id, chord] of Object.entries(proposed)) chords.set(id, chord);
+      return { conflicts, state: shortcutState() };
+    }
     case "reset_shortcuts":
       for (const [id, , chord] of SHORTCUT_ROWS) chords.set(id, chord);
       return shortcutState();

@@ -3,7 +3,7 @@ import { AlertCircle, Check, Download, LoaderCircle, RotateCcw, Trash2, X } from
 import { api } from "../../store";
 import type { ModelInfo, ModelProgress } from "../../types";
 import type { PaneProps } from "../SettingsWindow";
-import { Button, Group, InlineConfirm, Pane, Progress, formatBytes } from "../ui";
+import { Button, Group, InlineConfirm, Progress, formatBytes } from "../ui";
 
 /*
   The two speech models Bard offers, and nothing else. Each is a file Bard
@@ -188,11 +188,8 @@ export default function ModelsPane({
   };
 
   return (
-    <Pane
-      title="Models"
-      description="Bard turns speech into text on this PC. Your voice is never uploaded."
-    >
-      <Group>
+    <>
+      <Group title="Speech model">
         {modelsLoading && models.length === 0 ? (
           <div className="loading-row" role="status">
             <LoaderCircle className="spinning" aria-hidden="true" />
@@ -312,15 +309,14 @@ export default function ModelsPane({
       </Group>
 
       <p className="pane-footnote">
-        Bard's models are open-weight speech models, converted and hosted by Bard.{" "}
         <a
           href="https://github.com/miisodev/bard-models/blob/main/NOTICE.md"
           target="_blank"
           rel="noreferrer"
         >
-          Licences and sources
+          Model licences and sources
         </a>
       </p>
-    </Pane>
+    </>
   );
 }

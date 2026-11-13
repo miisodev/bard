@@ -1621,7 +1621,8 @@ pub fn open_link(url: String) -> Result<(), String> {
     // the site's `#support` fragment, and rejecting it made both links silently
     // do nothing. A fragment is never sent to a server, and the host is already
     // pinned to miiso.dev.
-    let allowed = url.starts_with("https://miiso.dev/")
+    let allowed = (url.starts_with("https://miiso.dev/")
+        || url.starts_with("https://github.com/miisodev/"))
         && url.len() <= 256
         && url
             .chars()

@@ -364,8 +364,7 @@ fn main() {
             {
                 let portal_app = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(error) = linux_portal::configure_shortcuts(portal_app.clone()).await
-                    {
+                    if let Err(error) = linux_portal::connect_at_launch(portal_app.clone()).await {
                         log::warn!("desktop shortcuts unavailable: {error}");
                         commands::refresh(&portal_app);
                     }
@@ -503,6 +502,8 @@ fn main() {
             shortcuts::get_shortcuts,
             shortcuts::set_shortcut,
             shortcuts::reset_shortcuts,
+            shortcuts::check_shortcuts,
+            shortcuts::save_shortcuts,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run bard");

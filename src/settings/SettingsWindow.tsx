@@ -7,14 +7,13 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AlertCircle, LoaderCircle, RotateCcw, X, SlidersHorizontal, Clipboard, Mic, Cpu, Keyboard, HardDrive, Info } from "lucide-react";
+import { AlertCircle, LoaderCircle, RotateCcw, X, SlidersHorizontal, Mic, Keyboard, HardDrive, Info } from "lucide-react";
 import ResizeHandles from "../components/ResizeHandles";
 import { api } from "../store";
 import { useTheme } from "../useTheme";
 import type { AppState, ModelProgress } from "../types";
 
 import GeneralPane from "./panes/General";
-import ClipboardPane from "./panes/Clipboard";
 import DictationPane from "./panes/Dictation";
 import ModelsPane from "./panes/Models";
 import ShortcutsPane from "./panes/Shortcuts";
@@ -27,16 +26,15 @@ import AboutPane from "./panes/About";
   It used to be a sheet inside a 380px panel, which was already cramped at nine
   settings — and Bard owes the surface of two apps. It now docks beside the
   panel as a frameless surface of the same material, at the panel's height.
-  The sections are ordered the way the product is used rather than the way it
-  is built: how it looks and talks, then the clipboard, dictation and its
-  models, then keys, data and provenance.
+  Five sections, ordered the way the product is used: how it looks and
+  behaves, dictation and its speech model, keys, data, and provenance. A row
+  is a control with a name; a sentence is kept only where the name cannot
+  carry it.
 */
 
 const SECTIONS = [
   { id: "general", icon: SlidersHorizontal, label: "General" },
-  { id: "clipboard", icon: Clipboard, label: "Clipboard" },
   { id: "dictation", icon: Mic, label: "Dictation" },
-  { id: "models", icon: Cpu, label: "Models" },
   { id: "shortcuts", icon: Keyboard, label: "Shortcuts" },
   { id: "data", icon: HardDrive, label: "Data" },
   { id: "about", icon: Info, label: "About" },
@@ -54,7 +52,10 @@ const SECTION_STEP: Record<string, number> = {
 /** The section to open on: `?pane=` in the browser preview, General otherwise. */
 function initialSection(): SectionId {
   const requested = new URLSearchParams(location.search).get("pane");
-  return SECTIONS.find((item) => item.id === requested)?.id ?? "general";
+  // Two sections folded into their neighbours; old links still land.
+  const moved: Record<string, SectionId> = { models: "dictation", clipboard: "general" };
+  const wanted = (requested && moved[requested]) || requested;
+  return SECTIONS.find((item) => item.id === wanted)?.id ?? "general";
 }
 
 function errorText(error: unknown): string {
@@ -235,14 +236,16 @@ export default function SettingsWindow() {
 
   const panes: Record<SectionId, JSX.Element> = {
     general: <GeneralPane state={state} refresh={refresh} />,
-    clipboard: <ClipboardPane state={state} refresh={refresh} />,
-    dictation: <DictationPane />,
-    models: (
-      <ModelsPane
-        state={state}
-        refresh={refresh}
-        progress={progress}
-        inventoryVersion={inventoryVersion}
+    dictation: (
+      <DictationPane
+        models={
+          <ModelsPane
+            state={state}
+            refresh={refresh}
+            progress={progress}
+            inventoryVersion={inventoryVersion}
+          />
+        }
       />
     ),
     shortcuts: <ShortcutsPane state={state} refresh={refresh} />,

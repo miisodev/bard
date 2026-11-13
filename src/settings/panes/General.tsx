@@ -61,10 +61,10 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
   }, [save]);
 
   return (
-    <Pane title="General" description="How Bard looks, where it sits and how it tells you things.">
+    <Pane title="General">
       {error ? <Note tone="danger">{error}</Note> : null}
       <Group title="Appearance">
-        <Row label="Theme" hint="System follows your desktop appearance.">
+        <Row label="Theme">
           <Segmented
             label="Theme"
             value={state.theme}
@@ -77,10 +77,7 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
             ]}
           />
         </Row>
-        <Row
-          label="Background"
-          hint={custom ? "Your colour. Cards keep the theme." : "Follows the theme until you pick a colour."}
-        >
+        <Row label="Background">
           <div className="background-control">
             {custom ? (
               <Button disabled={saving} onClick={() => void save(() => api.setBackground("theme"))}>Match theme</Button>
@@ -108,8 +105,8 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
         </Row>
       </Group>
 
-      <Group title="Main window">
-        <Row label="Position" hint="Float it anywhere, or dock it to the side of the screen.">
+      <Group title="Windows">
+        <Row label="Main window">
           <Segmented
             label="Main window position"
             value={state.dock}
@@ -122,13 +119,7 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
             ]}
           />
         </Row>
-      </Group>
-
-      <Group title="Windows">
-        <Row
-          label="Stay open"
-          hint="Off, Bard's windows tuck away when you click elsewhere and come back with their shortcut."
-        >
+        <Row label="Stay open" hint="Keep windows up when you click away.">
           <Toggle
             label="Stay open"
             checked={stayOpen}
@@ -143,19 +134,26 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
         </Row>
       </Group>
 
-      <Group
-        title="Feedback"
-        note="Every copy, shortcut and error is told to you this way. A live microphone always shows its pill."
-      >
-        <Row label="Status pill" hint="A small pill at the top middle of your screen.">
+      <Group title="Clipboard">
+        <Row label="Keep what I copy" hint={state.capturePaused ? "Paused." : undefined}>
           <Toggle
-            label="Status pill"
+            label="Keep what I copy"
+            checked={!state.capturePaused}
+            onChange={(on) => void api.setCapturePaused(!on).then(refresh)}
+          />
+        </Row>
+      </Group>
+
+      <Group title="Feedback">
+        <Row label="Badge">
+          <Toggle
+            label="Badge"
             checked={feedback.pill}
             disabled={feedbackSaving}
             onChange={(pill) => void changeFeedback({ ...feedback, pill })}
           />
         </Row>
-        <Row label="Sounds" hint="Soft pops and clicks.">
+        <Row label="Sounds">
           <Toggle
             label="Sounds"
             checked={feedback.sound}
@@ -169,11 +167,11 @@ export default function GeneralPane({ state, refresh }: PaneProps) {
         {state.channel === "store" ? (
           // The Store copy starts at login through its declared startup task,
           // which Windows owns and switches in Settings › Apps › Startup.
-          <Row label="Start at login" hint="Windows manages this for the Microsoft Store edition.">
+          <Row label="Start at login" hint="Managed by Windows.">
             <Button disabled={saving} onClick={() => void save(() => api.openStartupSettings())}>Open</Button>
           </Row>
         ) : (
-          <Row label="Start at login" hint="Runs quietly in the tray.">
+          <Row label="Start at login">
             <Toggle
               label="Start at login"
               checked={state.autostartEnabled}

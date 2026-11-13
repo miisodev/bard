@@ -70,7 +70,7 @@ export default function AboutPane({ state }: PaneProps) {
         {!delivery.inApp ? (
           <Row label="Updates" hint={delivery.hint} />
         ) : (
-          <Row label="Updates" hint="Checked only when you ask. Nothing installs silently.">
+          <Row label="Check for updates">
             <Button onClick={() => void checkForUpdate()} disabled={checking} ariaBusy={checking}>
               <RefreshCw size={14} aria-hidden="true" className={checking ? "spin" : undefined} />
               {checking ? "Checking" : "Check"}
@@ -127,12 +127,9 @@ export default function AboutPane({ state }: PaneProps) {
         ) : null}
       </Group>
 
-      <Group title="Privacy">
-        <Row
-          label="Everything stays on this PC"
-          hint="Speech recognition, captures and history never leave it. Bard has no account, sync or analytics, and its source is open."
-        />
-      </Group>
+      <p className="about-promise">
+        No account, no telemetry. Your history, audio and drawings stay on this computer.
+      </p>
 
       <nav className="about-links" aria-label="Legal and support">
         <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/terms")}>
@@ -143,6 +140,9 @@ export default function AboutPane({ state }: PaneProps) {
         </button>
         <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/bard#support")}>
           Support
+        </button>
+        <button type="button" className="link-button" onClick={() => void api.openLink("https://github.com/miisodev/bard")}>
+          Source
         </button>
         <span className="about-copyright">© 2026 miiso.dev</span>
       </nav>

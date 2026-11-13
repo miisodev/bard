@@ -149,6 +149,20 @@ export interface FeedbackChannels {
 
 export type ShortcutStatus = "ready" | "taken" | "off" | "pending";
 
+/** One reason a proposed set of shortcuts cannot be saved as it stands. */
+export interface ShortcutConflict {
+  id: string;
+  kind: "invalid" | "duplicate" | "system";
+  /** What it collides with, in words. */
+  with: string;
+}
+
+export interface ShortcutSave {
+  /** Empty when the table was saved. */
+  conflicts: ShortcutConflict[];
+  state: ShortcutState;
+}
+
 export interface ShortcutRow {
   id: string;
   label: string;

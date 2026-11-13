@@ -12,6 +12,8 @@ const COMMANDS: &[&str] = &[
     "get_shortcuts",
     "set_shortcut",
     "reset_shortcuts",
+    "check_shortcuts",
+    "save_shortcuts",
     "get_state",
     "get_setting_str",
     "add_item",

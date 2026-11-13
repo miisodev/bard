@@ -11,6 +11,8 @@ import type {
   UpdateInfo,
   Dock,
   FeedbackChannels,
+  ShortcutConflict,
+  ShortcutSave,
   ShortcutState,
   TranscriptOptions,
 } from "./types";
@@ -139,6 +141,8 @@ export const api = {
     invoke<void>("set_dictation_options", { options }),
 
   getShortcuts: () => invoke<ShortcutState>("get_shortcuts"),
+  checkShortcuts: (chords: Record<string, string>) => invoke<ShortcutConflict[]>("check_shortcuts", { chords }),
+  saveShortcuts: (chords: Record<string, string>) => invoke<ShortcutSave>("save_shortcuts", { chords }),
   setShortcut: (id: string, chord: string) =>
     invoke<ShortcutState>("set_shortcut", { id, chord }),
   resetShortcuts: () => invoke<ShortcutState>("reset_shortcuts"),

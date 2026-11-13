@@ -255,7 +255,7 @@ export default function DataPane({ refresh }: PaneProps) {
   };
 
   return (
-    <Pane title="Data" description="Captures, settings, and models live in Bard's local application-data directory.">
+    <Pane title="Data">
       <Group title="Export">
         <Row label="Export folder" hint={exportDir || "Documents"}>
           <Button
@@ -271,7 +271,7 @@ export default function DataPane({ refresh }: PaneProps) {
             Browse…
           </Button>
         </Row>
-        <Row label="Export to Markdown" hint="Writes bard-export.md plus images/ and files/ to the folder above.">
+        <Row label="Export as Markdown">
           <Button onClick={() => void exportMarkdown()}>
             Export
           </Button>
@@ -279,24 +279,15 @@ export default function DataPane({ refresh }: PaneProps) {
         {exportNotice ? <Note tone={exportNotice.tone}>{exportNotice.text}</Note> : null}
       </Group>
 
-      <Group
-        title="Backup"
-        note="A backup folder holds the database, the images and a manifest. Keep it on another drive; restore replaces Bard's local data with it."
-      >
-        <Row
-          label="Back up now"
-          hint="Writes a new Bard-backup-… folder into a folder you choose."
-        >
+      <Group title="Backup">
+        <Row label="Back up">
           <Button onClick={() => void backUpNow()} disabled={backupBusy} ariaBusy={backupBusy}>
             {backupBusy ? <LoaderCircle className="spinning" aria-hidden="true" /> : null}
             {backupBusy ? "Backing up…" : "Back up…"}
           </Button>
         </Row>
         {backupNotice ? <Note tone={backupNotice.tone}>{backupNotice.text}</Note> : null}
-        <Row
-          label="Restore from backup"
-          hint="Replaces the database and images from a backup folder. Nothing is written until you confirm."
-        >
+        <Row label="Restore" hint="Replaces what Bard holds now.">
           <Button onClick={() => void chooseRestore()} disabled={restoreBusy} ariaBusy={restoreBusy}>
             {restoreBusy ? <LoaderCircle className="spinning" aria-hidden="true" /> : null}
             {restoreBusy ? "Reading…" : "Restore…"}
@@ -322,10 +313,7 @@ export default function DataPane({ refresh }: PaneProps) {
         {restoreNotice ? <Note tone={restoreNotice.tone}>{restoreNotice.text}</Note> : null}
       </Group>
 
-      <Group
-        title="Retention"
-        note="Automatic captures and dictations expire independently. Favorites and manual notes are never removed by age."
-      >
+      <Group title="History">
         {retentionReadError ? (
           <div className="error-empty" role="alert">
             <AlertCircle aria-hidden="true" />
@@ -350,10 +338,7 @@ export default function DataPane({ refresh }: PaneProps) {
           </div>
         ) : (
           <>
-            <Row
-              label="Clipboard lifespan"
-              hint={retentionLoading ? "Reading local retention…" : "Text and images copied from other apps."}
-            >
+            <Row label="Keep copies for">
               <Select
                 label="Clipboard lifespan"
                 value={clipboardDays}
@@ -362,10 +347,7 @@ export default function DataPane({ refresh }: PaneProps) {
                 disabled={retentionLoading}
               />
             </Row>
-            <Row
-              label="Dictation lifespan"
-              hint="Final transcripts are stored locally; raw audio is never stored."
-            >
+            <Row label="Keep dictations for">
               <Select
                 label="Dictation lifespan"
                 value={dictationDays}
@@ -377,13 +359,10 @@ export default function DataPane({ refresh }: PaneProps) {
           </>
         )}
         {retentionError ? <Note tone="danger">{retentionError}</Note> : null}
-        <Row
-          label="Prune now"
-          hint="Removes everything past the lifespans above, right now. It does not change them."
-        >
+        <Row label="Remove expired items now" hint="Pinned and kept items stay.">
           <Button onClick={() => void pruneNow()} disabled={pruneLoading} ariaBusy={pruneLoading}>
             {pruneLoading ? <LoaderCircle className="spinning" aria-hidden="true" /> : null}
-            {pruneLoading ? "Pruning…" : "Prune now"}
+            {pruneLoading ? "Removing…" : "Remove"}
           </Button>
         </Row>
         {pruned !== null && !pruneError ? (
@@ -397,20 +376,14 @@ export default function DataPane({ refresh }: PaneProps) {
       </Group>
 
       <Group title="Diagnostics">
-        <Row
-          label="Latest crash report"
-          hint="Crash evidence is written locally before Bard exits. This never includes audio, captures, or API keys."
-        >
+        <Row label="Latest crash report">
           <Button onClick={() => void loadCrashReport()} disabled={crashLoading} ariaBusy={crashLoading}>
             {crashLoading ? <LoaderCircle className="spinning" aria-hidden="true" /> : <FileWarning aria-hidden="true" />}
             {crashLoading ? "Loading…" : "Load report"}
           </Button>
         </Row>
         {crashError ? <Note tone="danger">{crashError}</Note> : null}
-        <Row
-          label="Copy diagnostic report"
-          hint="Bard's version, storage state, the latest crash report and recent lifecycle lines, on the clipboard for a support message. Nothing is sent anywhere."
-        >
+        <Row label="Diagnostic report" hint="Copied to your clipboard. Nothing is sent.">
           <Button onClick={() => void copyDiagnostics()} disabled={copyingDiagnostics} ariaBusy={copyingDiagnostics}>
             {copyingDiagnostics ? <LoaderCircle className="spinning" aria-hidden="true" /> : <Copy aria-hidden="true" />}
             {copyingDiagnostics ? "Copying…" : "Copy report"}
@@ -423,33 +396,19 @@ export default function DataPane({ refresh }: PaneProps) {
             <div className="ellipsis" title={crashReport.path}>{crashReport.path}</div>
             <pre>{crashReport.contents}</pre>
           </div>
-        ) : crashError ? null : (
-          <Note>No crash report has been recorded on this machine.</Note>
-        )}
+        ) : null}
       </Group>
 
-      <Group
-        title="Danger"
-        note="All three are permanent. Clear captures is the narrow one; the other two remove work you cannot get back."
-      >
-        <Row
-          label="Clear captures"
-          hint="Removes automatic clipboard and dictation history only. Your notes, drawings and favourites stay."
-        >
+      <Group title="Delete">
+        <Row label="Clear captures" hint="Pinned and kept items, and drawings, stay.">
           <Button onClick={() => setConfirm("captures")}>Clear captures</Button>
         </Row>
-        <Row
-          label="Clear history"
-          hint="Removes every item in the shelf, including your notes, drawings and favourites."
-        >
+        <Row label="Clear history" hint="Every item, pinned and kept included.">
           <Button variant="danger" onClick={() => setConfirm("history")}>
             Clear history
           </Button>
         </Row>
-        <Row
-          label="Delete local data"
-          hint="Removes Bard's history, models, logs and settings from this computer, including everything above."
-        >
+        <Row label="Delete all data" hint="History, models, logs and settings.">
           <Button variant="danger" onClick={() => setConfirm("delete")}>
             Delete everything
           </Button>

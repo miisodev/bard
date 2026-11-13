@@ -51,6 +51,8 @@
     "allow-set-stay-open",
     "allow-hold-windows",
     "allow-get-shortcuts",
+    "allow-check-shortcuts",
+    "allow-save-shortcuts",
     "allow-set-shortcut",
     "allow-reset-shortcuts",
     "allow-set-dock",

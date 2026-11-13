@@ -21,16 +21,96 @@ static LIVE: tokio::sync::Mutex<Option<Live>> = tokio::sync::Mutex::const_new(No
 /// Set when the person turned the desktop's request down, so Bard does not
 /// ask again on every launch. Settings › Shortcuts can ask again.
 pub const DECLINED_SETTING: &str = "portal_shortcuts_declined";
+/// The version of Bard's default keys the desktop was last asked for.
+const KEYS_SETTING: &str = "portal_keys";
+const KEYS_VERSION: &str = "4";
 
 pub fn shortcuts_ready() -> bool {
     SHORTCUTS_READY.load(Ordering::Acquire)
 }
 
+/// What the desktop bound, keyed by Bard's action id.
 fn triggers(shortcuts: &[Shortcut]) -> HashMap<String, String> {
     shortcuts
         .iter()
-        .map(|s| (s.id().to_string(), s.trigger_description().to_string()))
+        .map(|s| {
+            (
+                action_of(s.id()).to_string(),
+                s.trigger_description().to_string(),
+            )
+        })
         .collect()
+}
+
+/// The id Bard asks the desktop to bind an action under.
+///
+/// A desktop remembers the keys it gave an id and ignores a new suggestion
+/// for it, so a chord changed in Bard could never reach the desktop under the
+/// same id. When Bard wants keys the desktop does not have for an action, the
+/// action is asked for under an id that carries the chord (`dictate.alt-shift-
+/// space`): new to the desktop, so it offers Bard's keys for the person to
+/// confirm. The id in use is remembered so later launches ask for the same
+/// one and are not asked anything.
+fn portal_id(app: &AppHandle, action: Action) -> String {
+    crate::db::get_setting(app, &format!("portal_id:{}", action.id()))
+        .filter(|id| action_of(id) == action.id())
+        .unwrap_or_else(|| action.id().to_string())
+}
+
+fn action_of(portal_id: &str) -> &str {
+    portal_id.split('.').next().unwrap_or(portal_id)
+}
+
+/// Point every action whose desktop keys differ from Bard's at a new id, so
+/// the next bind asks the desktop for Bard's keys. Returns whether any moved.
+fn adopt_new_ids(app: &AppHandle) -> bool {
+    let state = shortcuts::state(app);
+    let mut moved = false;
+    for row in &state.rows {
+        let Some(action) = Action::from_id(row.id) else {
+            continue;
+        };
+        if row.chord.is_empty() || shortcuts::same_chord(&row.chord, &row.display) {
+            continue;
+        }
+        let id = format!(
+            "{}.{}",
+            action.id(),
+            row.chord.to_ascii_lowercase().replace('+', "-")
+        );
+        if portal_id(app, action) != id {
+            crate::db::set_setting(app, &format!("portal_id:{}", action.id()), &id);
+            moved = true;
+        }
+    }
+    moved
+}
+
+/// Connect the shortcuts at launch.
+///
+/// A desktop that met an earlier Bard still holds that version's keys. Once,
+/// it is asked for this version's: the desktop shows them for the person to
+/// confirm, and whatever they choose is left alone from then on.
+pub async fn connect_at_launch(app: AppHandle) -> Result<(), String> {
+    configure_shortcuts(app.clone()).await?;
+    if crate::db::get_setting(&app, KEYS_SETTING).as_deref() != Some(KEYS_VERSION) {
+        crate::db::set_setting(&app, KEYS_SETTING, KEYS_VERSION);
+        if adopt_new_ids(&app) {
+            return rebind(app).await;
+        }
+    }
+    Ok(())
+}
+
+/// Ask the desktop again after the table changed in Bard: the old session is
+/// closed and a new one binds the table as it now stands.
+pub async fn rebind(app: AppHandle) -> Result<(), String> {
+    adopt_new_ids(&app);
+    if let Some(live) = LIVE.lock().await.take() {
+        let _ = live.1.close().await;
+    }
+    SHORTCUTS_READY.store(false, Ordering::Release);
+    configure_shortcuts(app).await
 }
 
 /// Record what the desktop bound, and which of those chords it also keeps
@@ -68,11 +148,15 @@ pub async fn configure_shortcuts(app: AppHandle) -> Result<(), String> {
         .receive_shortcuts_changed()
         .await
         .map_err(|e| e.to_string())?;
+    // A shortcut the person turned off is not asked for at all.
     let requested: Vec<NewShortcut> = shortcuts::ACTIONS
         .iter()
-        .map(|action| {
-            let trigger = shortcuts::chord_for(&app, *action).map(|c| c.portal_trigger());
-            NewShortcut::new(action.id(), action.label()).preferred_trigger(trigger.as_deref())
+        .filter_map(|action| {
+            let trigger = shortcuts::chord_for(&app, *action)?.portal_trigger();
+            Some(
+                NewShortcut::new(portal_id(&app, *action), action.label())
+                    .preferred_trigger(Some(trigger.as_str())),
+            )
         })
         .collect();
     let bound = proxy
@@ -102,7 +186,7 @@ pub async fn configure_shortcuts(app: AppHandle) -> Result<(), String> {
                 event = activated.next() => {
                     let Some(event) = event else { break; };
                     if !mine(event.session_handle().as_str()) { continue; }
-                    if let Some(action) = Action::from_id(event.shortcut_id()) {
+                    if let Some(action) = Action::from_id(action_of(event.shortcut_id())) {
                         let app = app.clone();
                         // Window and clipboard work must never block the signal reader.
                         tauri::async_runtime::spawn_blocking(move || shortcuts::press(&app, action));
@@ -111,7 +195,7 @@ pub async fn configure_shortcuts(app: AppHandle) -> Result<(), String> {
                 event = deactivated.next() => {
                     let Some(event) = event else { break; };
                     if !mine(event.session_handle().as_str()) { continue; }
-                    if let Some(action) = Action::from_id(event.shortcut_id()) {
+                    if let Some(action) = Action::from_id(action_of(event.shortcut_id())) {
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || shortcuts::release(&app, action));
                     }
@@ -125,10 +209,19 @@ pub async fn configure_shortcuts(app: AppHandle) -> Result<(), String> {
                 _ = closed.next() => break,
             }
         }
-        SHORTCUTS_READY.store(false, Ordering::Release);
-        *LIVE.lock().await = None;
-        shortcuts::clear_portal();
-        let _ = app.emit("shortcuts-changed", ());
+        // Only the session that is still the live one clears the state: after
+        // a rebind this loop belongs to the closed session, and the new one's
+        // triggers are already in place.
+        let mut slot = LIVE.lock().await;
+        if slot
+            .as_ref()
+            .is_some_and(|current| std::sync::Arc::ptr_eq(current, &live))
+        {
+            *slot = None;
+            SHORTCUTS_READY.store(false, Ordering::Release);
+            shortcuts::clear_portal();
+            let _ = app.emit("shortcuts-changed", ());
+        }
     });
     Ok(())
 }

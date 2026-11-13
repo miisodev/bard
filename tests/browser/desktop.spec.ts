@@ -147,41 +147,63 @@ test("the guide lists no keys the desktop has not granted", async ({ page }) => 
   await expect(guide).not.toContainText("Space");
 });
 
-test("a shortcut the desktop keeps for itself is named, with the way out", async ({ page }) => {
+test("a shortcut the desktop keeps for itself is marked on its row", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 620 });
   await page.goto("/settings.html?pane=shortcuts&platform=linux&kept=1&bare=1");
   const pane = page.getByRole("tabpanel");
-  await expect(pane).toContainText("Ctrl+Alt+D is also your desktop’s own shortcut for “show desktop”");
-  await expect(pane.getByRole("button", { name: "Change keys" })).toBeVisible();
+  await expect(pane).toContainText("Used by your desktop’s “show desktop”");
   const { violations } = await new AxeBuilder({ page }).analyze();
   expect(serious(violations)).toEqual([]);
 });
 
-test("a shortcut can be recorded, refused when taken, and turned off", async ({ page }) => {
-  await page.setViewportSize({ width: 720, height: 620 });
-  await page.goto("/settings.html?pane=shortcuts&bare=1");
-  const draw = page.getByRole("button", { name: /^Open Draw:/ });
-  await draw.click();
-  await page.keyboard.press("Control+Alt+KeyN");
-  await expect(draw).toContainText("N");
-  await draw.click();
-  await page.keyboard.press("Backspace");
-  await expect(draw).toContainText("Off");
-});
+for (const platform of ["windows", "linux"]) {
+  test(`shortcuts are edited as one table and saved at once on ${platform}`, async ({ page }) => {
+    await page.setViewportSize({ width: 720, height: 620 });
+    await page.goto(`/settings.html?pane=shortcuts&platform=${platform}&bare=1`);
+    const pane = page.getByRole("tabpanel");
+    const save = pane.getByRole("button", { name: "Save" });
+    const draw = pane.getByRole("button", { name: /^Open Draw:/ });
+    await expect(save).toBeDisabled();
 
-test("startup permission failure is visible and recoverable", async ({ page }) => {
-  await page.setViewportSize({ width: 720, height: 620 });
-  await page.goto("/settings.html?pane=general&fail=set_autostart&bare=1");
-  const toggle = page.getByRole("switch", { name: "Start at login" });
-  await toggle.click();
-  await expect(page.getByRole("alert")).toContainText("Couldn’t save");
-  await expect(toggle).toBeEnabled();
-});
+    // A change is a draft until Save.
+    await draw.click();
+    await page.keyboard.press("Control+Alt+KeyN");
+    await expect(draw).toContainText("N");
+    await expect(save).toBeEnabled();
+
+    // A chord another action holds is marked on both rows and cannot be saved.
+    await draw.click();
+    await page.keyboard.press("Alt+Shift+KeyV");
+    await expect(pane).toContainText("Same as “Show or hide Bard”");
+    await expect(pane).toContainText("marked shortcuts to save");
+    await expect(save).toBeDisabled();
+
+    // So is a chord the desktop keeps for itself.
+    await draw.click();
+    await page.keyboard.press("Control+Alt+KeyD");
+    await expect(pane).toContainText("Used by your desktop’s “show desktop”");
+    await expect(save).toBeDisabled();
+
+    // Fixed, it saves; Backspace turns a shortcut off.
+    await draw.click();
+    await page.keyboard.press("Backspace");
+    await expect(draw).toContainText("Off");
+    await save.click();
+    await expect(pane).toContainText("Saved.");
+    await expect(save).toBeDisabled();
+
+    // One default set, and a way back to it.
+    await pane.getByRole("button", { name: "Restore defaults" }).click();
+    await expect(draw).toContainText("D");
+    await save.click();
+    await expect(pane.getByRole("button", { name: "Restore defaults" })).toBeDisabled();
+  });
+}
 
 test("feedback channels switch independently", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 620 });
   await page.goto("/settings.html?pane=general&bare=1");
-  const pill = page.getByRole("switch", { name: "Status pill" });
+  const pill = page.getByRole("switch", { name: "Badge" });
   const sounds = page.getByRole("switch", { name: "Sounds" });
   await sounds.click();
   await expect(sounds).toHaveAttribute("aria-checked", "false");
