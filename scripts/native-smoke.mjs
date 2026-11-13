@@ -1,5 +1,5 @@
 // Exercise the shipped renderer and its real Rust commands, without plugins or
-// mocked IPC. Run only on a disposable desktop/CI account: this starts a trial
+// mocked IPC. Run only on a disposable desktop/CI account: this completes setup
 // and writes synthetic notes to that account's Bard database and clipboard.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
@@ -133,29 +133,26 @@ try {
   await clickSetupAction("Skip for now");
   await waitForSelector(".shortcut-list");
   await clickSetupAction("Continue");
-  await waitForSelector(".license-card");
-  await screenshot("onboarding-license");
+  await screenshot("onboarding-finish-step");
   await clickSetupAction("Start using Bard");
   try {
-    // Finishing writes the trial to the OS credential store and registers
-    // autostart before the shelf appears, so it gets longer than a render.
+    // Finishing registers autostart before the shelf appears, so it gets
+    // longer than a render.
     await waitForSelector('.clip', 45_000);
   } catch (error) {
     // Record what the setup window says and what the backend reports, so a
-    // stall is distinguishable from a refused trial or autostart write.
+    // stall is distinguishable from a refused autostart write.
     evidence.finish = {
       title: await script("return document.title"),
       alert: await script("return [...document.querySelectorAll('[role=alert]')].map(n=>n.textContent.trim())"),
       busy: await script("return [...document.querySelectorAll('.onboarding button')].map(b=>b.textContent.trim()+(b.disabled?' (disabled)':''))"),
-      license: await invoke("get_license", {}, true),
     };
     await screenshot("onboarding-finish");
     throw error;
   }
   const ready = await invoke("get_state");
   assert.equal(ready.onboardingCompleted, true);
-  assert.equal(ready.license.canUse, true);
-  check("all four setup steps finish through the UI with a usable OS-backed trial");
+  check("all four setup steps finish through the UI");
   await invoke("show_panel");
   await invoke("add_item", { content: "Bard native smoke — synthetic note" });
   let next = await invoke("get_state");

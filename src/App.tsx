@@ -114,13 +114,6 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
     };
 
     refresh();
-    void api
-      .refreshLicense()
-      .then((license) => {
-        if (!alive) return;
-        setState((current) => (current ? { ...current, license } : current));
-      })
-      .catch(() => undefined);
     subscribe(listen("refresh", scheduleRefresh));
     subscribe(listen("capture-paused", scheduleRefresh));
     subscribe(
@@ -145,7 +138,6 @@ export default function App({ activeItemId: suppliedActiveItemId }: AppProps = {
       }),
     );
     subscribe(listen("panel-shown", () => requestAnimationFrame(() => refresh())));
-    subscribe(listen("license-restricted", refresh));
     subscribe(
       listen("model-progress", (event) => {
         setModelProgress(event.payload as ModelProgress);

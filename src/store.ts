@@ -3,27 +3,16 @@ import type { Appearance, BackgroundMode } from "./appearance";
 import type {
   AppState,
   BackupSummary,
-  CachedHfModel,
-  DetectedModel,
-  HfFile,
-  HfInstallResult,
-  ModelCompatibility,
-  ModelCompatibilityResult,
   ModelInfo,
   ModelProgress,
-  ModelStatus,
   CrashReport,
-  PackDetail,
-  PackSummary,
-  PostprocessingSettings,
-  PostprocessingTestResponse,
   RestoreOutcome,
-  SavePostprocessingInput,
-  LicenseStatus,
   SortOrder,
   UpdateInfo,
   Dock,
   FeedbackChannels,
+  ShortcutConflict,
+  ShortcutSave,
   ShortcutState,
   TranscriptOptions,
 } from "./types";
@@ -35,6 +24,7 @@ export const api = {
   addItem: (content: string) => invoke<void>("add_item", { content }),
   openDraw: () => invoke<void>("open_draw"),
   openSettings: () => invoke<void>("open_settings"),
+  openGuide: () => invoke<void>("open_guide"),
   toggleCompanion: (label: "draw" | "settings") => invoke<void>("toggle_companion", { label }),
   setSort: (order: SortOrder) => invoke<void>("set_sort", { order }),
   addImage: (dataBase64: string, ext: string) =>
@@ -46,26 +36,13 @@ export const api = {
     invoke<void>("set_favorite", { id, favorite }),
   setPinned: (id: number, pinned: boolean) =>
     invoke<void>("set_pinned", { id, pinned }),
-  setDone: (id: number, done: boolean) => invoke<void>("set_done", { id, done }),
-  clearCompleted: () => invoke<void>("clear_completed"),
   clearHistory: () => invoke<void>("clear_history"),
   clearCaptures: () => invoke<void>("clear_captures"),
   deleteAllData: () => invoke<void>("delete_all_data"),
-  copyText: (text: string) => invoke<unknown>("copy_text", { text }),
   copyItem: (id: number) => invoke<unknown>("copy_item", { id }),
-  copyAttachment: (id: number) => invoke<unknown>("copy_attachment", { id }),
   itemImageData: (id: number) => invoke<string | null>("item_image_data", { id }),
-  attachmentImageData: (id: number) =>
-    invoke<string | null>("attachment_image_data", { id }),
   /** A card's cover: an asset URL for the file, not the file in base64. */
   itemCoverUrl: (id: number) => invoke<string | null>("item_cover_url", { id }),
-  attachmentCoverUrl: (id: number) =>
-    invoke<string | null>("attachment_cover_url", { id }),
-  setActiveItem: (id: number | null) => invoke<void>("set_active_item", { id }),
-  attachImage: (itemId: number, dataBase64: string, ext: string) =>
-    invoke<number>("attach_image", { itemId, dataBase64, ext }),
-  detachAttachment: (id: number) => invoke<void>("detach_attachment", { id }),
-  addNoteToImage: (id: number) => invoke<void>("add_note_to_image", { id }),
   exportMarkdown: () => invoke<string>("export_markdown"),
   setExportDir: (path: string) => invoke<void>("set_export_dir", { path }),
   getExportDir: () => invoke<string>("get_export_dir"),
@@ -103,75 +80,32 @@ export const api = {
     invoke<void>("set_background", { mode, color: color ?? null }),
   showPanel: () => invoke<void>("show_panel"),
   hidePanel: () => invoke<void>("hide_panel"),
-  togglePanel: () => invoke<void>("toggle_panel"),
 
   // Packs: named groups of kept items, pasted together as one block of text.
   // Rust refuses with a sentence written for a person, so callers surface the
   // rejection message rather than a code.
-  listPacks: () => invoke<PackSummary[]>("list_packs"),
-  getPack: (id: number) => invoke<PackDetail>("get_pack", { id }),
-  createPack: (name: string, itemIds: number[]) =>
-    invoke<PackSummary>("create_pack", { name, itemIds }),
-  renamePack: (id: number, name: string) => invoke<void>("rename_pack", { id, name }),
-  deletePack: (id: number) => invoke<void>("delete_pack", { id }),
-  packAddItems: (id: number, itemIds: number[]) =>
-    invoke<void>("pack_add_items", { id, itemIds }),
-  packRemoveItems: (id: number, itemIds: number[]) =>
-    invoke<void>("pack_remove_items", { id, itemIds }),
-  packReorder: (id: number, itemIds: number[]) =>
-    invoke<void>("pack_reorder", { id, itemIds }),
-
   setRetentionDays: (origin: "clipboard" | "dictation", days: number | null) =>
     invoke<void>("set_retention_days", { origin, days }),
   getRetentionDays: (origin: "clipboard" | "dictation") =>
     invoke<number | null>("get_retention_days", { origin }),
   pruneHistoryNow: () => invoke<number>("prune_history_now"),
 
-  getLicense: () => invoke<LicenseStatus>("get_license"),
-  startTrial: () => invoke<LicenseStatus>("start_trial"),
-  activateLicense: (key: string) =>
-    invoke<LicenseStatus>("activate_license", { key }),
-  refreshLicense: () => invoke<LicenseStatus>("refresh_license"),
-  deactivateLicense: () => invoke<LicenseStatus>("deactivate_license"),
-  clearLicense: () => invoke<LicenseStatus>("clear_license"),
   checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
   installUpdate: () => invoke<void>("install_update"),
 
   // Model inventory and lifecycle.
   getModels: () => invoke<ModelInfo[]>("get_models"),
-  getModel: () => invoke<ModelStatus>("get_model"),
-  getDetectedModels: () => invoke<DetectedModel[]>("get_detected_models"),
-  checkModel: (localPath: string) =>
-    invoke<ModelCompatibility | ModelCompatibilityResult>("check_model", { localPath }),
-  activateDetectedModel: (id: string) =>
-    invoke<void>("activate_detected_model", { id }),
-  forgetDetectedModel: (id: string) =>
-    invoke<void>("forget_detected_model", { id }),
   setModel: (id: string) => invoke<void>("set_model", { id }),
   downloadModel: (id: string) => invoke<unknown>("download_model", { id }),
   downloadModelCancel: () => invoke<void>("download_model_cancel"),
   deleteModel: (id: string) => invoke<void>("delete_model", { id }),
 
   // Hugging Face import.
-  hfListRepo: (repo: string) => invoke<HfFile[]>("hf_list_repo", { repo }),
-  hfInstall: (repo: string, file: string, size: number, sha256: string) =>
-    invoke<HfInstallResult>("hf_install", { repo, file, size, sha256 }),
-  hfUseCached: (repo: string, file: string, localPath: string, size: number) =>
-    invoke<void>("hf_use_cached", { repo, file, localPath, size }),
 
   // Legacy custom-model commands remain for surfaces outside the model manager.
-  hfCachedModels: () => invoke<CachedHfModel[]>("hf_cached_models"),
-  removeCustomModel: (id: string) => invoke<void>("remove_custom_model", { id }),
 
   // Optional cloud post-processing. The API key is accepted only by save and
   // is never returned in application state or emitted in an event.
-  getPostprocessing: () =>
-    invoke<PostprocessingSettings>("get_postprocessing"),
-  savePostprocessing: (input: SavePostprocessingInput) =>
-    invoke<PostprocessingSettings | void>("save_postprocessing", { ...input }),
-  testPostprocessing: () =>
-    invoke<PostprocessingTestResponse>("test_postprocessing"),
-  testPostprocessingCancel: () => invoke<void>("test_postprocessing_cancel"),
   getCrashReport: () => invoke<CrashReport | null>("get_crash_report"),
   /** Versions, storage state, the latest crash report and the lifecycle tail,
    * copied to the clipboard. Local only; nothing leaves the machine. */
@@ -189,12 +123,12 @@ export const api = {
 
   getMicrophones: () => invoke<string[]>("get_microphones"),
   setMicrophone: (name: string) => invoke<void>("set_microphone", { name }),
-  dictateStart: () => invoke<void>("dictate_start"),
-  dictateStop: () => invoke<void>("dictate_stop"),
-  dictateCancel: () => invoke<void>("dictate_cancel"),
 
   // v3: dock, feedback channels, capture pause and global shortcuts.
   setDock: (dock: Dock) => invoke<void>("set_dock", { dock }),
+  getStayOpen: () => invoke<boolean>("get_stay_open"),
+  setStayOpen: (stay: boolean) => invoke<boolean>("set_stay_open", { stay }),
+  holdWindows: (hold: boolean) => invoke<void>("hold_windows", { hold }),
   getFeedback: () => invoke<FeedbackChannels>("get_feedback"),
   setFeedback: (pill: boolean, sound: boolean) =>
     invoke<FeedbackChannels>("set_feedback", { pill, sound }),
@@ -207,6 +141,8 @@ export const api = {
     invoke<void>("set_dictation_options", { options }),
 
   getShortcuts: () => invoke<ShortcutState>("get_shortcuts"),
+  checkShortcuts: (chords: Record<string, string>) => invoke<ShortcutConflict[]>("check_shortcuts", { chords }),
+  saveShortcuts: (chords: Record<string, string>) => invoke<ShortcutSave>("save_shortcuts", { chords }),
   setShortcut: (id: string, chord: string) =>
     invoke<ShortcutState>("set_shortcut", { id, chord }),
   resetShortcuts: () => invoke<ShortcutState>("reset_shortcuts"),

@@ -139,7 +139,9 @@ jobs:
           retention-days: 3
 
   linux:
-    runs-on: ubuntu-latest
+    # Pinned like every other job: the container below sets the ABI, and a
+    # moving host image only adds ways for the build to fail.
+    runs-on: ubuntu-24.04
     # Packages link against glibc from the oldest supported Ubuntu baseline.
     # The host image may advance without raising the delivered binary's ABI.
     container: ubuntu:22.04
@@ -150,9 +152,19 @@ jobs:
       - name: Install baseline build dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
+        # The container's first name lookups sometimes fail on a fresh runner,
+        # and apt reports that as a warning, not an error, so the install is
+        # what fails. Try the pair again rather than failing the build.
         run: |
-          apt-get update
-          apt-get install -y ca-certificates git curl wget unzip file build-essential cmake pkg-config libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libx11-dev libxtst-dev libxi-dev zstd rpm xvfb xauth
+          packages="ca-certificates git curl wget unzip file build-essential cmake pkg-config libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libx11-dev libxtst-dev libxi-dev zstd rpm xvfb xauth"
+          for attempt in 1 2 3 4 5 6; do
+            if apt-get update && apt-get install -y $packages; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed; retrying"
+            sleep 20
+          done
+          exit 1
 
       - uses: actions/checkout@v4
         with:

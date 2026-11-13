@@ -1,7 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  Check,
   Droplet,
   File as FileIcon,
   Image as ImageIcon,
@@ -12,7 +11,6 @@ import {
   PenTool,
   Pin,
   PinOff,
-  Play,
   Search,
   Settings as SettingsIcon,
   Star,
@@ -41,7 +39,6 @@ import { api } from "../store";
 import type { AppState, Dock, Item, ShortcutState, SortOrder } from "../types";
 import Menu, { type MenuEntry } from "./Menu";
 import ResizeHandles from "./ResizeHandles";
-import ShortcutSheet, { type ShortcutGroup } from "./ShortcutSheet";
 
 const GLYPHS: Record<ShelfKind, LucideIcon> = {
   text: Type,
@@ -82,8 +79,8 @@ const OVERSCAN = 8;
  * scrollbar out of step with the rows, and the list would jump when it was
  * scrolled.
  */
-const FALLBACK_ROW_HEIGHT = 56;
-const FALLBACK_HEADING_HEIGHT = 30;
+const FALLBACK_ROW_HEIGHT = 36;
+const FALLBACK_HEADING_HEIGHT = 26;
 
 /** How an item arrived, in the words a screen reader should read. */
 const ARRIVED: Record<string, string> = {
@@ -250,9 +247,15 @@ const Row = memo(function Row({
         onMenu(item, { x: event.clientX, y: event.clientY });
       }}
     >
-      <span className="item-glyph" aria-hidden="true">
-        <Glyph size={14} strokeWidth={2} />
-      </span>
+      {slot !== null ? (
+        <kbd className="item-slot" title={`Alt+Shift+${slot} copies this`} aria-hidden="true">
+          {slot}
+        </kbd>
+      ) : (
+        <span className="item-glyph" aria-hidden="true">
+          <Glyph size={14} strokeWidth={2} />
+        </span>
+      )}
       <span className="item-body">{body}</span>
       {/* What the row means, in words. The compact time on the right is for
           the eye; this is for anyone listening, and it carries the moment the
@@ -266,17 +269,10 @@ const Row = memo(function Row({
       </span>
       <span className="item-end">
         <span className="item-meta">
-          {current && (
-            <span className="badge current" title="On the clipboard">
-              <Check size={11} strokeWidth={3} aria-hidden="true" />
-            </span>
-          )}
-          {item.favorite !== 0 && <Star className="item-flag" size={12} fill="currentColor" aria-label="Kept forever" />}
-          {pinned && <Pin className="item-flag" size={12} aria-label="Pinned" />}
-          {slot !== null ? (
-            <kbd className="badge slot" title={`Alt+Shift+${slot}`}>
-              {slot}
-            </kbd>
+          {item.favorite !== 0 && <Star className="item-flag" size={11} fill="currentColor" aria-label="Kept forever" />}
+          {pinned && <Pin className="item-flag" size={11} aria-label="Pinned" />}
+          {current ? (
+            <span className="item-now">On clipboard</span>
           ) : (
             <span className="item-time" title={agoLong(item.createdAt)}>
               {ago(item.createdAt)}
@@ -315,49 +311,6 @@ const Row = memo(function Row({
   );
 });
 
-function guideGroups(state: ShortcutState | null): ShortcutGroup[] {
-  const rows = state?.rows ?? [];
-  const keys = (id: string) => {
-    const row = rows.find((r) => r.id === id);
-    if (!row || !row.display) return ["Off"];
-    return row.display.split("+");
-  };
-  const row = (id: string, what: string) => ({ keys: keys(id), what });
-  return [
-    {
-      name: "Anywhere",
-      rows: [
-        row("main", "Show or hide Bard"),
-        row("dictate", "Dictate — hold to talk, tap to start and stop"),
-        row("slot-1", "Copy item 1 (2 and 3 the same way)"),
-        row("cycle", "Cycle through items 1–3"),
-        row("preview", "Preview what is on the clipboard"),
-        row("pause", "Pause or resume keeping what you copy"),
-        row("draw", "Open Draw"),
-        row("settings", "Open Settings"),
-        row("guide", "Show this guide"),
-      ],
-      note:
-        state?.backend === "portal"
-          ? "Your desktop owns these shortcuts. Change them in Settings › Shortcuts."
-          : "Escape cancels a dictation while it is listening. Change any shortcut in Settings › Shortcuts.",
-    },
-    {
-      name: "In this window",
-      rows: [
-        { keys: ["↑", "↓"], what: "Move" },
-        { keys: ["Enter"], what: "Copy and close" },
-        { keys: ["Shift", "Enter"], what: "Copy and stay" },
-        { keys: ["Ctrl", "P"], what: "Pin or unpin" },
-        { keys: ["Ctrl", "S"], what: "Keep forever" },
-        { keys: ["Delete"], what: "Delete" },
-        { keys: ["Ctrl", "F"], what: "Search" },
-        { keys: ["Esc"], what: "Clear search, then close" },
-      ],
-    },
-  ];
-}
-
 export default function Clipboard({
   state,
   onState,
@@ -376,7 +329,6 @@ export default function Clipboard({
   const [filter, setFilter] = useState<TypeFilter>("all");
   const [cursor, setCursor] = useState(-1);
   const [menu, setMenu] = useState<{ entries: MenuEntry[]; at?: { x: number; y: number } } | null>(null);
-  const [guide, setGuide] = useState(false);
   const [shortcuts, setShortcuts] = useState<ShortcutState | null>(null);
   const [rowHeight, setRowHeight] = useState(FALLBACK_ROW_HEIGHT);
   const [headingHeight, setHeadingHeight] = useState(FALLBACK_HEADING_HEIGHT);
@@ -471,10 +423,6 @@ export default function Clipboard({
   useEffect(() => {
     loadShortcuts();
     const offs = [
-      listen("show-guide", () => {
-        loadShortcuts();
-        setGuide(true);
-      }),
       listen("shortcuts-changed", loadShortcuts),
       listen("panel-shown", () => {
         setCursor(-1);
@@ -731,10 +679,7 @@ export default function Clipboard({
       })),
       {
         label: "Shortcuts",
-        onClick: () => {
-          loadShortcuts();
-          setGuide(true);
-        },
+        onClick: () => void api.openGuide(),
         trailing: "?",
         separated: true,
       },
@@ -750,7 +695,7 @@ export default function Clipboard({
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
-    if (menu || guide) return;
+    if (menu) return;
     const inSearch = document.activeElement === searchRef.current;
     const command = listCommand({
       key: event.key,
@@ -804,8 +749,7 @@ export default function Clipboard({
         break;
       case "guide":
         event.preventDefault();
-        loadShortcuts();
-        setGuide(true);
+        void api.openGuide();
         break;
       case "menu":
         event.preventDefault();
@@ -828,7 +772,6 @@ export default function Clipboard({
     }
   };
 
-  const restricted = !state.license.canUse;
   const mainChord = shortcuts?.rows.find((row) => row.id === "main")?.display;
 
   return (
@@ -843,27 +786,21 @@ export default function Clipboard({
           void getCurrentWindow().startDragging();
         }}
       >
-        {/* What the dot means, said once: the panel's capture switch, which is
-            also in the footer and in Settings. */}
-        <span
-          className={`status-dot${state.capturePaused ? " paused" : ""}`}
-          role="img"
-          aria-label={state.capturePaused ? "Not keeping what you copy" : "Keeping what you copy"}
-          title={state.capturePaused ? "Not keeping what you copy" : "Keeping what you copy"}
-        />
-        <h1 className="clip-title">Clipboard</h1>
-        {state.capturePaused && <span className="badge paused-badge">Paused</span>}
-        <span className="clip-head-spring" />
+        {/* The one switch, and it says its own state: whether Bard is keeping
+            what is copied. Nothing else in the window has to explain it. */}
+        <h1 className="sr-only">Bard</h1>
         <button
           type="button"
-          className="head-btn"
-          aria-label={state.capturePaused ? "Resume keeping what you copy" : "Pause keeping what you copy"}
-          title={state.capturePaused ? "Resume" : "Pause"}
-          aria-pressed={state.capturePaused}
+          className={`capture${state.capturePaused ? " is-paused" : ""}`}
+          role="switch"
+          aria-checked={!state.capturePaused}
+          title={state.capturePaused ? "Resume keeping what you copy" : "Pause keeping what you copy"}
           onClick={togglePause}
         >
-          {state.capturePaused ? <Play size={15} /> : <Pause size={15} />}
+          {state.capturePaused ? <Pause size={12} strokeWidth={2.6} aria-hidden="true" /> : <span className="capture-dot" aria-hidden="true" />}
+          {state.capturePaused ? "Paused" : "Keeping copies"}
         </button>
+        <span className="clip-head-spring" />
         <button type="button" className="head-btn" aria-label="Draw" title="Draw" onClick={() => void api.toggleCompanion("draw")}>
           <PenTool size={15} />
         </button>
@@ -1007,25 +944,22 @@ export default function Clipboard({
       </div>
 
       <footer className="clip-foot">
-        {restricted ? (
-          <>
-            <span className="foot-warn">{state.license.message ?? "Bard needs a licence to keep new copies."}</span>
-            <button type="button" className="btn small primary" onClick={() => void api.openSettings()}>
-              Activate
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="foot-count">
-              {state.items.length.toLocaleString()} {state.items.length === 1 ? "item" : "items"}
+          <span className="foot-count">
+            {state.items.length.toLocaleString()} {state.items.length === 1 ? "item" : "items"}
+          </span>
+          {slotIds.length > 0 ? (
+            <span className="foot-legend">
+              <kbd>Alt</kbd>
+              <kbd>Shift</kbd>
+              <kbd>1–{Math.max(slotIds.length, 1)}</kbd>
+              copies that item
             </span>
-            {mainChord && <span className="foot-hint">{mainChord}</span>}
-          </>
-        )}
+          ) : (
+            mainChord && <span className="foot-hint">{mainChord}</span>
+          )}
       </footer>
 
       {menu && <Menu entries={menu.entries} anchor={menu.at ? "point" : "top-right"} at={menu.at} onClose={() => setMenu(null)} />}
-      {guide && <ShortcutSheet title="Shortcuts" groups={guideGroups(shortcuts)} onClose={() => setGuide(false)} />}
     </div>
   );
 }

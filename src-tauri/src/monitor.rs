@@ -212,9 +212,9 @@ pub fn set_paused(app: &AppHandle, paused: bool) -> bool {
     crate::feedback::notify(
         app,
         if paused {
-            crate::feedback::Note::info("pause", "Clipboard capture paused")
+            crate::feedback::Note::info("pause", "Capture paused")
         } else {
-            crate::feedback::Note::info("resume", "Clipboard capture on")
+            crate::feedback::Note::info("resume", "Capture on")
         },
     );
     let _ = app.emit("capture-paused", paused);
@@ -281,9 +281,6 @@ pub fn note_own_text(text: &str) {
 }
 
 pub fn capture_text(app: &AppHandle, text: &str) {
-    if crate::license::require(app).is_err() {
-        return;
-    }
     // The duplicate check hashes what the watcher reads back, untrimmed:
     // " foo " and "foo" are different copies, and the same copy is not
     // captured twice.
@@ -435,43 +432,51 @@ pub fn start(app: AppHandle) {
                         return;
                     }
                 }
-                if is_paused() || excluded {
+                if is_paused() {
+                    return;
+                }
+                if excluded {
+                    // A copy its source marked as secret. Nothing of it is
+                    // read; the event alone is noted so a log can tell this
+                    // from a copy that was missed.
+                    crate::crash::record_event("capture:excluded");
                     return;
                 }
                 let watched = listener.is_some() || cfg!(windows);
-                let (files, text, image) = {
-                    let Ok(mut cb) = crate::clip::handle() else {
-                        return;
-                    };
-                    // On Windows the exclusion lives in the clipboard's own
-                    // formats, and a format can only be read while the
-                    // clipboard is open. So the question is asked here, with
-                    // the clipboard open, rather than before the read: asked
-                    // with the clipboard closed, every format reads as absent
-                    // and nothing is ever excluded.
-                    #[cfg(windows)]
-                    {
-                        let _open = cb.get();
-                        if clip_excluded() {
-                            return;
-                        }
+                let arrivals = clip_arrivals();
+                // A copy Bard was told about and could not read is tried
+                // again: the source may be slow to answer, or Bard's own
+                // clipboard connection may have broken, in which case it is
+                // opened afresh. A copy that still cannot be read is said so,
+                // not dropped in silence.
+                let mut read = read_clipboard(watched);
+                let mut attempt = 0;
+                while let Clip::Failed(_) = read {
+                    attempt += 1;
+                    if attempt > READ_RETRIES || (watched && clip_seq() != seq) {
+                        break;
                     }
-                    let files = if watched {
-                        cb.get().file_list().ok().filter(|f| !f.is_empty())
-                    } else {
-                        None
-                    };
-                    let text = if files.is_none() {
-                        cb.get_text().ok()
-                    } else {
-                        None
-                    };
-                    let image = if files.is_none() && text.is_none() && watched {
-                        cb.get_image().ok()
-                    } else {
-                        None
-                    };
-                    (files, text, image)
+                    if attempt == 2 {
+                        crate::clip::reopen();
+                    }
+                    thread::sleep(Duration::from_millis(120 * attempt as u64));
+                    read = read_clipboard(watched);
+                }
+                // A newer copy arrived while this one was being read: what was
+                // read may belong to either, and the newer one has not been
+                // asked whether it is a secret. Its own event captures it.
+                if watched && clip_arrivals() != arrivals {
+                    return;
+                }
+                let (files, text, image) = match read {
+                    Clip::Files(files) => (Some(files), None, None),
+                    Clip::Text(text) => (None, Some(text), None),
+                    Clip::Image(image) => (None, None, Some(image)),
+                    Clip::Nothing => return,
+                    Clip::Failed(reason) => {
+                        report_unreadable(&app, &reason);
+                        return;
+                    }
                 };
                 if let Some(files) = files {
                     capture_files(&app, files);
@@ -498,6 +503,87 @@ pub fn start(app: AppHandle) {
             }
         }
     });
+}
+
+/// What one look at the clipboard found.
+enum Clip {
+    Files(Vec<std::path::PathBuf>),
+    Text(String),
+    Image(arboard::ImageData<'static>),
+    /// The clipboard holds nothing Bard keeps.
+    Nothing,
+    /// The clipboard could not be read; the reason, without any content.
+    Failed(String),
+}
+
+/// How many more times a copy that could not be read is tried.
+const READ_RETRIES: u32 = 3;
+
+/// "Nothing of that kind here" is an answer; anything else is a failed read.
+fn unreadable(error: &arboard::Error) -> Option<String> {
+    match error {
+        arboard::Error::ContentNotAvailable => None,
+        arboard::Error::ClipboardOccupied => Some("occupied".into()),
+        arboard::Error::ConversionFailure => Some("conversion".into()),
+        _ => Some("unknown".into()),
+    }
+}
+
+fn read_clipboard(watched: bool) -> Clip {
+    let mut cb = match crate::clip::handle() {
+        Ok(cb) => cb,
+        Err(_) => return Clip::Failed("open".into()),
+    };
+    // On Windows the exclusion lives in the clipboard's own formats, and a
+    // format can only be read while the clipboard is open. So the question is
+    // asked here, with the clipboard open, rather than before the read: asked
+    // with the clipboard closed, every format reads as absent and nothing is
+    // ever excluded.
+    #[cfg(windows)]
+    {
+        let _open = cb.get();
+        if clip_excluded() {
+            return Clip::Nothing;
+        }
+    }
+    let mut failure = None;
+    if watched {
+        match cb.get().file_list() {
+            Ok(files) if !files.is_empty() => return Clip::Files(files),
+            Ok(_) => {}
+            Err(error) => failure = failure.or(unreadable(&error)),
+        }
+    }
+    match cb.get_text() {
+        Ok(text) => return Clip::Text(text),
+        Err(error) => failure = failure.or(unreadable(&error)),
+    }
+    if watched {
+        match cb.get_image() {
+            Ok(image) => return Clip::Image(image),
+            Err(error) => failure = failure.or(unreadable(&error)),
+        }
+    }
+    match failure {
+        Some(reason) => Clip::Failed(reason),
+        None => Clip::Nothing,
+    }
+}
+
+/// Say that a copy was not kept, at most once a minute: a source that stays
+/// unreadable must not fill the screen with the same sentence.
+fn report_unreadable(app: &AppHandle, reason: &str) {
+    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    crate::crash::record_event(&format!("capture:unreadable:{reason}"));
+    let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if last.is_some_and(|at| at.elapsed() < Duration::from_secs(60)) {
+        return;
+    }
+    *last = Some(std::time::Instant::now());
+    crate::feedback::notify(
+        app,
+        crate::feedback::Note::error("Could not read that copy").with_detail("Copy it again"),
+    );
 }
 
 const SAFETY_POLL_MS: u64 = 250;
@@ -653,16 +739,29 @@ mod x11watch {
     struct Changes {
         seq: u32,
         excluded: bool,
+        /// Every change heard, counted the moment it is heard.
+        arrivals: u32,
     }
 
     static CHANGES: Mutex<Changes> = Mutex::new(Changes {
         seq: 0,
         excluded: false,
+        arrivals: 0,
     });
     static CHANGED: Condvar = Condvar::new();
 
     pub fn seq() -> u32 {
         CHANGES.lock().map(|c| c.seq).unwrap_or(0)
+    }
+
+    pub fn arrivals() -> u32 {
+        CHANGES.lock().map(|c| c.arrivals).unwrap_or(0)
+    }
+
+    fn arrived() {
+        if let Ok(mut changes) = CHANGES.lock() {
+            changes.arrivals = changes.arrivals.wrapping_add(1);
+        }
     }
 
     /// The sequence and the exclusion flag for the same event, read together
@@ -770,11 +869,14 @@ mod x11watch {
         /// This event was inspected: `excluded` is its answer.
         Decided { excluded: bool },
         /// A newer selection event arrived while this one was being asked
-        /// about. The sequence was advanced for the newer event and it was
-        /// marked excluded: unknown until inspected, so fail safe. This
-        /// event's result must not be written over it.
-        Superseded,
+        /// about. This one's answer is void; the newer event, heard at
+        /// `time`, is the one to ask about.
+        Superseded { time: u32 },
     }
+
+    /// How many copies in a row may overtake one another before the last is
+    /// taken as an ordinary copy. Each costs at most 250 ms.
+    const MAX_SUPERSEDED: u32 = 40;
 
     fn run(conn: impl Connection, window: Window, atoms: Atoms) {
         loop {
@@ -782,25 +884,55 @@ mod x11watch {
                 Ok(event) => event,
                 Err(_) => {
                     crate::crash::record_event("monitor:x11-connection-lost");
+                    reconnect();
                     return;
                 }
             };
             if let Event::XfixesSelectionNotify(notify) = event {
-                match offers_secret(&conn, window, &atoms, notify.timestamp) {
-                    Inspection::Decided { excluded } => {
-                        if let Ok(mut changes) = CHANGES.lock() {
-                            changes.seq = changes.seq.wrapping_add(1);
-                            changes.excluded = excluded;
+                arrived();
+                // Inspect the newest copy, however many overtake it on the
+                // way. The sequence moves once, for the copy that is on the
+                // clipboard when the asking ends, with that copy's answer.
+                // An overtaken copy used to be marked secret and never looked
+                // at again, so the copy after a quick double was lost without
+                // a word.
+                let mut time = notify.timestamp;
+                let mut excluded = false;
+                for _ in 0..MAX_SUPERSEDED {
+                    match offers_secret(&conn, window, &atoms, time) {
+                        Inspection::Decided { excluded: answer } => {
+                            excluded = answer;
+                            break;
+                        }
+                        Inspection::Superseded { time: newer } => {
+                            arrived();
+                            crate::crash::record_event("monitor:copy-overtaken");
+                            time = newer;
                         }
                     }
-                    Inspection::Superseded => {
-                        // `offers_secret` already advanced the sequence for
-                        // the newer event and marked it excluded: the flag and
-                        // the sequence describe the same event, and the
-                        // unknown case fails safe.
-                    }
+                }
+                if let Ok(mut changes) = CHANGES.lock() {
+                    changes.seq = changes.seq.wrapping_add(1);
+                    changes.excluded = excluded;
                 }
                 CHANGED.notify_all();
+            }
+        }
+    }
+
+    /// The X server went away under the watcher (XWayland restarted). Without
+    /// a watcher the sequence never moves again and nothing is captured while
+    /// everything looks alive, so keep trying to start a new one.
+    fn reconnect() {
+        for attempt in 0u64.. {
+            std::thread::sleep(Duration::from_secs((2 + attempt).min(30)));
+            if spawn() {
+                crate::crash::record_event("monitor:x11-reconnected");
+                // Whatever was copied in between is not known to be new.
+                if let Ok(mut changes) = CHANGES.lock() {
+                    changes.arrivals = changes.arrivals.wrapping_add(1);
+                }
+                return;
             }
         }
     }
@@ -809,10 +941,9 @@ mod x11watch {
     /// or silent owner is given 250 ms and then treated as an ordinary copy.
     ///
     /// If a newer selection event arrives while this one is being asked about,
-    /// the newer event's exclusion is not yet known: the sequence is advanced
-    /// for it, it is marked excluded (fail safe), and [`Inspection::Superseded`]
-    /// is returned so this inspection's stale result is never written over
-    /// the newer event's sequence.
+    /// [`Inspection::Superseded`] hands back the newer event's time so the
+    /// caller asks again about it; this inspection's stale answer is never
+    /// used for the newer copy.
     fn offers_secret(
         conn: &impl Connection,
         window: Window,
@@ -847,18 +978,10 @@ mod x11watch {
                             .unwrap_or(false),
                     };
                 }
-                Ok(Some(Event::XfixesSelectionNotify(_))) => {
-                    // A newer copy arrived while this one was being asked
-                    // about. This event and the newer one are both counted,
-                    // and the newer one is marked excluded until it has been
-                    // inspected. The result of this inspection is discarded so
-                    // the flag and the sequence always describe the same event.
-                    if let Ok(mut changes) = CHANGES.lock() {
-                        changes.seq = changes.seq.wrapping_add(2);
-                        changes.excluded = true;
-                    }
-                    CHANGED.notify_all();
-                    return Inspection::Superseded;
+                Ok(Some(Event::XfixesSelectionNotify(newer))) => {
+                    return Inspection::Superseded {
+                        time: newer.timestamp,
+                    };
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {
@@ -932,9 +1055,6 @@ unsafe extern "system" fn clipboard_wnd_proc(
 /// caller that reads the value (the double-Shift gesture) uses it to decide
 /// whether to put the clipboard back, which is the same decision either way.
 pub fn capture_image(app: &AppHandle, img: arboard::ImageData<'static>) -> bool {
-    if crate::license::require(app).is_err() {
-        return false;
-    }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     img.bytes.hash(&mut hasher);
     let hash = hasher.finish();
@@ -1063,9 +1183,6 @@ fn store_image(job: ImageJob) {
 
 /// Files copied in a file manager are kept as file items.
 fn capture_files(app: &AppHandle, files: Vec<std::path::PathBuf>) {
-    if crate::license::require(app).is_err() {
-        return;
-    }
     let paths: Vec<String> = files
         .iter()
         .map(|f| f.to_string_lossy().into_owned())
@@ -1182,6 +1299,19 @@ fn clip_seq() -> u32 {
 #[cfg(not(any(windows, target_os = "linux")))]
 fn clip_seq() -> u32 {
     0
+}
+
+/// A count of every clipboard change heard, including one whose inspection
+/// has not finished. It moves before [`clip_seq`] does, so a read that
+/// straddles a newer copy can be told apart from one that did not.
+#[cfg(target_os = "linux")]
+fn clip_arrivals() -> u32 {
+    x11watch::arrivals()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn clip_arrivals() -> u32 {
+    clip_seq()
 }
 
 #[cfg(windows)]

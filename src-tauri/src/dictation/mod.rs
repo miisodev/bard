@@ -11,14 +11,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::feedback::{self, Note};
 
-/// Each attempt to refine a transcript gets this long to answer, and the
-/// whole refinement this long in total; the local words are kept either way.
-const POSTPROCESS_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
-const POSTPROCESS_DEADLINE: Duration = Duration::from_secs(60);
-
 /// The least time a take may spend between the end of recording and its
 /// transcript before it is treated as wedged. It covers backend init, a cold
-/// hash of a large model, loading it, and the separately bounded refinement.
+/// hash of a large model and loading it.
 const TAKE_DEADLINE_FLOOR: Duration = Duration::from_secs(210);
 
 /// Seconds of transcription allowed per second of audio beyond the floor.
@@ -26,20 +21,13 @@ const TAKE_REALTIME_FACTOR: u64 = 3;
 
 const TAKE_WATCHDOG_TICK: Duration = Duration::from_millis(250);
 
-pub use model::{
-    cancel_download, delete_model, download_model, model_ready, model_status, models, ModelInfo,
-    ModelStatus,
-};
-
-pub fn reset_cancel() {
-    cancel_download_reset();
-}
+pub use model::{cancel_download, delete_model, download_model, model_ready, models, ModelInfo};
 
 pub fn is_cancel_pending() -> bool {
     cancel_pending()
 }
 
-use model::{cancel_download_reset, cancel_pending};
+use model::cancel_pending;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -103,11 +91,6 @@ fn report(app: &AppHandle, text: &str, detail: Option<String>) {
 
 /// Start listening. Returns whether a take started.
 pub fn start(app: &AppHandle) -> bool {
-    if let Err(error) = crate::license::require(app) {
-        let _ = app.emit("license-restricted", error.clone());
-        feedback::notify(app, Note::error("Bard needs a licence to dictate"));
-        return false;
-    }
     {
         let state = state_lock();
         // Idle is the only state a new take can start from.
@@ -152,78 +135,10 @@ pub fn start(app: &AppHandle) -> bool {
     true
 }
 
-async fn wait_for_operation_cancel(operation: u64) {
-    while !operation_cancelled(operation) {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-async fn bounded_postprocess(
-    local: &str,
-    config: &crate::cloud::Config,
-) -> crate::cloud::PostprocessResult<String> {
-    match tokio::time::timeout(
-        POSTPROCESS_DEADLINE,
-        crate::cloud::postprocess(local, config, POSTPROCESS_REQUEST_TIMEOUT),
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(_) => Err(crate::cloud::Error::Provider(
-            crate::cloud::ProviderError::Transport {
-                kind: crate::cloud::TransportKind::Timeout,
-            },
-        )),
-    }
-}
-
-fn postprocess_transcript(app: &AppHandle, local: String, operation: u64) -> String {
-    let config = crate::cloud::Config::from_setting_values(
-        crate::db::get_setting(app, crate::cloud::ENABLED_SETTING_KEY),
-        crate::db::get_setting(app, crate::cloud::MODEL_IDS_SETTING_KEY),
-    );
-    if !config.enabled || operation_cancelled(operation) {
-        return local;
-    }
-
-    crate::feedback::notify(
-        app,
-        crate::feedback::Note::dictation("work", "Refining", false),
-    );
-    let result: Option<crate::cloud::PostprocessResult<String>> =
-        match tokio::runtime::Runtime::new() {
-            Ok(runtime) => runtime.block_on(async {
-                tokio::select! {
-                    result = bounded_postprocess(&local, &config) => Some(result),
-                    _ = wait_for_operation_cancel(operation) => None,
-                }
-            }),
-            Err(_) => Some(Err(crate::cloud::Error::Provider(
-                crate::cloud::ProviderError::Transport {
-                    kind: crate::cloud::TransportKind::Request,
-                },
-            ))),
-        };
-    let Some(result) = result else {
-        return local;
-    };
-    if operation_cancelled(operation) {
-        return local;
-    }
-    match result {
-        Ok(cleaned) => cleaned,
-        Err(error) => {
-            let _ = app.emit("dictation-cloud-warning", error.to_string());
-            local
-        }
-    }
-}
-
 /// How long a take of `samples` may run before it is treated as wedged.
 ///
 /// Two parts: a floor for everything that is not the audio — backend init, a
-/// cold SHA-256 over 1.58 GB, reading the model off disk, and the separately
-/// bounded 60 s refinement — and a per-second-of-audio allowance on top, so a
+/// cold SHA-256 over 1.58 GB and reading the model off disk — and a per-second-of-audio allowance on top, so a
 /// twenty-minute take is not judged by the clock of a two-second one.
 fn take_deadline(samples: usize) -> Duration {
     let audio_seconds = (samples / audio::TARGET_RATE as usize) as u64;
@@ -358,7 +273,6 @@ pub fn stop(app: &AppHandle) {
         }
         match outcome {
             Ok(text) if !text.is_empty() => {
-                let text = postprocess_transcript(&app, text, operation);
                 if operation_cancelled(operation) {
                     finish_cancelled(&app, operation);
                     return;
@@ -384,12 +298,7 @@ fn deliver(app: &AppHandle, text: &str) {
         crate::commands::refresh(app);
     }
     match crate::clip::set_text(app, text) {
-        Ok(()) => feedback::notify(
-            app,
-            Note::info("done", "Transcript copied")
-                .with_detail(feedback::excerpt(text, 64))
-                .hold(2_600),
-        ),
+        Ok(()) => feedback::notify(app, Note::transcript(text)),
         Err(_) if stored != crate::db::INSERT_FAILED => feedback::notify(
             app,
             Note::error("Couldn't copy the transcript")
@@ -424,8 +333,7 @@ pub fn is_recording() -> bool {
     *state_lock() == DictState::Recording
 }
 
-/// True while a take owns Bard: recording or transcribing (refinement runs
-/// inside Transcribing).
+/// True while a take owns Bard: recording or transcribing.
 pub fn is_busy() -> bool {
     busy(*state_lock())
 }
@@ -742,11 +650,9 @@ mod tests {
     #[test]
     fn the_take_ceiling_outlasts_a_slow_cold_start() {
         // A one-second take: the floor, which has to cover backend init, a
-        // SHA-256 over 1.58 GB, reading the model, and the separately bounded
-        // 60 s refinement, on a machine doing none of that quickly.
+        // SHA-256 over 1.58 GB and reading the model, on a machine doing
+        // neither quickly.
         assert_eq!(take_deadline(16_000), TAKE_DEADLINE_FLOOR);
-        assert!(TAKE_DEADLINE_FLOOR > POSTPROCESS_DEADLINE * 3);
-        assert!(TAKE_DEADLINE_FLOOR > POSTPROCESS_REQUEST_TIMEOUT * 4);
     }
 
     #[test]

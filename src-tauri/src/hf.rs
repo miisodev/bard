@@ -34,97 +34,6 @@ pub struct CompatibilityResult {
     pub message: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct HfFile {
-    pub path: String,
-    pub size: u64,
-    pub sha256: String,
-    pub source_repo: String,
-    pub source_revision: String,
-    #[serde(default)]
-    pub quant: Option<String>,
-    pub compatibility: ModelCompatibility,
-}
-
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CachedHfModel {
-    pub id: String,
-    pub repo: String,
-    pub source_revision: String,
-    pub file: String,
-    pub size: u64,
-    pub local_path: String,
-    pub quant: Option<String>,
-    pub compatibility: ModelCompatibility,
-    pub registered: bool,
-    /// Cache files are shared external state and are always read-only to Bard.
-    pub owned: bool,
-}
-
-#[derive(Deserialize)]
-struct TreeItem {
-    #[serde(rename = "type")]
-    kind: String,
-    path: String,
-    size: u64,
-    lfs: Option<Lfs>,
-}
-
-#[derive(Deserialize)]
-struct Lfs {
-    oid: String,
-}
-
-fn is_transcript_file(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.ends_with(".gguf") || (lower.starts_with("ggml-") && lower.ends_with(".bin"))
-}
-
-/// Pull a quantization label out of common GGUF/GGML filenames. This is display
-/// metadata only; the engine remains the authority on whether a file loads.
-pub fn architecture_from_filename(name: &str) -> crate::catalog::Architecture {
-    let lower = name.to_ascii_lowercase();
-    if lower.contains("parakeet") {
-        crate::catalog::Architecture::Parakeet
-    } else if lower.contains("qwen3") || lower.contains("qwen-3") {
-        crate::catalog::Architecture::Qwen3Asr
-    } else if lower.contains("canary") {
-        crate::catalog::Architecture::Canary
-    } else if lower.contains("moonshine") {
-        crate::catalog::Architecture::Moonshine
-    } else if lower.contains("sensevoice") {
-        crate::catalog::Architecture::SenseVoice
-    } else if lower.contains("gigaam") {
-        crate::catalog::Architecture::GigaAm
-    } else if lower.contains("cohere") {
-        crate::catalog::Architecture::Cohere
-    } else {
-        crate::catalog::Architecture::Whisper
-    }
-}
-
-pub fn quant_from_filename(name: &str) -> Option<String> {
-    let stem = name
-        .rsplit_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(name)
-        .to_ascii_uppercase();
-    const QUANTS: &[&str] = &[
-        "IQ4_XS", "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q6_K", "Q4_0", "Q4_1", "Q5_0", "Q5_1",
-        "Q8_0", "BF16", "F16", "F32",
-    ];
-    QUANTS
-        .iter()
-        .find(|quant| {
-            stem.contains(&format!("-{quant}"))
-                || stem.ends_with(*quant)
-                || stem.contains(&format!("_{quant}"))
-        })
-        .map(|quant| (*quant).to_string())
-}
-
 /// Accept a canonical repo ID, a Hugging Face repository URL, or a URL to a
 /// page below that repository. The API always receives only `owner/name`.
 pub fn normalize_repo_id(input: &str) -> Result<String, String> {
@@ -230,10 +139,6 @@ pub fn normalize_checksum(value: &str) -> Result<String, String> {
         return Err("Invalid SHA-256 checksum from Hugging Face.".into());
     }
     Ok(value)
-}
-
-pub fn custom_model_id(repo: &str, file: &str) -> String {
-    format!("hf|{repo}|{file}")
 }
 
 fn app_model_id(repo: &str, file: &str) -> String {
@@ -437,235 +342,6 @@ fn remove_owned_model_file(app: &AppHandle, path: &Path) -> Result<bool, String>
     }
 }
 
-fn is_catalog_filename(filename: &str) -> bool {
-    crate::catalog::models()
-        .iter()
-        .any(|model| model.file.filename.eq_ignore_ascii_case(filename))
-}
-
-fn detected_path_id(canonical: &Path) -> String {
-    format!("local|{}", normalized_path_string(canonical))
-}
-
-/// What building one detected-model row needs, resolved once per
-/// `cached_models` call rather than once per detected file.
-///
-/// This was the first half of the Models-pane cost: `custom_for_path` ran a
-/// full `custom_models` table read plus a linear scan, canonicalizing the
-/// candidate and both sides of every comparison, for *every* file on disk — and
-/// `path_is_within` re-canonicalized both roots per file on top of that. A
-/// shared cache with a few dozen snapshots paid hundreds of SQL reads and
-/// thousands of `canonicalize` syscalls to render a list that performs no
-/// probing at all.
-struct DetectedIndex {
-    /// Registered models keyed by canonical path, from a single table read.
-    registered: HashMap<PathBuf, crate::db::CustomModel>,
-    /// The shared cache and Bard's own model directory, canonicalized once.
-    cache_root: PathBuf,
-    app_root: PathBuf,
-}
-
-impl DetectedIndex {
-    fn new(app: &AppHandle) -> Self {
-        Self {
-            registered: crate::db::list_custom_models(app)
-                .into_iter()
-                .map(|model| {
-                    let key = canonicalize_for_comparison(Path::new(&model.local_path));
-                    (key, model)
-                })
-                .collect(),
-            cache_root: canonicalize_for_comparison(&hf_cache_dir()),
-            app_root: canonicalize_for_comparison(&local_models_dir(app)),
-        }
-    }
-
-    /// `canonical` is `canonicalize_for_comparison(path)`, computed once by the
-    /// caller and reused for the id, the containment test and the registration
-    /// lookup.
-    #[allow(clippy::too_many_arguments)]
-    fn push(
-        &self,
-        out: &mut Vec<CachedHfModel>,
-        path: &Path,
-        canonical: &Path,
-        repo: String,
-        source_revision: String,
-        file_name: String,
-        size: u64,
-    ) {
-        let custom = self.registered.get(canonical);
-        let id = custom.map(|model| model.id.clone()).unwrap_or_else(|| {
-            if repo == "Bard imports" {
-                detected_path_id(canonical)
-            } else if path_is_within_canonical(&self.cache_root, canonical) {
-                external_model_id(&repo, &file_name, canonical)
-            } else {
-                custom_model_id(&repo, &file_name)
-            }
-        });
-        let registered = custom.is_some();
-        let compatibility = custom
-            .map(|model| model.compatibility)
-            .unwrap_or_else(|| cached_compatibility(path));
-        out.push(CachedHfModel {
-            id,
-            repo,
-            source_revision,
-            quant: quant_from_filename(&file_name),
-            file: file_name,
-            size,
-            local_path: path.to_string_lossy().to_string(),
-            compatibility,
-            registered,
-            owned: custom.is_some_and(|model| model.owned()),
-        });
-    }
-}
-
-pub fn cached_models(app: &AppHandle) -> Vec<CachedHfModel> {
-    let root = hf_cache_dir();
-    let index = DetectedIndex::new(app);
-    let mut out = Vec::new();
-    if let Ok(entries) = fs::read_dir(&root) {
-        for repo_dir in entries.flatten() {
-            if !repo_dir.path().is_dir() {
-                continue;
-            }
-            let name = repo_dir.file_name().to_string_lossy().to_string();
-            let Some(repo) = name.strip_prefix("models--").map(|s| s.replace("--", "/")) else {
-                continue;
-            };
-            let snapshots = repo_dir.path().join("snapshots");
-            let Ok(snap_entries) = fs::read_dir(&snapshots) else {
-                continue;
-            };
-            for rev in snap_entries.flatten() {
-                if !rev.path().is_dir() {
-                    continue;
-                }
-                let source_revision = rev.file_name().to_string_lossy().to_string();
-                let Ok(file_entries) = fs::read_dir(rev.path()) else {
-                    continue;
-                };
-                for file in file_entries.flatten() {
-                    let file_name = file.file_name().to_string_lossy().to_string();
-                    if !is_transcript_file(&file_name) {
-                        continue;
-                    }
-                    // fs::metadata follows symlinks; DirEntry::metadata does not.
-                    // A Hugging Face snapshot entry is a link into blobs/, so the
-                    // latter measures the link and every model reports as 0 bytes.
-                    let path = file.path();
-                    let Ok(meta) = fs::metadata(&path) else {
-                        continue;
-                    };
-                    let canonical = canonicalize_for_comparison(&path);
-                    index.push(
-                        &mut out,
-                        &path,
-                        &canonical,
-                        repo.clone(),
-                        source_revision.clone(),
-                        file_name,
-                        meta.len(),
-                    );
-                }
-            }
-        }
-    }
-
-    // Bard-managed imports live in the app data directory. Catalog assets are
-    // deliberately omitted because the first group already owns those rows.
-    let managed_root = local_models_dir(app);
-    if let Ok(entries) = fs::read_dir(&managed_root) {
-        for file in entries.flatten() {
-            if !file.path().is_file() {
-                continue;
-            }
-            let file_name = file.file_name().to_string_lossy().to_string();
-            if !is_transcript_file(&file_name) || is_catalog_filename(&file_name) {
-                continue;
-            }
-            let path = file.path();
-            let Ok(meta) = fs::metadata(&path) else {
-                continue;
-            };
-            let canonical = canonicalize_for_comparison(&path);
-            // Unlike a Hugging Face snapshot entry — which is a link into
-            // blobs/ and must be followed — a link sitting in Bard's own model
-            // directory is not something Bard ever writes. One placed there by
-            // something else resolves outside the root, and listing it would
-            // offer a row that registration correctly refuses a moment later.
-            if fs::symlink_metadata(&path)
-                .map(|meta| meta.file_type().is_symlink())
-                .unwrap_or(true)
-                || !path_is_within_canonical(&index.app_root, &canonical)
-            {
-                log::warn!("model:skip-noncontained-import path={}", path.display());
-                continue;
-            }
-            index.push(
-                &mut out,
-                &path,
-                &canonical,
-                "Bard imports".into(),
-                "local".into(),
-                file_name,
-                meta.len(),
-            );
-        }
-    }
-
-    // Keep a row for a registered file that has disappeared. The UI can then
-    // explain the missing state and offer Forget/Remove instead of silently
-    // making the registration vanish from the inventory. Reuses the table read
-    // the index already made rather than paying for a second one.
-    for custom in index.registered.values() {
-        let path = PathBuf::from(&custom.local_path);
-        if path.exists() {
-            continue;
-        }
-        let owned = custom.owned();
-        out.push(CachedHfModel {
-            id: custom.id.clone(),
-            repo: custom.repo.clone(),
-            source_revision: "local".into(),
-            quant: crate::hf::quant_from_filename(&custom.file),
-            file: custom.file.clone(),
-            size: custom.size_bytes,
-            local_path: custom.local_path.clone(),
-            compatibility: ModelCompatibility::Missing,
-            registered: true,
-            owned,
-        });
-    }
-
-    out.sort_by(|a, b| (&a.repo, &a.file, &a.local_path).cmp(&(&b.repo, &b.file, &b.local_path)));
-    out.dedup_by(|a, b| a.id == b.id);
-    out
-}
-
-fn hf_tree_url(repo: &str) -> String {
-    format!("https://huggingface.co/api/models/{repo}/tree/main?recursive=true&expand=true")
-}
-
-fn hf_resolve_url(repo: &str, file: &str) -> String {
-    let mut url = reqwest::Url::parse("https://huggingface.co").expect("static HF URL is valid");
-    {
-        let mut segments = url.path_segments_mut().expect("HF URL has a path");
-        segments.pop_if_empty();
-        for part in repo.split('/') {
-            segments.push(part);
-        }
-        segments.push("resolve").push("main");
-        for part in file.split('/') {
-            segments.push(part);
-        }
-    }
-    url.to_string()
-}
-
 /// Model download endpoints and the CDN hosts they legitimately hand off to.
 ///
 /// Bard cannot simply refuse redirects here. A Hugging Face `resolve/main` URL
@@ -713,104 +389,6 @@ fn download_redirect_policy() -> reqwest::redirect::Policy {
         }
         attempt.follow()
     })
-}
-
-pub async fn list_repo_files(repo: &str) -> Result<Vec<HfFile>, String> {
-    let repo = normalize_repo_id(repo)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(25))
-        // A repository tree is fetched from an API endpoint Bard constructs
-        // itself and that has no reason to answer with a redirect. `Policy::none`
-        // surfaces the 3xx as a response instead of replaying the request, which
-        // is checked for explicitly below.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
-        .get(hf_tree_url(&repo))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.status().as_u16() == 401 {
-        return Err("Repo not found or access gated.".into());
-    }
-    if resp.status().is_redirection() {
-        return Err(
-            "Hugging Face redirected the model listing; Bard does not follow redirects for API requests."
-                .into(),
-        );
-    }
-    if !resp.status().is_success() {
-        return Err(format!("Listing failed: {}", resp.status()));
-    }
-    let body = response_text_bounded(resp, MAX_TREE_BYTES).await?;
-    let items: Vec<TreeItem> = serde_json::from_str(&body)
-        .map_err(|e| format!("Hugging Face returned an unreadable model listing: {e}"))?;
-    let mut files = Vec::new();
-    for item in items {
-        if item.kind != "file" || !is_transcript_file(&item.path) {
-            continue;
-        }
-        let Some(lfs) = item.lfs else {
-            continue;
-        };
-        let Ok(sha256) = normalize_checksum(&lfs.oid) else {
-            continue;
-        };
-        if sha256.is_empty() {
-            continue;
-        }
-        let quant = quant_from_filename(&item.path);
-        files.push(HfFile {
-            path: item.path,
-            size: item.size,
-            sha256,
-            source_repo: repo.clone(),
-            source_revision: "main".into(),
-            quant,
-            compatibility: ModelCompatibility::Unverified,
-        });
-    }
-    Ok(files)
-}
-
-/// A repository tree is JSON, not a model. Real ones answer in a few hundred
-/// kilobytes, so 16 MB is far beyond any legitimate listing while still bounding
-/// what a broken or hostile endpoint can make Bard allocate before its entries
-/// have been filtered down to transcript files.
-///
-/// Mirrors `cloud::response_text_bounded`, re-implemented rather than imported:
-/// `cloud.rs` returns `Error::Provider` and belongs to another lane, and a
-/// one-way dependency from a user-facing `String` error into the provider error
-/// type would be a worse trade than twenty duplicated lines. Needs orchestrator:
-/// lift `response_text_bounded` into a shared `http` module so `cloud.rs` and
-/// `hf.rs` have one implementation of this rule.
-const MAX_TREE_BYTES: usize = 16 * 1024 * 1024;
-
-/// Read a response body, refusing anything over `limit`. `content_length()` is
-/// only a hint — a chunked or dishonest response can still exceed it — so the
-/// cap is enforced again while the stream is consumed rather than trusted.
-async fn response_text_bounded(
-    response: reqwest::Response,
-    limit: usize,
-) -> Result<String, String> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err("Hugging Face returned a model listing too large to read.".into());
-    }
-    let mut bytes = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| error.to_string())?;
-        if bytes.len().saturating_add(chunk.len()) > limit {
-            return Err("Hugging Face returned a model listing too large to read.".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    String::from_utf8(bytes)
-        .map_err(|_| "Hugging Face returned a model listing that was not UTF-8 text.".into())
 }
 
 fn init_engines_once() {
@@ -1163,17 +741,6 @@ pub fn known_compatibility(app: &AppHandle, path: &Path) -> Option<ModelCompatib
     .then_some(known)
 }
 
-/// Report this model's compatibility, opening it with the engine only if Bard
-/// has not already established an answer for these exact bytes.
-///
-/// This is the fix for the Models pane's cost. `check_model` is invoked once per
-/// unverified detected row every time Settings › Models opens, and every one of
-/// those calls was a full `Model::load` of a multi-gigabyte file, paid to
-/// rediscover a verdict the session already had.
-pub fn probe_local_model(app: &AppHandle, path_arg: &str) -> Result<CompatibilityResult, String> {
-    probe_local_model_inner(app, path_arg, false)
-}
-
 /// An explicit re-check. Skips the cache, because the user has just said the
 /// previous answer is not good enough — "it says incompatible but it works", or
 /// a file that has since been replaced.
@@ -1218,11 +785,8 @@ fn probe_local_model_inner(
 }
 
 fn model_path_for_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
-    if let Some(model) = crate::catalog::find(id) {
-        return Ok(local_models_dir(app).join(&model.file.filename));
-    }
-    crate::db::custom_model_by_id(app, id)
-        .map(|model| PathBuf::from(model.local_path))
+    crate::catalog::find(id)
+        .map(|model| local_models_dir(app).join(&model.file.filename))
         .ok_or_else(|| format!("Unknown model: {id}"))
 }
 
@@ -1230,36 +794,11 @@ fn model_path_for_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
 /// closes the gap where a previously installed path was replaced after the
 /// catalogue/custom row was written.
 pub fn verify_model_file(app: &AppHandle, id: &str, path: &Path) -> Result<(), String> {
-    if let Some(model) = crate::catalog::find(id) {
-        if !path_is_within(&local_models_dir(app), path) {
-            return Err("The selected catalogue model is outside Bard's model directory.".into());
-        }
-        return verify_pinned_file(path, model.file.size_bytes, &model.file.sha256);
+    let model = crate::catalog::find(id).ok_or_else(|| format!("Unknown model: {id}"))?;
+    if !path_is_within(&local_models_dir(app), path) {
+        return Err("The selected model is outside Bard's model directory.".into());
     }
-
-    let custom =
-        crate::db::custom_model_by_id(app, id).ok_or_else(|| format!("Unknown model: {id}"))?;
-    let link_metadata = fs::symlink_metadata(path)
-        .map_err(|_| "The selected model file is no longer available.".to_string())?;
-    let target_metadata = fs::metadata(path)
-        .map_err(|_| "The selected model file is no longer available.".to_string())?;
-    if !target_metadata.is_file() {
-        return Err("The selected model path is not a regular file.".into());
-    }
-    let canonical = fs::canonicalize(path)
-        .map_err(|_| "The selected model file is no longer available.".to_string())?;
-    if link_metadata.file_type().is_symlink() && !path_is_within(&hf_cache_dir(), &canonical) {
-        return Err("Bard-managed model paths may not be symbolic links.".into());
-    }
-    let recorded = fs::canonicalize(&custom.local_path)
-        .map_err(|_| "The selected model registration is stale.".to_string())?;
-    if normalized_path_string(&canonical) != normalized_path_string(&recorded) {
-        return Err("The selected model path changed after registration; rescan it first.".into());
-    }
-    if custom.owned() || !custom.sha256.is_empty() {
-        verify_pinned_file(&canonical, custom.size_bytes, &custom.sha256)?;
-    }
-    Ok(())
+    verify_pinned_file(path, model.file.size_bytes, &model.file.sha256)
 }
 
 /// Verify first, persist second. No caller receives a successful activation
@@ -1295,12 +834,6 @@ fn activate_model_inner(app: &AppHandle, id: &str, engine_checked: bool) -> Resu
     let _ = app.emit("model-activated", serde_json::json!({"id": id}));
     crate::commands::refresh(app);
     Ok(())
-}
-
-pub fn custom_storage_name(repo: &str, file: &str) -> String {
-    format!("hf-{repo}-{file}")
-        .replace('/', "--")
-        .replace(['\\', ':', '*', '?', '"', '<', '>', '|'], "_")
 }
 
 /// The partial file's path. A sibling `<name>.part` rather than a sibling with
@@ -1693,87 +1226,6 @@ pub(crate) async fn download_resumable(
     outcome
 }
 
-pub async fn install_custom_model(
-    app: &AppHandle,
-    repo: &str,
-    file: &str,
-    size: u64,
-    sha256: &str,
-) -> Result<String, String> {
-    let repo = normalize_repo_id(repo)?;
-    let file = normalize_file_path(file)?;
-    let sha256 = normalize_checksum(sha256)?;
-    if size == 0 || sha256.len() != 64 {
-        return Err("Hugging Face did not provide a complete size/checksum for this model; choose a file with checksum metadata.".into());
-    }
-    let id = app_model_id(&repo, &file);
-    let destination = local_models_dir(app).join(custom_storage_name(&repo, &file));
-
-    if destination.exists() {
-        let probe = match verify_pinned_file(&destination, size, &sha256) {
-            Ok(()) => probe_model_path(&destination),
-            Err(error) => Err(error),
-        };
-        if let Ok(probe) = probe {
-            if probe.status == ModelCompatibility::Verified {
-                crate::db::register_custom_model(
-                    app,
-                    &id,
-                    &repo,
-                    &file,
-                    size,
-                    &sha256,
-                    &destination.to_string_lossy(),
-                    crate::db::ModelOwnership::App,
-                    ModelCompatibility::Verified,
-                )?;
-                emit_model_installed(app, &id);
-                return Ok(id);
-            }
-        }
-        let _ = remove_owned_model_file(app, &destination);
-    }
-
-    crate::dictation::reset_cancel();
-    let request = DownloadRequest {
-        id: id.clone(),
-        url: hf_resolve_url(&repo, &file),
-        sha256: sha256.clone(),
-        size_bytes: size,
-        destination: destination.clone(),
-    };
-    download_resumable(app, request).await?;
-    if let Err(error) = verify_pinned_file(&destination, size, &sha256) {
-        let _ = remove_owned_model_file(app, &destination);
-        emit_download_failure(app, &id, &error);
-        return Err(error);
-    }
-
-    let probe = probe_model_path(&destination)?;
-    if probe.status != ModelCompatibility::Verified {
-        let _ = remove_owned_model_file(app, &destination);
-        let error = probe
-            .message
-            .unwrap_or_else(|| "This model is incompatible with Bard's engine.".into());
-        emit_download_failure(app, &id, &error);
-        return Err(error);
-    }
-    crate::db::register_custom_model(
-        app,
-        &id,
-        &repo,
-        &file,
-        size,
-        &sha256,
-        &destination.to_string_lossy(),
-        crate::db::ModelOwnership::App,
-        ModelCompatibility::Verified,
-    )?;
-    // Installation never changes `model_id`; the UI must activate explicitly.
-    emit_model_installed(app, &id);
-    Ok(id)
-}
-
 pub fn register_detected_path(
     app: &AppHandle,
     repo: &str,
@@ -1906,23 +1358,6 @@ pub fn register_and_activate_cached(
     activate_model_inner(app, &id, true)
 }
 
-/// Register and activate a discovered cache model in one explicit user action.
-/// The source file remains external and read-only to Bard.
-pub fn activate_detected_model(app: &AppHandle, id: &str) -> Result<(), String> {
-    let detected = cached_models(app)
-        .into_iter()
-        .find(|model| model.id == id)
-        .ok_or_else(|| format!("Unknown detected model: {id}"))?;
-    let registered_id = register_detected_path(
-        app,
-        &detected.repo,
-        &detected.file,
-        &detected.local_path,
-        detected.size,
-    )?;
-    activate_model_inner(app, &registered_id, true)
-}
-
 /// Remove a catalog or custom model registration. App-owned files are deleted
 /// only after canonical path containment succeeds; external cache files are
 /// never touched.
@@ -1940,15 +1375,7 @@ pub fn delete_model(app: &AppHandle, id: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let custom =
-        crate::db::custom_model_by_id(app, id).ok_or_else(|| format!("Unknown model: {id}"))?;
-    if custom.owned() {
-        let path = Path::new(&custom.local_path);
-        remove_owned_model_file(app, path)?;
-        let _ = remove_owned_model_file(app, &part_path(path));
-        let _ = remove_owned_model_file(app, &legacy_part_path(path));
-    }
-    crate::db::delete_custom_model(app, id).map(|_| ())
+    Err(format!("Unknown model: {id}"))
 }
 
 #[cfg(test)]
@@ -2134,22 +1561,6 @@ mod tests {
             .collect()
     }
 
-    #[tokio::test]
-    async fn live_huggingface_listing_when_requested() {
-        if std::env::var_os("BARD_TEST_HF_LIVE").is_none() {
-            return;
-        }
-        let files = list_repo_files("handy-computer/whisper-small-gguf")
-            .await
-            .expect("live Hugging Face listing succeeds");
-        assert!(files
-            .iter()
-            .any(|file| file.path == "whisper-small-Q6_K.gguf"));
-        assert!(files
-            .iter()
-            .all(|file| file.compatibility == ModelCompatibility::Unverified));
-    }
-
     #[test]
     fn smoke_test_exact_transcription_when_requested() {
         let (Ok(value), Ok(wav)) = (
@@ -2227,18 +1638,6 @@ mod tests {
         assert_eq!(normalize_checksum(&value).unwrap(), "a".repeat(64));
         assert!(normalize_checksum("not-a-hash").is_err());
         assert_eq!(normalize_checksum("").unwrap(), "");
-    }
-
-    #[test]
-    fn extracts_common_quant_labels() {
-        assert_eq!(
-            quant_from_filename("Qwen3-ASR-0.6B-Q8_0.gguf").as_deref(),
-            Some("Q8_0")
-        );
-        assert_eq!(
-            quant_from_filename("ggml-medium-q5_0.bin").as_deref(),
-            Some("Q5_0")
-        );
     }
 
     #[test]
@@ -2733,36 +2132,5 @@ mod tests {
             "the part must never exceed the catalogue size"
         );
         fs::remove_dir_all(dir).ok();
-    }
-
-    #[tokio::test]
-    async fn bounded_reads_cap_a_listing_body_by_content_length_and_by_stream() {
-        let client = reqwest::Client::new();
-
-        // A declared length over the cap is refused before any body is read.
-        let (url, server) = serve_once(TestResponse::new(payload(64)));
-        let response = client.get(&url).send().await.expect("request");
-        let error = response_text_bounded(response, 16).await.unwrap_err();
-        server.join().expect("server");
-        assert!(error.contains("too large"), "{error}");
-
-        // So is a body that grows past the cap while streaming — the case
-        // `content_length()` alone cannot see, and the one that made the previous
-        // unbounded `json()` read a memory hazard.
-        let (url, server) = serve_once(TestResponse::new(payload(64)).unframed());
-        let response = client.get(&url).send().await.expect("request");
-        let error = response_text_bounded(response, 16).await.unwrap_err();
-        server.join().expect("server");
-        assert!(error.contains("too large"), "{error}");
-
-        // A body inside the cap comes back intact.
-        let body = payload(64);
-        let (url, server) = serve_once(TestResponse::new(body.clone()));
-        let response = client.get(&url).send().await.expect("request");
-        assert_eq!(
-            response_text_bounded(response, 4096).await.unwrap(),
-            String::from_utf8(body).unwrap()
-        );
-        server.join().expect("server");
     }
 }

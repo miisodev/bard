@@ -82,13 +82,6 @@ pub struct PackSummary {
     pub preview_item_ids: Vec<i64>,
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PackDetail {
-    pub pack: PackSummary,
-    pub items: Vec<Item>,
-}
-
 #[derive(Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ModelOwnership {
@@ -112,11 +105,7 @@ pub struct CustomModel {
     pub compatibility: crate::hf::ModelCompatibility,
 }
 
-impl CustomModel {
-    pub fn owned(&self) -> bool {
-        self.ownership == ModelOwnership::App
-    }
-}
+impl CustomModel {}
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -137,7 +126,6 @@ pub struct AppState {
     pub model_ready: bool,
     pub mic_ready: bool,
     pub active_item_id: Option<i64>,
-    pub license: crate::license::LicenseStatus,
     /// "direct" for the miiso.dev download, "store" for the Microsoft Store
     /// copy, "flatpak" inside a Flatpak sandbox.
     pub channel: String,
@@ -913,17 +901,6 @@ pub fn get_active_section(app: &AppHandle) -> Option<i64> {
         .filter(|id| section_exists(app, *id))
 }
 
-pub fn set_active_section(app: &AppHandle, id: Option<i64>) {
-    match id {
-        Some(i) => set_setting(
-            app,
-            "active_section",
-            &serde_json::json!({"id": i}).to_string(),
-        ),
-        None => set_setting(app, "active_section", ""),
-    }
-}
-
 pub fn set_active_item(app: &AppHandle, id: Option<i64>) {
     match id.filter(|id| item_exists(app, *id)) {
         Some(id) => set_setting(app, "active_item_id", &id.to_string()),
@@ -991,48 +968,6 @@ fn section_exists(app: &AppHandle, id: i64) -> bool {
     })
 }
 
-pub fn find_or_create_section(app: &AppHandle, name: &str) -> i64 {
-    let trimmed = name.trim();
-    let existing = with_conn(app, |c| {
-        c.query_row(
-            "SELECT id FROM sections WHERE name = ?1 COLLATE NOCASE",
-            params![trimmed],
-            |r| r.get(0),
-        )
-        .ok()
-    });
-    if let Some(id) = existing {
-        return id;
-    }
-    // Same reasoning as `insert_item_with_origin`: a full disk must not take the
-    // process down. Falls back to the default section, which always exists.
-    let created = with_conn_mut(app, |c| {
-        c.execute(
-            "INSERT INTO sections(name, created_at) VALUES(?1, ?2)",
-            params![trimmed, now_ms()],
-        )
-        .map(|_| c.last_insert_rowid())
-    });
-    match created {
-        Ok(id) => id,
-        Err(error) => {
-            crate::crash::record_event("db:section-insert-failed");
-            log::warn!("could not create a section: {error}");
-            default_section(app)
-        }
-    }
-}
-
-/// The section every item belongs to when none has been chosen.
-fn default_section(app: &AppHandle) -> i64 {
-    with_conn(app, |c| {
-        c.query_row("SELECT id FROM sections ORDER BY id LIMIT 1", [], |row| {
-            row.get(0)
-        })
-        .unwrap_or(INSERT_FAILED)
-    })
-}
-
 pub fn list_sections(app: &AppHandle) -> Vec<Section> {
     with_conn(app, |c| {
         // A statement that cannot be prepared or stepped is recorded and
@@ -1056,54 +991,6 @@ pub fn list_sections(app: &AppHandle) -> Vec<Section> {
             }
         };
         sections
-    })
-}
-
-pub fn rename_section(app: &AppHandle, id: i64, name: &str) {
-    with_conn_mut(app, |c| {
-        let _ = c.execute(
-            "UPDATE sections SET name = ?1 WHERE id = ?2",
-            params![name.trim(), id],
-        );
-    });
-}
-
-pub fn delete_section(app: &AppHandle, id: i64) {
-    with_conn_mut(app, |c| {
-        let _ = c.execute(
-            "UPDATE items SET section_id = NULL WHERE section_id = ?1",
-            params![id],
-        );
-        let _ = c.execute("DELETE FROM sections WHERE id = ?1", params![id]);
-    });
-    if get_active_section(app) == Some(id) {
-        set_active_section(app, None);
-    }
-}
-
-pub fn insert_attachment(app: &AppHandle, item_id: i64, path: &str) -> i64 {
-    with_conn_mut(app, |c| {
-        let pos: i64 = c
-            .query_row(
-                "SELECT COALESCE(MAX(position), -1) + 1 FROM attachments WHERE item_id = ?1",
-                params![item_id],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        // An attachment is a convenience, never a prerequisite. If the row cannot
-        // be written the file is still on disk and the item still exists, so a
-        // failure is recorded and reported rather than aborting the process.
-        c.execute(
-            "INSERT INTO attachments(item_id, path, position, created_at) VALUES(?1, ?2, ?3, ?4)",
-            params![item_id, path, pos, now_ms()],
-        )
-        .map(|_| c.last_insert_rowid())
-    })
-    .unwrap_or_else(|error| {
-        crate::crash::record_event("db:attachment-insert-failed");
-        log::warn!("could not record an attachment: {error}");
-        let _ = tauri::Emitter::emit(app, "db-write-failed", error.to_string());
-        INSERT_FAILED
     })
 }
 
@@ -1154,34 +1041,6 @@ fn read_attachments(
     })
 }
 
-pub fn attachment_path(app: &AppHandle, id: i64) -> Option<String> {
-    with_conn(app, |c| {
-        c.query_row(
-            "SELECT path FROM attachments WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )
-        .ok()
-    })
-}
-
-pub fn delete_attachment(app: &AppHandle, id: i64) -> Result<Option<String>, String> {
-    let path = with_conn(app, |c| {
-        c.query_row(
-            "SELECT path FROM attachments WHERE id = ?1",
-            params![id],
-            |r| r.get(0),
-        )
-        .ok()
-    });
-    with_conn_mut(app, |connection| {
-        connection
-            .execute("DELETE FROM attachments WHERE id = ?1", params![id])
-            .map_err(|error| format!("Could not delete attachment: {error}"))
-    })?;
-    Ok(path)
-}
-
 pub fn update_item(app: &AppHandle, id: i64, content: &str) -> Result<(), String> {
     with_conn(app, |connection| {
         update_item_checked(connection, id, content)
@@ -1206,33 +1065,6 @@ pub fn set_favorite(app: &AppHandle, id: i64, favorite: bool) {
             params![favorite as i64, now_ms(), id],
         );
     });
-}
-
-pub fn set_done(app: &AppHandle, id: i64, done: bool) {
-    with_conn_mut(app, |c| {
-        let _ = c.execute(
-            "UPDATE items SET done = ?1, updated_at = ?2 WHERE id = ?3",
-            params![done as i64, now_ms(), id],
-        );
-    });
-}
-
-/// The ids of completed items, or an error when they cannot be read.
-///
-/// Fallible on purpose: the clear command must not read a failed query as
-/// "nothing is completed" and report success over data it never saw. Only the
-/// ids are read, because deleting the rows does not need their contents.
-pub fn completed_item_ids(app: &AppHandle) -> Result<Vec<i64>, String> {
-    if !is_ready(app) {
-        return Err("Bard's history is not available yet.".into());
-    }
-    with_conn(app, |connection| {
-        read_ids(
-            connection,
-            "SELECT id FROM items WHERE done != 0",
-            "Could not read completed items",
-        )
-    })
 }
 
 pub fn delete_all_data(app: &AppHandle) -> Result<(), String> {
@@ -1279,28 +1111,6 @@ pub fn delete_all_data(app: &AppHandle) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(crate::hf::local_models_dir(app));
     let _ = std::fs::remove_dir_all(crate::paths::logs_dir());
     Ok(())
-}
-
-pub fn add_note_to_image(app: &AppHandle, id: i64) -> Option<String> {
-    let path = with_conn(app, |c| {
-        c.query_row(
-            "SELECT image_path FROM items WHERE id = ?1",
-            params![id],
-            |r| r.get::<_, Option<String>>(0),
-        )
-        .ok()
-        .flatten()
-    });
-    with_conn_mut(app, |c| {
-        let _ = c.execute(
-            "UPDATE items SET kind = 'text', content = '', image_path = NULL WHERE id = ?1",
-            params![id],
-        );
-    });
-    if let Some(p) = path.clone() {
-        insert_attachment(app, id, &p);
-    }
-    path
 }
 
 /// Where captured images live. Resolved from the environment rather than from
@@ -1482,28 +1292,6 @@ fn read_all_items(connection: &Connection) -> Result<Vec<Item>, String> {
 /// How many leading members a pack previews.
 const PACK_PREVIEW_LIMIT: i64 = 4;
 
-/// A pack name is trimmed, non-empty and no longer than this.
-const PACK_NAME_MAX: usize = 60;
-
-fn clean_pack_name(name: &str) -> Result<String, String> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("Give the pack a name.".into());
-    }
-    if name.chars().count() > PACK_NAME_MAX {
-        return Err(format!(
-            "Pack names can be at most {PACK_NAME_MAX} characters."
-        ));
-    }
-    Ok(name.to_string())
-}
-
-fn pack_exists(connection: &Connection, id: i64) -> bool {
-    connection
-        .query_row("SELECT 1 FROM packs WHERE id = ?1", params![id], |_| Ok(()))
-        .is_ok()
-}
-
 /// Every pack with its member count and the leading members a card previews.
 ///
 /// Two statements cover every pack: one for the counts, one for the leading
@@ -1553,271 +1341,12 @@ fn read_packs(connection: &Connection) -> Vec<PackSummary> {
     packs
 }
 
-/// One pack with its members in pack order, or `None` when it is gone.
-fn read_pack(connection: &Connection, id: i64) -> Option<PackDetail> {
-    let name: String = connection
-        .query_row("SELECT name FROM packs WHERE id = ?1", params![id], |row| {
-            row.get(0)
-        })
-        .ok()?;
-    let mut statement = connection
-        .prepare(&format!(
-            "SELECT {ITEM_COLUMNS}
-             FROM items JOIN pack_items ON pack_items.item_id = items.id
-             WHERE pack_items.pack_id = ?1
-             ORDER BY pack_items.position"
-        ))
-        .ok()?;
-    let items: Vec<Item> = statement
-        .query_map(params![id], item_from_row)
-        .ok()?
-        .filter_map(Result::ok)
-        .collect();
-    let preview_item_ids = items
-        .iter()
-        .take(PACK_PREVIEW_LIMIT as usize)
-        .map(|item| item.id)
-        .collect();
-    Some(PackDetail {
-        pack: PackSummary {
-            id,
-            name,
-            item_count: items.len() as i64,
-            preview_item_ids,
-        },
-        items,
-    })
-}
-
-/// Append members at the end of the pack and return the ids that landed, in
-/// order. An id that is already a member or no longer exists is skipped rather
-/// than fatal, and the position advances only for a row that actually landed.
-fn append_pack_items(
-    connection: &Connection,
-    pack_id: i64,
-    item_ids: &[i64],
-) -> Result<Vec<i64>, String> {
-    if !pack_exists(connection, pack_id) {
-        return Err("That pack no longer exists.".into());
-    }
-    let mut position: i64 = connection
-        .query_row(
-            "SELECT COALESCE(MAX(position), -1) + 1 FROM pack_items WHERE pack_id = ?1",
-            params![pack_id],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("Could not read the pack's items: {error}"))?;
-    let mut added = Vec::new();
-    for item_id in item_ids {
-        // The SELECT is the whole filter: it yields no row for an id that no
-        // longer exists, and INSERT OR IGNORE drops one already in the pack.
-        let inserted = connection
-            .execute(
-                "INSERT OR IGNORE INTO pack_items(pack_id, item_id, position)
-                 SELECT ?1, id, ?2 FROM items WHERE id = ?3",
-                params![pack_id, position, item_id],
-            )
-            .map_err(|error| format!("Could not add to the pack: {error}"))?;
-        if inserted == 1 {
-            added.push(*item_id);
-            position += 1;
-        }
-    }
-    Ok(added)
-}
-
-fn insert_pack(
-    connection: &mut Connection,
-    name: &str,
-    item_ids: &[i64],
-    now: i64,
-) -> Result<PackSummary, String> {
-    let name = clean_pack_name(name)?;
-    let transaction = connection
-        .transaction()
-        .map_err(|error| format!("Could not create the pack: {error}"))?;
-    transaction
-        .execute(
-            "INSERT INTO packs(name, created_at) VALUES(?1, ?2)",
-            params![name, now],
-        )
-        .map_err(|error| format!("Could not create the pack: {error}"))?;
-    let id = transaction.last_insert_rowid();
-    let added = append_pack_items(&transaction, id, item_ids)?;
-    transaction
-        .commit()
-        .map_err(|error| format!("Could not create the pack: {error}"))?;
-    Ok(PackSummary {
-        id,
-        name,
-        item_count: added.len() as i64,
-        preview_item_ids: added
-            .into_iter()
-            .take(PACK_PREVIEW_LIMIT as usize)
-            .collect(),
-    })
-}
-
-fn set_pack_name(connection: &Connection, id: i64, name: &str) -> Result<(), String> {
-    let name = clean_pack_name(name)?;
-    let changed = connection
-        .execute(
-            "UPDATE packs SET name = ?1 WHERE id = ?2",
-            params![name, id],
-        )
-        .map_err(|error| format!("Could not rename the pack: {error}"))?;
-    if changed == 0 {
-        return Err("That pack no longer exists.".into());
-    }
-    Ok(())
-}
-
-fn remove_pack(connection: &Connection, id: i64) -> Result<(), String> {
-    let changed = connection
-        .execute("DELETE FROM packs WHERE id = ?1", params![id])
-        .map_err(|error| format!("Could not delete the pack: {error}"))?;
-    if changed == 0 {
-        return Err("That pack no longer exists.".into());
-    }
-    Ok(())
-}
-
-fn remove_pack_items(
-    connection: &Connection,
-    pack_id: i64,
-    item_ids: &[i64],
-) -> Result<(), String> {
-    if !pack_exists(connection, pack_id) {
-        return Err("That pack no longer exists.".into());
-    }
-    if item_ids.is_empty() {
-        return Ok(());
-    }
-    let placeholders = vec!["?"; item_ids.len()].join(",");
-    let bound = std::iter::once(pack_id).chain(item_ids.iter().copied());
-    connection
-        .execute(
-            &format!("DELETE FROM pack_items WHERE pack_id = ?1 AND item_id IN ({placeholders})"),
-            rusqlite::params_from_iter(bound),
-        )
-        .map(|_| ())
-        .map_err(|error| format!("Could not remove from the pack: {error}"))
-}
-
-fn reorder_pack_items(
-    connection: &mut Connection,
-    pack_id: i64,
-    item_ids: &[i64],
-) -> Result<(), String> {
-    if !pack_exists(connection, pack_id) {
-        return Err("That pack no longer exists.".into());
-    }
-    let current: Vec<i64> = connection
-        .prepare("SELECT item_id FROM pack_items WHERE pack_id = ?1 ORDER BY position")
-        .map_err(|error| format!("Could not read the pack's items: {error}"))?
-        .query_map(params![pack_id], |row| row.get(0))
-        .map_err(|error| format!("Could not read the pack's items: {error}"))?
-        .filter_map(Result::ok)
-        .collect();
-    // The caller shows what it believes the pack holds; anything else — a
-    // removal, an addition, a duplicate or an id that is gone — is refused so
-    // a stale view can never quietly drop or reorder members it did not see.
-    if current.len() != item_ids.len()
-        || current.iter().any(|id| !item_ids.contains(id))
-        || item_ids.iter().any(|id| !current.contains(id))
-    {
-        return Err("The pack's items changed. Reopen it and try again.".into());
-    }
-    let transaction = connection
-        .transaction()
-        .map_err(|error| format!("Could not save the new order: {error}"))?;
-    for (position, item_id) in item_ids.iter().enumerate() {
-        transaction
-            .execute(
-                "UPDATE pack_items SET position = ?1 WHERE pack_id = ?2 AND item_id = ?3",
-                params![position as i64, pack_id, item_id],
-            )
-            .map_err(|error| format!("Could not save the new order: {error}"))?;
-    }
-    transaction
-        .commit()
-        .map_err(|error| format!("Could not save the new order: {error}"))
-}
-
 /// The shelf's Packs zone: every pack with its member count and previews.
 pub fn list_packs(app: &AppHandle) -> Vec<PackSummary> {
     if !is_ready(app) {
         return Vec::new();
     }
     with_conn(app, read_packs)
-}
-
-/// One pack with its items, for the open pack view.
-pub fn get_pack(app: &AppHandle, id: i64) -> Result<PackDetail, String> {
-    if !is_ready(app) {
-        return Err("Database is not ready.".into());
-    }
-    with_conn(app, |connection| read_pack(connection, id))
-        .ok_or_else(|| "That pack no longer exists.".into())
-}
-
-/// Create a pack from a selection. Ids that no longer exist are skipped, and
-/// the caller's order is kept.
-pub fn create_pack(app: &AppHandle, name: &str, item_ids: &[i64]) -> Result<PackSummary, String> {
-    if !is_ready(app) {
-        return Err("Database is not ready.".into());
-    }
-    with_conn_mut(app, |connection| {
-        insert_pack(connection, name, item_ids, now_ms())
-    })
-}
-
-pub fn rename_pack(app: &AppHandle, id: i64, name: &str) -> Result<(), String> {
-    if !is_ready(app) {
-        return Err("Database is not ready.".into());
-    }
-    with_conn(app, |connection| set_pack_name(connection, id, name))
-}
-
-pub fn delete_pack(app: &AppHandle, id: i64) -> Result<(), String> {
-    if !is_ready(app) {
-        return Err("Database is not ready.".into());
-    }
-    with_conn(app, |connection| remove_pack(connection, id))
-}
-
-/// Append items to a pack; memberships already there are left alone.
-pub fn pack_add_items(app: &AppHandle, id: i64, item_ids: &[i64]) -> Result<(), String> {
-    if !is_ready(app) {
-        return Err("Database is not ready.".into());
-    }
-    with_conn_mut(app, |connection| {
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("Could not update the pack: {error}"))?;
-        append_pack_items(&transaction, id, item_ids)?;
-        transaction
-            .commit()
-            .map_err(|error| format!("Could not update the pack: {error}"))
-    })
-}
-
-pub fn pack_remove_items(app: &AppHandle, id: i64, item_ids: &[i64]) -> Result<(), String> {
-    if !is_ready(app) {
-        return Err("Database is not ready.".into());
-    }
-    with_conn(app, |connection| {
-        remove_pack_items(connection, id, item_ids)
-    })
-}
-
-pub fn pack_reorder(app: &AppHandle, id: i64, item_ids: &[i64]) -> Result<(), String> {
-    if !is_ready(app) {
-        return Err("Database is not ready.".into());
-    }
-    with_conn_mut(app, |connection| {
-        reorder_pack_items(connection, id, item_ids)
-    })
 }
 
 /// Remove expired automatic items and every owned file attached to them.
@@ -2326,20 +1855,6 @@ pub fn register_custom_model(
     })
 }
 
-pub fn custom_model_by_id(app: &AppHandle, id: &str) -> Option<CustomModel> {
-    if !is_ready(app) {
-        return None;
-    }
-    with_conn(app, |c| {
-        c.query_row(
-            &format!("SELECT {CUSTOM_MODEL_COLUMNS} FROM custom_models WHERE id = ?1"),
-            params![id],
-            custom_model_from_row,
-        )
-        .ok()
-    })
-}
-
 pub fn list_custom_models(app: &AppHandle) -> Vec<CustomModel> {
     if !is_ready(app) {
         return Vec::new();
@@ -2385,27 +1900,6 @@ pub fn set_custom_model_compatibility(
     });
 }
 
-/// Unregister a custom model. This never clears or changes the active model and
-/// never touches its file; ownership-aware file removal is the model manager's
-/// job before this is called.
-pub fn delete_custom_model(app: &AppHandle, id: &str) -> Result<CustomModel, String> {
-    if !is_ready(app) {
-        return Err("Database is not ready.".into());
-    }
-    if get_setting(app, "model_id").as_deref() == Some(id) {
-        return Err("The active voice model cannot be deleted. Choose another model first.".into());
-    }
-    let model = custom_model_by_id(app, id).ok_or_else(|| format!("Unknown model: {id}"))?;
-    let removed = with_conn_mut(app, |c| {
-        c.execute("DELETE FROM custom_models WHERE id = ?1", params![id])
-            .map_err(|e| e.to_string())
-    })?;
-    if removed == 0 {
-        return Err(format!("Unknown model: {id}"));
-    }
-    Ok(model)
-}
-
 pub fn get_state(app: &AppHandle) -> AppState {
     if !is_ready(app) {
         return AppState {
@@ -2424,7 +1918,6 @@ pub fn get_state(app: &AppHandle) -> AppState {
             model_ready: false,
             mic_ready: false,
             active_item_id: None,
-            license: crate::license::LicenseStatus::unavailable(),
             channel: crate::packaging::channel().into(),
             background: "theme".into(),
             background_color: String::new(),
@@ -2450,7 +1943,6 @@ pub fn get_state(app: &AppHandle) -> AppState {
         model_ready: crate::dictation::model_ready(app),
         mic_ready: crate::dictation::mic_ready(),
         active_item_id: active_item(app),
-        license: crate::license::status(app),
         channel: crate::packaging::channel().into(),
         background: get_setting(app, "background").unwrap_or_else(|| "theme".into()),
         background_color: get_setting(app, "background_color").unwrap_or_default(),
@@ -3253,268 +2745,6 @@ mod tests {
         assert_eq!(pin_item(&conn, 99, true, 17), Err(PinError::Missing));
         drop(conn);
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    fn pack_test_db(name: &str) -> (Connection, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("bard-{name}-{}", now_ms()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let connection = init(&dir.join("test.db")).unwrap();
-        (connection, dir)
-    }
-
-    fn seed_items(connection: &Connection, count: i64) {
-        for _ in 0..count {
-            connection
-                .execute(
-                    "INSERT INTO items (content, created_at, updated_at) VALUES ('x', 0, 0)",
-                    [],
-                )
-                .unwrap();
-        }
-    }
-
-    fn member_ids(detail: &PackDetail) -> Vec<i64> {
-        detail.items.iter().map(|item| item.id).collect()
-    }
-
-    #[test]
-    fn packs_round_trip_through_create_read_rename_delete() {
-        let (mut connection, dir) = pack_test_db("packs-crud");
-        seed_items(&connection, 3);
-        let pack = insert_pack(&mut connection, "  Handover  ", &[3, 1], 10).unwrap();
-        assert_eq!(pack.name, "Handover");
-        assert_eq!(pack.item_count, 2);
-        assert_eq!(pack.preview_item_ids, [3, 1]);
-        let list = read_packs(&connection);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].id, pack.id);
-        let detail = read_pack(&connection, pack.id).unwrap();
-        assert_eq!(detail.pack.name, "Handover");
-        assert_eq!(detail.pack.item_count, 2);
-        assert_eq!(member_ids(&detail), [3, 1]);
-        set_pack_name(&connection, pack.id, "Shipment").unwrap();
-        assert_eq!(
-            read_pack(&connection, pack.id).unwrap().pack.name,
-            "Shipment"
-        );
-        remove_pack(&connection, pack.id).unwrap();
-        assert!(read_packs(&connection).is_empty());
-        assert!(read_pack(&connection, pack.id).is_none());
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn deleting_an_item_removes_it_from_every_pack() {
-        let (mut connection, dir) = pack_test_db("packs-item-cascade");
-        seed_items(&connection, 3);
-        let first = insert_pack(&mut connection, "One", &[1, 2, 3], 10).unwrap();
-        let second = insert_pack(&mut connection, "Two", &[2], 11).unwrap();
-        connection
-            .execute("DELETE FROM items WHERE id = 2", [])
-            .unwrap();
-        let detail = read_pack(&connection, first.id).unwrap();
-        assert_eq!(member_ids(&detail), [1, 3]);
-        let list = read_packs(&connection);
-        assert_eq!(list[0].preview_item_ids, [1, 3]);
-        assert_eq!(list[1].item_count, 0);
-        assert_eq!(
-            read_pack(&connection, second.id).unwrap().pack.item_count,
-            0
-        );
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn deleting_a_pack_removes_only_its_memberships() {
-        let (mut connection, dir) = pack_test_db("packs-pack-cascade");
-        seed_items(&connection, 2);
-        let pack = insert_pack(&mut connection, "Gone", &[1, 2], 10).unwrap();
-        remove_pack(&connection, pack.id).unwrap();
-        let memberships: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM pack_items WHERE pack_id = ?1",
-                params![pack.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(memberships, 0);
-        let items: i64 = connection
-            .query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(items, 2, "the items themselves are not touched");
-        assert!(read_packs(&connection).is_empty());
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn pack_members_keep_their_order_through_add_remove_and_reorder() {
-        let (mut connection, dir) = pack_test_db("packs-order");
-        seed_items(&connection, 4);
-        let pack = insert_pack(&mut connection, "Order", &[1, 2, 3], 10).unwrap();
-        append_pack_items(&connection, pack.id, &[4]).unwrap();
-        assert_eq!(
-            member_ids(&read_pack(&connection, pack.id).unwrap()),
-            [1, 2, 3, 4]
-        );
-        remove_pack_items(&connection, pack.id, &[2]).unwrap();
-        assert_eq!(
-            member_ids(&read_pack(&connection, pack.id).unwrap()),
-            [1, 3, 4]
-        );
-        reorder_pack_items(&mut connection, pack.id, &[4, 1, 3]).unwrap();
-        let detail = read_pack(&connection, pack.id).unwrap();
-        assert_eq!(member_ids(&detail), [4, 1, 3]);
-        assert_eq!(detail.pack.preview_item_ids, [4, 1, 3]);
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn duplicate_item_ids_are_kept_once_in_the_given_order() {
-        let (mut connection, dir) = pack_test_db("packs-dedup");
-        seed_items(&connection, 3);
-        let pack = insert_pack(&mut connection, "Duplicates", &[2, 1, 2, 1, 3], 10).unwrap();
-        assert_eq!(pack.item_count, 3);
-        assert_eq!(pack.preview_item_ids, [2, 1, 3]);
-        assert_eq!(
-            member_ids(&read_pack(&connection, pack.id).unwrap()),
-            [2, 1, 3]
-        );
-        append_pack_items(&connection, pack.id, &[1, 3]).unwrap();
-        assert_eq!(
-            member_ids(&read_pack(&connection, pack.id).unwrap()),
-            [2, 1, 3]
-        );
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn unknown_item_ids_are_skipped_without_failing() {
-        let (mut connection, dir) = pack_test_db("packs-unknown-ids");
-        seed_items(&connection, 2);
-        let pack = insert_pack(&mut connection, "Partial", &[1, 999, 2, 1000], 10).unwrap();
-        assert_eq!(pack.item_count, 2);
-        assert_eq!(pack.preview_item_ids, [1, 2]);
-        append_pack_items(&connection, pack.id, &[997, 2]).unwrap();
-        assert_eq!(
-            member_ids(&read_pack(&connection, pack.id).unwrap()),
-            [1, 2]
-        );
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn reorder_is_refused_unless_it_holds_exactly_the_current_members() {
-        let (mut connection, dir) = pack_test_db("packs-reorder");
-        seed_items(&connection, 4);
-        let pack = insert_pack(&mut connection, "Fixed", &[1, 2, 3], 10).unwrap();
-        let refused = "The pack's items changed. Reopen it and try again.";
-        for wrong in [
-            vec![3, 2],
-            vec![1, 2, 3, 4],
-            vec![1, 1, 2, 3],
-            vec![1, 2, 99],
-            vec![],
-        ] {
-            assert_eq!(
-                reorder_pack_items(&mut connection, pack.id, &wrong).unwrap_err(),
-                refused
-            );
-            assert_eq!(
-                member_ids(&read_pack(&connection, pack.id).unwrap()),
-                [1, 2, 3],
-                "the stored order must survive a refusal"
-            );
-        }
-        reorder_pack_items(&mut connection, pack.id, &[2, 3, 1]).unwrap();
-        assert_eq!(
-            member_ids(&read_pack(&connection, pack.id).unwrap()),
-            [2, 3, 1]
-        );
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn list_packs_previews_the_first_four_members_in_pack_order() {
-        let (mut connection, dir) = pack_test_db("packs-preview");
-        seed_items(&connection, 7);
-        let big = insert_pack(&mut connection, "Big", &[7, 6, 5, 4, 3, 2, 1], 10).unwrap();
-        let small = insert_pack(&mut connection, "Small", &[2, 4], 11).unwrap();
-        let packs = read_packs(&connection);
-        assert_eq!(packs.len(), 2);
-        assert_eq!(packs[0].id, big.id);
-        assert_eq!(packs[0].item_count, 7);
-        assert_eq!(packs[0].preview_item_ids, [7, 6, 5, 4]);
-        assert_eq!(packs[1].id, small.id);
-        assert_eq!(packs[1].item_count, 2);
-        assert_eq!(packs[1].preview_item_ids, [2, 4]);
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn an_emptied_pack_is_kept() {
-        let (mut connection, dir) = pack_test_db("packs-emptied");
-        seed_items(&connection, 2);
-        let pack = insert_pack(&mut connection, "Emptied", &[1, 2], 10).unwrap();
-        remove_pack_items(&connection, pack.id, &[1, 2]).unwrap();
-        let detail = read_pack(&connection, pack.id).unwrap();
-        assert!(detail.items.is_empty());
-        assert_eq!(detail.pack.item_count, 0);
-        assert!(detail.pack.preview_item_ids.is_empty());
-        assert_eq!(read_packs(&connection).len(), 1);
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn pack_names_are_trimmed_and_validated() {
-        let (mut connection, dir) = pack_test_db("packs-names");
-        seed_items(&connection, 1);
-        assert_eq!(
-            insert_pack(&mut connection, "   ", &[], 10).err().unwrap(),
-            "Give the pack a name."
-        );
-        assert_eq!(
-            insert_pack(&mut connection, &"x".repeat(61), &[], 10)
-                .err()
-                .unwrap(),
-            "Pack names can be at most 60 characters."
-        );
-        let pack = insert_pack(&mut connection, &"x".repeat(60), &[], 10).unwrap();
-        assert_eq!(pack.name.chars().count(), 60);
-        assert_eq!(
-            set_pack_name(&connection, pack.id, " ").unwrap_err(),
-            "Give the pack a name."
-        );
-        assert_eq!(
-            set_pack_name(&connection, 99, "Name").unwrap_err(),
-            "That pack no longer exists."
-        );
-        assert_eq!(
-            remove_pack(&connection, 99).unwrap_err(),
-            "That pack no longer exists."
-        );
-        assert_eq!(
-            append_pack_items(&connection, 99, &[1]).unwrap_err(),
-            "That pack no longer exists."
-        );
-        assert_eq!(
-            remove_pack_items(&connection, 99, &[1]).unwrap_err(),
-            "That pack no longer exists."
-        );
-        assert_eq!(
-            reorder_pack_items(&mut connection, 99, &[]).unwrap_err(),
-            "That pack no longer exists."
-        );
-        drop(connection);
-        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

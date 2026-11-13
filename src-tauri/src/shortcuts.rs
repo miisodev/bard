@@ -76,14 +76,14 @@ impl Action {
             Action::Main => "Show or hide Bard",
             Action::Draw => "Open Draw",
             Action::Settings => "Open Settings",
-            Action::Guide => "Show the shortcut guide",
-            Action::Dictate => "Dictate (hold to talk, tap to toggle)",
+            Action::Guide => "Show the shortcuts",
+            Action::Dictate => "Dictate",
             Action::Slot1 => "Copy item 1",
             Action::Slot2 => "Copy item 2",
             Action::Slot3 => "Copy item 3",
-            Action::Cycle => "Cycle through items 1–3",
-            Action::Preview => "Preview the clipboard",
-            Action::Pause => "Pause or resume clipboard capture",
+            Action::Cycle => "Cycle items 1–3",
+            Action::Preview => "Show the clipboard",
+            Action::Pause => "Pause or resume copying",
         }
     }
 
@@ -373,9 +373,14 @@ fn status(action: Action) -> Status {
 
 /// What the portal reports each shortcut is actually bound to on Wayland.
 static PORTAL_TRIGGERS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+/// Shortcut id → what the desktop itself already does with that chord.
+static PORTAL_CONFLICTS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 #[cfg(target_os = "linux")]
-pub fn set_portal_triggers(triggers: HashMap<String, String>) {
+pub fn set_portal_triggers(triggers: HashMap<String, String>, conflicts: HashMap<String, String>) {
+    if let Ok(mut slot) = PORTAL_CONFLICTS.lock() {
+        *slot = Some(conflicts.clone());
+    }
     if let Ok(mut slot) = PORTAL_TRIGGERS.lock() {
         *slot = Some(triggers.clone());
         for action in ACTIONS {
@@ -389,7 +394,9 @@ pub fn set_portal_triggers(triggers: HashMap<String, String>) {
                 .is_some_and(|trigger| !trigger.is_empty());
             set_status(
                 action,
-                if reported {
+                if conflicts.contains_key(action.id()) {
+                    Status::Taken
+                } else if reported {
                     Status::Ready
                 } else {
                     Status::Pending
@@ -399,9 +406,174 @@ pub fn set_portal_triggers(triggers: HashMap<String, String>) {
     }
 }
 
+/// A chord reduced to its modifiers and key, however it is spelled:
+/// `Ctrl+Alt+D`, `<Primary><Alt>d` and `CTRL+ALT+d` are one chord.
+#[cfg(target_os = "linux")]
+fn combo(text: &str) -> Option<(u8, String)> {
+    let mut mods = 0u8;
+    let mut key = None;
+    for token in text
+        .split(|c: char| matches!(c, '+' | '<' | '>') || c.is_whitespace())
+        .filter(|token| !token.is_empty())
+    {
+        match token.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" | "primary" => mods |= 1,
+            "alt" | "mod1" => mods |= 2,
+            "shift" => mods |= 4,
+            "super" | "meta" | "logo" | "mod4" | "win" => mods |= 8,
+            "," => key = Some("comma".to_string()),
+            "." => key = Some("period".to_string()),
+            "/" => key = Some("slash".to_string()),
+            other => key = Some(other.to_string()),
+        }
+    }
+    key.map(|key| (mods, key))
+}
+
+/// A desktop's description of a chord (`Press <Control><Alt>space`), written
+/// the way Bard writes its own: `Ctrl+Alt+Space`.
+#[cfg(target_os = "linux")]
+fn readable(trigger: &str) -> Option<String> {
+    let (mods, key) = combo(trigger)?;
+    let mut parts: Vec<String> = Vec::new();
+    for (bit, name) in [(1, "Ctrl"), (2, "Alt"), (4, "Shift"), (8, "Super")] {
+        if mods & bit != 0 {
+            parts.push(name.into());
+        }
+    }
+    parts.push(match key.as_str() {
+        "comma" => ",".into(),
+        "period" => ".".into(),
+        "slash" => "/".into(),
+        "semicolon" => ";".into(),
+        "apostrophe" => "'".into(),
+        "minus" => "-".into(),
+        "equal" => "=".into(),
+        one if one.chars().count() == 1 => one.to_uppercase(),
+        word => {
+            let mut letters = word.chars();
+            let first = letters.next()?;
+            first.to_uppercase().collect::<String>() + letters.as_str()
+        }
+    });
+    Some(parts.join("+"))
+}
+
+/// Whether two spellings name one chord. A spelling that cannot be read is
+/// not the same as anything.
+#[cfg(target_os = "linux")]
+pub fn same_chord(a: &str, b: &str) -> bool {
+    matches!((combo(a), combo(b)), (Some(a), Some(b)) if a == b)
+}
+
+/// One line of `gsettings list-recursively`: the action's name and the
+/// chords bound to it. `schema show-desktop ['<Primary><Alt>d', '<Super>d']`.
+#[cfg(target_os = "linux")]
+fn gsettings_line(line: &str) -> Option<(String, Vec<(u8, String)>)> {
+    let mut parts = line.splitn(3, ' ');
+    let (_schema, name, value) = (parts.next()?, parts.next()?, parts.next()?);
+    let chords: Vec<_> = value
+        .split('\'')
+        .skip(1)
+        .step_by(2)
+        .filter_map(combo)
+        .collect();
+    if chords.is_empty() {
+        return None;
+    }
+    Some((name.replace('-', " "), chords))
+}
+
+/// The chords GNOME keeps for itself, each with the name of what it does.
+/// The desktop grants an app a chord it already uses without a word, and
+/// then never delivers it; this is how Bard finds out. Other desktops, and
+/// a GNOME without `gsettings`, report nothing.
+#[cfg(target_os = "linux")]
+fn desktop_bindings() -> HashMap<(u8, String), String> {
+    let mut found = HashMap::new();
+    let gnome = std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|value| value.to_ascii_uppercase().contains("GNOME"))
+        .unwrap_or(false);
+    if !gnome {
+        return found;
+    }
+    for schema in [
+        "org.gnome.desktop.wm.keybindings",
+        "org.gnome.shell.keybindings",
+        "org.gnome.mutter.keybindings",
+        "org.gnome.mutter.wayland.keybindings",
+        "org.gnome.settings-daemon.plugins.media-keys",
+    ] {
+        let Ok(output) = std::process::Command::new("gsettings")
+            .args(["list-recursively", schema])
+            .output()
+        else {
+            return found;
+        };
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Some((name, chords)) = gsettings_line(line) {
+                for chord in chords {
+                    found.entry(chord).or_insert_with(|| name.clone());
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Which of the desktop-assigned `triggers` the desktop also uses itself:
+/// shortcut id → the desktop's name for what the chord does.
+#[cfg(target_os = "linux")]
+pub fn desktop_conflicts(triggers: &HashMap<String, String>) -> HashMap<String, String> {
+    conflicts_among(triggers, &desktop_bindings())
+}
+
+#[cfg(target_os = "linux")]
+fn conflicts_among(
+    triggers: &HashMap<String, String>,
+    system: &HashMap<(u8, String), String>,
+) -> HashMap<String, String> {
+    triggers
+        .iter()
+        .filter_map(|(id, trigger)| {
+            let name = system.get(&combo(trigger)?)?;
+            Some((id.clone(), name.clone()))
+        })
+        .collect()
+}
+
+/// Say once, at the top of the screen, that a shortcut cannot work.
+#[cfg(target_os = "linux")]
+pub fn report_conflicts(app: &AppHandle) {
+    let rows: Vec<ShortcutRow> = state(app)
+        .rows
+        .into_iter()
+        .filter(|row| row.conflict.is_some())
+        .collect();
+    let Some(first) = rows.first() else {
+        return;
+    };
+    let text = if rows.len() == 1 {
+        format!(
+            "{} is your desktop's “{}”",
+            first.display,
+            first.conflict.as_deref().unwrap_or_default()
+        )
+    } else {
+        format!("{} shortcuts are used by your desktop", rows.len())
+    };
+    crate::feedback::notify(
+        app,
+        crate::feedback::Note::error(text).with_detail("Change it in Settings › Shortcuts"),
+    );
+}
+
 #[cfg(target_os = "linux")]
 pub fn clear_portal() {
     if let Ok(mut slot) = PORTAL_TRIGGERS.lock() {
+        *slot = None;
+    }
+    if let Ok(mut slot) = PORTAL_CONFLICTS.lock() {
         *slot = None;
     }
     for action in ACTIONS {
@@ -420,6 +592,8 @@ pub struct ShortcutRow {
     pub display: String,
     pub default_chord: &'static str,
     pub status: Status,
+    /// What the desktop itself does with this chord, when it keeps it.
+    pub conflict: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -444,6 +618,7 @@ pub fn backend() -> &'static str {
 
 pub fn state(app: &AppHandle) -> ShortcutState {
     let portal = PORTAL_TRIGGERS.lock().ok().and_then(|slot| slot.clone());
+    let conflicts = PORTAL_CONFLICTS.lock().ok().and_then(|slot| slot.clone());
     let rows = ACTIONS
         .iter()
         .map(|action| {
@@ -451,7 +626,14 @@ pub fn state(app: &AppHandle) -> ShortcutState {
             let mut display = chord.as_ref().map(Chord::display).unwrap_or_default();
             if let Some(trigger) = portal.as_ref().and_then(|p| p.get(action.id())) {
                 if !trigger.is_empty() {
-                    display = trigger.clone();
+                    #[cfg(target_os = "linux")]
+                    {
+                        display = readable(trigger).unwrap_or_else(|| trigger.clone());
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        display = trigger.clone();
+                    }
                 }
             }
             ShortcutRow {
@@ -465,6 +647,9 @@ pub fn state(app: &AppHandle) -> ShortcutState {
                 } else {
                     status(*action)
                 },
+                conflict: conflicts
+                    .as_ref()
+                    .and_then(|found| found.get(action.id()).cloned()),
             }
         })
         .collect();
@@ -510,7 +695,17 @@ pub fn press(app: &AppHandle, action: Action) {
         Action::Cycle => crate::commands::cycle_slot(app),
         Action::Preview => {
             let preview = crate::clip::preview();
-            crate::feedback::notify(app, crate::feedback::Note::preview(preview));
+            let items = crate::db::slot_items(app);
+            let active = crate::db::get_setting(app, "active_item_id")
+                .and_then(|value| value.parse::<i64>().ok());
+            let mut note = crate::feedback::Note::preview(preview)
+                .with_rail(crate::commands::slot_rail(&items));
+            note.slot = items
+                .iter()
+                .position(|item| Some(item.id) == active)
+                .map(|index| index as u8 + 1);
+            note.slots = Some(items.len() as u8);
+            crate::feedback::notify(app, note);
         }
         Action::Pause => {
             crate::monitor::toggle_paused(app);
@@ -634,6 +829,178 @@ pub fn set_shortcut(app: AppHandle, id: String, chord: String) -> Result<Shortcu
     Ok(state(&app))
 }
 
+/// One reason a proposed set of shortcuts cannot be saved as it stands.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Conflict {
+    /// The shortcut the problem is with.
+    pub id: &'static str,
+    /// "invalid", "duplicate" or "system".
+    pub kind: &'static str,
+    /// What it collides with, in words: another Bard action, or what the
+    /// desktop or another app already does with the keys.
+    pub with: String,
+}
+
+/// The whole table as it would be after `changes`: every action, its chord or
+/// `None` when cleared. A chord that cannot be parsed is reported, not kept.
+fn proposed(
+    app: &AppHandle,
+    changes: &HashMap<String, String>,
+) -> (Vec<(Action, Option<Chord>)>, Vec<Conflict>) {
+    let mut conflicts = Vec::new();
+    let table = ACTIONS
+        .iter()
+        .map(|action| {
+            let chord = match changes.get(action.id()) {
+                None => chord_for(app, *action),
+                Some(text) if text.trim().is_empty() => None,
+                Some(text) => match Chord::parse(text) {
+                    Some(chord) if chord.is_usable() => Some(chord),
+                    Some(_) => {
+                        conflicts.push(Conflict {
+                            id: action.id(),
+                            kind: "invalid",
+                            with: "Add Ctrl, Alt or Super so it does not take a key from typing"
+                                .into(),
+                        });
+                        None
+                    }
+                    None => {
+                        conflicts.push(Conflict {
+                            id: action.id(),
+                            kind: "invalid",
+                            with: "Bard cannot use that key".into(),
+                        });
+                        None
+                    }
+                },
+            };
+            (*action, chord)
+        })
+        .collect();
+    (table, conflicts)
+}
+
+/// Two Bard actions on one chord: each is named to the other.
+fn duplicates(table: &[(Action, Option<Chord>)]) -> Vec<Conflict> {
+    let mut found = Vec::new();
+    for (action, chord) in table {
+        let Some(chord) = chord else { continue };
+        if let Some((other, _)) = table
+            .iter()
+            .find(|(other, theirs)| other != action && theirs.as_ref() == Some(chord))
+        {
+            found.push(Conflict {
+                id: action.id(),
+                kind: "duplicate",
+                with: other.label().to_string(),
+            });
+        }
+    }
+    found
+}
+
+/// Everything that stands in the way of saving `changes`: a key Bard cannot
+/// use, two actions on one chord, and a chord the desktop or another app
+/// already holds. Asked before anything is written, so the person fixes the
+/// table once instead of finding out one failed shortcut at a time.
+pub fn check(app: &AppHandle, changes: &HashMap<String, String>) -> Vec<Conflict> {
+    let (table, mut conflicts) = proposed(app, changes);
+    conflicts.extend(duplicates(&table));
+    conflicts.extend(held_elsewhere(app, &table));
+    conflicts
+}
+
+#[cfg(target_os = "linux")]
+fn held_elsewhere(_app: &AppHandle, table: &[(Action, Option<Chord>)]) -> Vec<Conflict> {
+    let system = desktop_bindings();
+    table
+        .iter()
+        .filter_map(|(action, chord)| {
+            let chord = chord.as_ref()?;
+            let name = system.get(&combo(&chord.canonical())?)?;
+            Some(Conflict {
+                id: action.id(),
+                kind: "system",
+                with: format!("your desktop’s “{name}”"),
+            })
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn held_elsewhere(app: &AppHandle, table: &[(Action, Option<Chord>)]) -> Vec<Conflict> {
+    // A chord Bard holds now would fail a trial registration against itself.
+    let mine: Vec<Chord> = bindings(app).into_iter().map(|(_, chord)| chord).collect();
+    table
+        .iter()
+        .filter_map(|(action, chord)| {
+            let chord = chord.as_ref()?;
+            if mine.contains(chord) || windows::free(chord) {
+                return None;
+            }
+            Some(Conflict {
+                id: action.id(),
+                kind: "system",
+                with: "another app".into(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn held_elsewhere(_app: &AppHandle, _table: &[(Action, Option<Chord>)]) -> Vec<Conflict> {
+    Vec::new()
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveOutcome {
+    /// Empty when the table was saved.
+    pub conflicts: Vec<Conflict>,
+    pub state: ShortcutState,
+}
+
+#[tauri::command]
+pub fn check_shortcuts(app: AppHandle, chords: HashMap<String, String>) -> Vec<Conflict> {
+    check(&app, &chords)
+}
+
+/// Save the whole table at once, or nothing: with any conflict the table is
+/// left as it was and the conflicts are returned.
+#[tauri::command]
+pub async fn save_shortcuts(
+    app: AppHandle,
+    chords: HashMap<String, String>,
+) -> Result<SaveOutcome, String> {
+    let conflicts = check(&app, &chords);
+    if !conflicts.is_empty() {
+        return Ok(SaveOutcome {
+            conflicts,
+            state: state(&app),
+        });
+    }
+    let (table, _) = proposed(&app, &chords);
+    for (action, chord) in table {
+        let stored = chord.map(|chord| chord.canonical()).unwrap_or_default();
+        if stored == action.default_chord() {
+            crate::db::delete_setting(&app, &action.setting_key());
+        } else {
+            crate::db::set_setting_checked(&app, &action.setting_key(), &stored)?;
+        }
+    }
+    reload(&app);
+    #[cfg(target_os = "linux")]
+    if crate::desktop::is_wayland() {
+        crate::linux_portal::rebind(app.clone()).await?;
+    }
+    Ok(SaveOutcome {
+        conflicts: Vec::new(),
+        state: state(&app),
+    })
+}
+
 #[tauri::command]
 pub fn reset_shortcuts(app: AppHandle) -> Result<ShortcutState, String> {
     for action in ACTIONS {
@@ -708,6 +1075,18 @@ mod windows {
 
     pub fn reload() {
         post(RELOAD);
+    }
+
+    /// Whether `chord` can be registered right now: tried and let go at once.
+    pub fn free(chord: &Chord) -> bool {
+        const TRIAL_ID: i32 = 0x0C00;
+        unsafe {
+            if RegisterHotKey(std::ptr::null_mut(), TRIAL_ID, modifiers(chord), chord.vk()) == 0 {
+                return false;
+            }
+            UnregisterHotKey(std::ptr::null_mut(), TRIAL_ID);
+        }
+        true
     }
 
     pub fn escape(on: bool) {
@@ -1210,12 +1589,58 @@ mod portal_triggers {
     use super::*;
 
     #[test]
+    fn a_desktop_trigger_reads_like_bards_own() {
+        assert_eq!(
+            readable("Press <Control><Alt>space").as_deref(),
+            Some("Ctrl+Alt+Space")
+        );
+        assert_eq!(
+            readable("<Shift><Alt>comma").as_deref(),
+            Some("Alt+Shift+,")
+        );
+        assert_eq!(readable("ALT+SHIFT+v").as_deref(), Some("Alt+Shift+V"));
+        assert!(same_chord("Alt+Shift+Space", "Press <Shift><Alt>space"));
+        assert!(!same_chord("Alt+Shift+Space", "Press <Control><Alt>d"));
+    }
+
+    #[test]
+    fn a_chord_is_the_same_however_it_is_spelled() {
+        assert_eq!(combo("Ctrl+Alt+D"), combo("<Primary><Alt>d"));
+        assert_eq!(combo("CTRL+ALT+d"), combo("<Control><Alt>d"));
+        assert_eq!(combo("Shift+Alt+,"), combo("<Shift><Alt>comma"));
+        assert_ne!(combo("Ctrl+Alt+D"), combo("Ctrl+Shift+D"));
+        assert_eq!(combo("<Shift><Alt>"), None);
+    }
+
+    #[test]
+    fn a_chord_the_desktop_keeps_is_named() {
+        let (name, chords) = gsettings_line(
+            "org.gnome.desktop.wm.keybindings show-desktop ['<Primary><Super>d', '<Primary><Alt>d', '<Super>d']",
+        )
+        .expect("a bound action");
+        assert_eq!(name, "show desktop");
+        assert_eq!(chords.len(), 3);
+        assert!(gsettings_line("org.gnome.desktop.wm.keybindings lower @as []").is_none());
+
+        let system: HashMap<_, _> = chords.into_iter().map(|c| (c, name.clone())).collect();
+        let mut triggers = HashMap::new();
+        triggers.insert("dictate".to_string(), "Ctrl+Alt+D".to_string());
+        triggers.insert("main".to_string(), "Shift+Alt+V".to_string());
+        let found = conflicts_among(&triggers, &system);
+        assert_eq!(
+            found.get("dictate").map(String::as_str),
+            Some("show desktop")
+        );
+        assert!(!found.contains_key("main"));
+    }
+
+    #[test]
     fn only_portal_reported_shortcuts_are_ready() {
         let mut reported = HashMap::new();
         reported.insert("main".to_string(), "ALT+SHIFT+v".to_string());
         // An empty trigger is a report of nothing: treated as unreported.
         reported.insert("draw".to_string(), String::new());
-        set_portal_triggers(reported);
+        set_portal_triggers(reported, HashMap::new());
 
         assert_eq!(status(Action::Main), Status::Ready);
         assert_eq!(
@@ -1231,7 +1656,7 @@ mod portal_triggers {
 
         // The desktop's changed event re-reports the whole table: what it
         // omits falls back to pending, never stays ready.
-        set_portal_triggers(HashMap::new());
+        set_portal_triggers(HashMap::new(), HashMap::new());
         for action in ACTIONS {
             assert_eq!(
                 status(action),

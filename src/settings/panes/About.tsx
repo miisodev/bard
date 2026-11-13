@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Download } from "lucide-react";
 import type { PaneProps } from "../SettingsWindow";
-import LicenseCard from "../../components/LicenseCard";
 import { api } from "../../store";
 import { updateDelivery } from "../../distribution";
 import appIcon from "../../../src-tauri/icons/128x128.png";
 import { Button, Group, Pane, Row } from "../ui";
 
-export default function AboutPane({ state, refresh }: PaneProps) {
+export default function AboutPane({ state }: PaneProps) {
   const [checking, setChecking] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<{ version: string; notes: string | null; publishedAt: string | null } | null>(null);
@@ -67,13 +66,11 @@ export default function AboutPane({ state, refresh }: PaneProps) {
         </div>
       </header>
 
-      <LicenseCard status={state.license} onStatus={refresh} />
-
       <Group title="Updates">
         {!delivery.inApp ? (
           <Row label="Updates" hint={delivery.hint} />
         ) : (
-          <Row label="Updates" hint="Checked only when you ask. Nothing installs silently.">
+          <Row label="Check for updates">
             <Button onClick={() => void checkForUpdate()} disabled={checking} ariaBusy={checking}>
               <RefreshCw size={14} aria-hidden="true" className={checking ? "spin" : undefined} />
               {checking ? "Checking" : "Check"}
@@ -130,12 +127,9 @@ export default function AboutPane({ state, refresh }: PaneProps) {
         ) : null}
       </Group>
 
-      <Group title="Privacy">
-        <Row
-          label="Everything stays on this PC"
-          hint="Speech recognition, captures and history never leave it. Bard has no account, sync or analytics. Refine, if you turn it on, sends only the finished transcript to OpenRouter."
-        />
-      </Group>
+      <p className="about-promise">
+        No account, no telemetry. Your history, audio and drawings stay on this computer.
+      </p>
 
       <nav className="about-links" aria-label="Legal and support">
         <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/terms")}>
@@ -146,6 +140,9 @@ export default function AboutPane({ state, refresh }: PaneProps) {
         </button>
         <button type="button" className="link-button" onClick={() => void api.openLink("https://miiso.dev/bard#support")}>
           Support
+        </button>
+        <button type="button" className="link-button" onClick={() => void api.openLink("https://github.com/miisodev/bard")}>
+          Source
         </button>
         <span className="about-copyright">© 2026 miiso.dev</span>
       </nav>

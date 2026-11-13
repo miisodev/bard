@@ -44,6 +44,18 @@ pub fn set_channels(app: &AppHandle, pill: bool, sound: bool) {
     crate::db::set_setting(app, SOUND_SETTING, if sound { "1" } else { "0" });
 }
 
+/// One of the three slots, as the pill draws it: enough to recognise the item
+/// without opening the window.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Slot {
+    /// "text", "image" or "file".
+    pub kind: String,
+    /// One line that names the item.
+    pub label: String,
+    pub pinned: bool,
+}
+
 /// One thing worth telling the person.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +70,10 @@ pub struct Note {
     /// For a slot: which one (1–3) and how many are filled.
     pub slot: Option<u8>,
     pub slots: Option<u8>,
+    /// The slots themselves, when the note is about them: the pill lists
+    /// them so a cycle shows where it is and what comes next.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rail: Vec<Slot>,
     /// The clipboard as it is now, for the preview shortcut.
     pub preview: Option<crate::clip::Preview>,
     /// Stays until replaced (dictation states) instead of timing out.
@@ -73,6 +89,8 @@ pub struct Note {
     pub always_show: bool,
 }
 
+/// A copy is confirmed many times an hour, so it is the shortest note.
+const BRIEF: u64 = 1_100;
 const SHORT: u64 = 1_500;
 const READ: u64 = 3_400;
 const PREVIEW: u64 = 4_500;
@@ -99,6 +117,7 @@ impl Note {
             detail: None,
             slot: None,
             slots: None,
+            rail: Vec::new(),
             preview: None,
             sticky: false,
             hold_ms,
@@ -117,14 +136,14 @@ impl Note {
 
     /// Something the person copied was kept.
     pub fn copied(text: &str) -> Note {
-        let mut note = Note::new("copy", "Copied", SHORT);
-        note.detail = Some(excerpt(text, 64));
+        let mut note = Note::new("copy", "Copied", BRIEF);
+        note.detail = Some(excerpt(text, 40));
         note
     }
 
     /// Bard put an item on the clipboard.
     pub fn selected(slot: Option<u8>, slots: Option<u8>, detail: String) -> Note {
-        let mut note = Note::new("select", "On your clipboard", SHORT + 300);
+        let mut note = Note::new("select", "On your clipboard", SHORT + 500);
         note.detail = Some(detail);
         note.slot = slot;
         note.slots = slots;
@@ -146,13 +165,31 @@ impl Note {
         note
     }
 
-    pub fn with_detail(mut self, detail: impl Into<String>) -> Note {
-        self.detail = Some(detail.into());
+    pub fn with_rail(mut self, rail: Vec<Slot>) -> Note {
+        self.rail = rail;
         self
     }
 
-    pub fn hold(mut self, hold_ms: u64) -> Note {
-        self.hold_ms = hold_ms;
+    /// The words a take produced, shown back once they are on the clipboard.
+    /// Longer transcripts stay longer, within reason.
+    pub fn transcript(text: &str) -> Note {
+        let words = text.split_whitespace().count() as u64;
+        let mut note = Note::new("done", "Transcript on your clipboard", 0);
+        note.hold_ms = (2_400 + words * 90).min(7_000);
+        note.preview = Some(crate::clip::Preview {
+            kind: "text".into(),
+            text: Some(text.trim().chars().take(600).collect()),
+            image: None,
+            width: None,
+            height: None,
+            files: Vec::new(),
+            length: Some(text.trim().chars().count()),
+        });
+        note
+    }
+
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Note {
+        self.detail = Some(detail.into());
         self
     }
 }

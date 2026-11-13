@@ -1,8 +1,11 @@
+import { holdForNativePickers } from "../hold";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { boot } from "../dev/boot";
 import "../styles.css";
 import "./settings.css";
+
+holdForNativePickers();
 
 void boot("settings").then(async () => {
   const { default: SettingsWindow } = await import("./SettingsWindow");

@@ -52,12 +52,6 @@ export interface PackSummary {
   previewItemIds: number[];
 }
 
-export interface PackDetail {
-  pack: PackSummary;
-  /** The members in pack order. */
-  items: Item[];
-}
-
 export type Architecture =
   | "whisper"
   | "parakeet"
@@ -138,45 +132,6 @@ export interface ModelInfo {
   } | null;
 }
 
-export interface DetectedModel {
-  id: string;
-  name?: string;
-  repo: string;
-  file: string;
-  size: number;
-  localPath: string;
-  parameters?: string;
-  quantization?: string;
-  quant?: string;
-  sourceRevision?: string;
-  compatibility?: BackendModelCompatibility;
-  compatibilityMessage?: string;
-  registered?: boolean;
-  owned?: boolean;
-}
-
-export interface ModelStatus {
-  id: string;
-  name: string;
-  sizeMb: number;
-  sizeBytes: number;
-  downloaded: boolean;
-  architecture: Architecture;
-  role?: string | null;
-  compatibility: BackendModelCompatibility;
-  localPath: string | null;
-  owned: boolean;
-}
-
-export type OverlayVertical = "top" | "bottom";
-export type OverlayHorizontal = "left" | "middle" | "right";
-export type OverlayPosition = `${OverlayVertical}-${OverlayHorizontal}`;
-
-/** The `dictation-review` payload: the finished take, open for review. */
-export interface DictationReviewPayload {
-  text: string;
-}
-
 /** The timeline's order; newest first is the default. */
 export type SortOrder = "newest" | "oldest" | "favorites" | "completed";
 
@@ -194,6 +149,20 @@ export interface FeedbackChannels {
 
 export type ShortcutStatus = "ready" | "taken" | "off" | "pending";
 
+/** One reason a proposed set of shortcuts cannot be saved as it stands. */
+export interface ShortcutConflict {
+  id: string;
+  kind: "invalid" | "duplicate" | "system";
+  /** What it collides with, in words. */
+  with: string;
+}
+
+export interface ShortcutSave {
+  /** Empty when the table was saved. */
+  conflicts: ShortcutConflict[];
+  state: ShortcutState;
+}
+
 export interface ShortcutRow {
   id: string;
   label: string;
@@ -203,6 +172,8 @@ export interface ShortcutRow {
   display: string;
   defaultChord: string;
   status: ShortcutStatus;
+  /** What the desktop itself does with this chord, when it keeps it. */
+  conflict?: string | null;
 }
 
 export interface ShortcutState {
@@ -218,9 +189,17 @@ export interface PillNote {
   detail?: string | null;
   slot?: number | null;
   slots?: number | null;
+  /** The three slots, when the note is about them. */
+  rail?: PillSlot[];
   preview?: ClipboardPreview | null;
   sticky: boolean;
   holdMs: number;
+}
+
+export interface PillSlot {
+  kind: "text" | "image" | "file" | string;
+  label: string;
+  pinned: boolean;
 }
 
 export interface ClipboardPreview {
@@ -258,7 +237,6 @@ export interface AppState {
   modelReady: boolean;
   micReady: boolean;
   activeItemId: number | null;
-  license: LicenseStatus;
   /** "direct" for the miiso.dev download, "store" for the Microsoft Store copy. */
   channel: "direct" | "store" | "flatpak";
   desktop?: { session: "windows" | "x11" | "wayland"; shortcutsReady: boolean };
@@ -282,39 +260,6 @@ export interface AppState {
   storageNotice?: string | null;
 }
 
-export interface LicenseStatus {
-  state: "trial" | "active" | "restricted" | "unavailable" | string;
-  canUse: boolean;
-  keyConfigured: boolean;
-  trialStartedAt: number | null;
-  trialExpiresAt: number | null;
-  expiresAt: number | null;
-  lastCheckedAt: number | null;
-  message: string | null;
-  /**
-   * Activations in use, and the ceiling. A licence is three computers — a
-   * headline term of a $20 purchase — but the signed lease carries no count and
-   * the broker sends none: this value is what the local install has observed of
-   * its own activations, so the card renders the limit only and never presents
-   * this as the buyer's live figure. Optional because the backend does not
-   * always report it: absent means "not reported", never "zero used".
-   */
-  activationCount?: number | null;
-  activationLimit?: number | null;
-  /**
-   * Days left on the signed offline lease. The backend's own "Offline licence
-   * check pending." message is rendered; this is the number behind it.
-   */
-  offlineLeaseDaysLeft?: number | null;
-  /**
-   * True while licence revalidation has failed for two or more cycles in a
-   * row: the service cannot be reached and Bard keeps retrying on its normal
-   * schedule. The licence keeps working on its offline lease; this only makes
-   * the retrying visible, and it clears the moment a check succeeds.
-   */
-  revalidationFailing?: boolean;
-}
-
 export interface UpdateInfo {
   version: string;
   notes: string | null;
@@ -331,53 +276,6 @@ export interface ModelProgress {
   speedBytesPerSecond?: number;
   etaSeconds?: number;
   error?: string;
-}
-
-export interface HfFile {
-  path: string;
-  size: number;
-  sha256: string;
-  quant?: string;
-  sourceRepo?: string;
-  sourceRevision?: string;
-  compatibility?: BackendModelCompatibility;
-  compatibilityMessage?: string;
-}
-
-export interface CachedHfModel {
-  id?: string;
-  repo: string;
-  file: string;
-  size: number;
-  localPath: string;
-  quant?: string;
-  compatibility?: BackendModelCompatibility;
-  registered?: boolean;
-  owned?: boolean;
-}
-
-export interface ModelCompatibilityResult {
-  path?: string;
-  status?: BackendModelCompatibility;
-  message?: string;
-  compatibility?: BackendModelCompatibility;
-  compatibilityMessage?: string;
-}
-
-export type HfInstallResult = string | { id: string } | null;
-
-export interface PostprocessingSettings {
-  enabled: boolean;
-  modelId?: string;
-  modelIds?: string[];
-  modelName?: string;
-  keyConfigured?: boolean;
-  /** Compatibility aliases used by early backend status shapes. */
-  apiKeyConfigured?: boolean;
-  hasApiKey?: boolean;
-  hasValidModel?: boolean;
-  ready?: boolean;
-  statusMessage?: string;
 }
 
 export interface CrashReport {
@@ -433,19 +331,3 @@ export interface RestorePreview {
   fresh: boolean;
 }
 
-export interface SavePostprocessingInput {
-  enabled: boolean;
-  modelId?: string;
-  modelIds?: string[];
-  /** Sent only while saving. It is never returned or placed in AppState. */
-  apiKey?: string;
-  clearKey?: boolean;
-}
-
-export interface PostprocessingTestResult {
-  ok: boolean;
-  message?: string;
-  modelName?: string;
-}
-
-export type PostprocessingTestResponse = boolean | PostprocessingTestResult;

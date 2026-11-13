@@ -6,6 +6,7 @@
     "draw"
   ],
   "permissions": [
+    "allow-hold-windows",
     "core:window:allow-start-dragging",
     "core:window:allow-start-resize-dragging",
     "allow-set-draw-background",

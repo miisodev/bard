@@ -1,24 +1,65 @@
 /*
-  The status pill — a small dark capsule at the top middle of the screen.
+  The status pill — what Bard just did, at the top middle of the screen.
 
-  It is dark in both themes on purpose: it floats over whatever the person is
-  doing, and a near-black capsule with white type reads over any app, light or
-  dark. Colour appears only in the icon's disc, and the words always say what
-  happened, so colour never carries the meaning alone.
+  It follows the theme like every other Bard surface: near-black with light
+  type in dark, white with dark type in light. Colour is spent only on the
+  glyph, and the words always say what happened, so colour never carries the
+  meaning alone.
+
+  The window is a transparent canvas larger than the pill. The page must fill
+  that canvas (height: 100%) and the shadow must fade out inside it: the web
+  view paints only the document's own box, so a short document cuts the shadow
+  off in a hard rectangle that shows as a square behind the pill.
+
+  Three shapes, by how much the moment deserves: a badge, the slots, a card.
 */
 
 :root {
-  --pill-bg: #17171b;
-  --pill-ring: rgba(255, 255, 255, 0.09);
-  --pill-text: #f5f5f7;
-  --pill-text-2: #a7a7b0;
-  --pill-shadow: 0 10px 30px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.18);
-  --pill-disc: rgba(255, 255, 255, 0.1);
-  --pill-copy: #3a6ee0;
-  --pill-done: #2f9e5f;
-  --pill-error: #e5484d;
-  --pill-warn: #c98a1c;
-  --pill-rec: #ff4d4f;
+  --pill-bg: #1b1b1f;
+  --pill-ring: rgba(255, 255, 255, 0.08);
+  --pill-line: rgba(255, 255, 255, 0.07);
+  --pill-fill: rgba(255, 255, 255, 0.09);
+  --pill-text: #f4f4f6;
+  --pill-text-2: #a3a3ad;
+  --pill-text-3: #9494a1;
+  --pill-well: rgba(255, 255, 255, 0.05);
+  --pill-shadow: 0 5px 16px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  --pill-copy: #7aa5ff;
+  --pill-on-copy: #0d1730;
+  --pill-done: #5fd08f;
+  --pill-error: #ff7a7f;
+  --pill-warn: #f0b95a;
+  --pill-rec: #ff5a5f;
+  --pill-badge-h: 32px;
+  --pill-card-w: 384px;
+  --pill-slots-w: 336px;
+  --pill-r-card: 16px;
+  --pill-r-row: 9px;
+  --pill-fs: 12.5px;
+}
+
+:root[data-theme="light"] {
+  --pill-bg: #ffffff;
+  --pill-ring: rgba(20, 20, 40, 0.12);
+  --pill-line: rgba(20, 20, 40, 0.08);
+  --pill-fill: rgba(20, 20, 40, 0.07);
+  --pill-text: #1b1b20;
+  --pill-text-2: #55565e;
+  --pill-text-3: #64656d;
+  --pill-well: rgba(20, 20, 40, 0.045);
+  --pill-shadow: 0 5px 16px rgba(20, 20, 40, 0.14), 0 1px 3px rgba(20, 20, 40, 0.1);
+  --pill-copy: #2c63e6;
+  --pill-on-copy: #ffffff;
+  --pill-done: #1f8a4c;
+  --pill-error: #d93a40;
+  --pill-warn: #b3761a;
+  --pill-rec: #e5484d;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 html:not([data-preview]),
@@ -33,7 +74,8 @@ html:not([data-preview]) #root {
   align-items: flex-start;
   width: 100%;
   height: 100%;
-  padding: var(--sp-2) var(--sp-6) 0;
+  /* Room for the whole shadow above and beside the pill. */
+  padding: 14px var(--sp-8) 0;
   pointer-events: none;
 }
 
@@ -47,72 +89,86 @@ html:not([data-preview]) #root {
   border-radius: var(--r-pill);
   box-shadow: 0 0 0 1px var(--pill-ring), var(--pill-shadow);
   font-family: var(--font-text);
+  font-size: var(--pill-fs);
+  line-height: 1.35;
   transform-origin: top center;
-  animation: pill-in var(--t-slow) var(--ease-spring) both;
+  animation: pill-in var(--t-base) var(--ease-spring) both;
 }
 
 .pill.is-leaving {
-  animation: pill-out 200ms var(--ease-in-out) both;
+  animation: pill-out var(--t-fast) var(--ease-in-out) both;
 }
 
-.pill.is-preview {
-  width: 100%;
-  border-radius: var(--r-panel);
+.pill[data-shape="slots"] {
+  width: var(--pill-slots-w);
+  border-radius: var(--pill-r-card);
 }
+
+.pill[data-shape="card"] {
+  width: var(--pill-card-w);
+  border-radius: var(--pill-r-card);
+}
+
+/* The headline row: a glyph, a few words, and whatever qualifies them. */
 
 .pill-row {
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  min-height: 40px;
-  padding: var(--sp-2) var(--sp-7) var(--sp-2) var(--sp-3);
+  min-height: var(--pill-badge-h);
+  padding: 0 var(--sp-6) 0 var(--sp-5);
   white-space: nowrap;
 }
 
-.pill-icon {
+.pill[data-shape="slots"] .pill-row,
+.pill[data-shape="card"] .pill-row {
+  min-height: 36px;
+  padding: 0 var(--sp-6);
+}
+
+.pill-glyph {
   display: grid;
   place-items: center;
   flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--r-pill);
-  background: var(--pill-disc);
-  color: var(--pill-text);
+  width: 16px;
+  height: 16px;
+  color: var(--pill-text-2);
 }
 
-.pill[data-kind="copy"] .pill-icon,
-.pill[data-kind="select"] .pill-icon {
-  background: var(--pill-copy);
+.pill[data-kind="copy"] .pill-glyph,
+.pill[data-kind="select"] .pill-glyph,
+.pill[data-kind="preview"] .pill-glyph {
+  color: var(--pill-copy);
 }
 
-.pill[data-kind="done"] .pill-icon,
-.pill[data-kind="resume"] .pill-icon {
-  background: var(--pill-done);
+.pill[data-kind="done"] .pill-glyph,
+.pill[data-kind="resume"] .pill-glyph {
+  color: var(--pill-done);
 }
 
-.pill[data-kind="error"] .pill-icon {
-  background: var(--pill-error);
+.pill[data-kind="error"] .pill-glyph {
+  color: var(--pill-error);
 }
 
-.pill[data-kind="pause"] .pill-icon {
-  background: var(--pill-warn);
+.pill[data-kind="pause"] .pill-glyph {
+  color: var(--pill-warn);
 }
 
-.pill[data-kind="work"] .pill-icon svg {
+.pill[data-kind="work"] .pill-glyph svg {
   animation: pill-spin 0.9s linear infinite;
 }
 
 .pill-rec {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: var(--r-pill);
   background: var(--pill-rec);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pill-rec) 22%, transparent);
   animation: pill-pulse var(--t-pulse) var(--ease-in-out) infinite alternate;
 }
 
 .pill-text {
   flex: none;
-  font-size: var(--fs-base);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tr-normal);
 }
@@ -120,97 +176,149 @@ html:not([data-preview]) #root {
 .pill-detail {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 260px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--pill-text-2);
-  font-size: var(--fs-base);
 }
 
-.pill-slots {
-  flex: none;
-  display: inline-flex;
-  gap: var(--sp-2);
-  margin-left: var(--sp-1);
+.pill-meta,
+.pill-time {
+  margin-left: auto;
+  color: var(--pill-text-3);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
 }
 
-.pill-slots i {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--r-pill);
-  background: rgba(255, 255, 255, 0.25);
-  transition: background var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-spring);
-}
-
-.pill-slots i.on {
-  background: var(--pill-text);
-  transform: scale(1.25);
+.pill-time {
+  min-width: 30px;
+  margin-left: 0;
+  color: var(--pill-text-2);
+  text-align: right;
 }
 
 .pill-levels {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: 18px;
+  height: 16px;
 }
 
 .pill-levels i {
-  width: 3px;
-  height: calc(4px + 14px * var(--level, 0.1));
+  width: 2px;
+  height: calc(3px + 13px * var(--level, 0.08));
   border-radius: var(--r-pill);
   background: var(--pill-text);
-  opacity: 0.85;
-  transition: height 80ms linear;
+  opacity: calc(0.45 + 0.55 * var(--level, 0.08));
+  transition: height 80ms linear, opacity 80ms linear;
 }
 
-.pill-preview {
+/* The three slots. */
+
+.pill-rail {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-4);
-  margin: 0 var(--sp-3) var(--sp-3);
-  padding: var(--sp-6) var(--sp-7);
-  border-radius: var(--r-card);
-  background: rgba(255, 255, 255, 0.06);
+  gap: 1px;
+  margin: 0;
+  padding: 0 var(--sp-2) var(--sp-2);
+  list-style: none;
 }
 
-.pill-preview-meta {
+.pill-rail li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  height: 30px;
+  padding: 0 var(--sp-4) 0 var(--sp-3);
+  border-radius: var(--pill-r-row);
   color: var(--pill-text-2);
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+
+.pill-rail li.on {
+  background: var(--pill-fill);
+  color: var(--pill-text);
+}
+
+.pill-rail li > svg {
+  flex: none;
+  opacity: 0.8;
+}
+
+.pill-rail-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill-rail-pin {
+  color: var(--pill-text-3);
+}
+
+.pill kbd {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--sp-2);
+  border-radius: 5px;
+  background: var(--pill-fill);
+  color: var(--pill-text-2);
+  font-family: var(--font-text);
   font-size: var(--fs-caption);
   font-weight: var(--fw-medium);
   font-variant-numeric: tabular-nums;
 }
 
-.pill-preview-text {
+.pill-rail li.on kbd {
+  background: var(--pill-copy);
+  color: var(--pill-on-copy);
+  font-weight: var(--fw-semibold);
+}
+
+/* A card: something to read back. */
+
+.pill-body {
+  margin: 0 var(--sp-2);
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: 12px;
+  background: var(--pill-well);
+}
+
+.pill-body-text {
   display: -webkit-box;
   margin: 0;
   overflow: hidden;
-  -webkit-line-clamp: 7;
+  -webkit-line-clamp: 5;
   -webkit-box-orient: vertical;
-  font-size: var(--fs-base);
-  line-height: var(--lh-base);
+  font-size: 13px;
+  line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.pill-preview-image {
-  align-self: center;
+.pill-body-image {
+  display: block;
   max-width: 100%;
-  max-height: 160px;
+  max-height: 150px;
+  margin: 0 auto;
   border-radius: var(--r-sm);
   object-fit: contain;
 }
 
-.pill-preview-files {
+.pill-body-files {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: var(--fs-base);
 }
 
-.pill-preview-files li {
+.pill-body-files li {
   display: flex;
   align-items: center;
   gap: var(--sp-4);
@@ -219,16 +327,57 @@ html:not([data-preview]) #root {
   text-overflow: ellipsis;
 }
 
-.pill-preview-files li.more,
-.pill-preview-empty {
+.pill-body-files li.more,
+.pill-body-empty {
   margin: 0;
   color: var(--pill-text-2);
+}
+
+.pill-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  height: 32px;
+  padding: 0 var(--sp-6);
+  color: var(--pill-text-3);
+  font-size: var(--fs-caption);
+}
+
+.pill-foot > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.pill-marks {
+  display: inline-flex;
+  gap: var(--sp-2);
+}
+
+.pill-marks i {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--pill-fill);
+  color: var(--pill-text-2);
+  font-style: normal;
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.pill-marks i.on {
+  background: var(--pill-copy);
+  color: var(--pill-on-copy);
+  font-weight: var(--fw-semibold);
 }
 
 @keyframes pill-in {
   from {
     opacity: 0;
-    transform: translateY(-10px) scale(0.9);
+    transform: translateY(-6px) scale(0.96);
   }
   to {
     opacity: 1;
@@ -243,7 +392,7 @@ html:not([data-preview]) #root {
   }
   to {
     opacity: 0;
-    transform: translateY(-8px) scale(0.94);
+    transform: translateY(-4px) scale(0.98);
   }
 }
 
@@ -258,7 +407,7 @@ html:not([data-preview]) #root {
     opacity: 1;
   }
   to {
-    opacity: 0.35;
+    opacity: 0.4;
   }
 }
 
@@ -266,7 +415,7 @@ html:not([data-preview]) #root {
   .pill,
   .pill.is-leaving,
   .pill-rec,
-  .pill[data-kind="work"] .pill-icon svg {
+  .pill[data-kind="work"] .pill-glyph svg {
     animation: none;
   }
 }

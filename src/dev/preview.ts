@@ -7,7 +7,7 @@
   a shelf that is DWM-composited and always on top is awkward to capture, and a
   fixture is reproducible where a person's live data is neither.
 
-  Query parameters: theme=light|dark, scene=empty|trial|restricted|onboarding
+  Query parameters: theme=light|dark, scene=empty|onboarding|paused
   (main), scene=copied|selected|listening|working|done|preview|error|paused
   (pill), pane=<settings section>, dock=float|left|right, platform=linux.
 */
@@ -34,8 +34,6 @@ const dockParam = params.get("dock");
 const dock: AppState["dock"] = dockParam === "left" || dockParam === "right" ? dockParam : "float";
 const now = Date.now();
 const minutes = (n: number) => now - n * 60_000;
-/** Licence timestamps are Unix seconds. */
-const secs = (ms: number) => Math.floor(ms / 1000);
 
 let nextId = 100;
 
@@ -70,12 +68,12 @@ function shot(id: number, origin: Item["origin"], age: number, caption = ""): It
 const items: Item[] = [
 
   text(5, "ffmpeg -i take.wav -ar 16000 -ac 1 take-16k.wav", "clipboard", 41, { favorite: 1, pinnedAt: minutes(30) }),
-  text(2, "https://handy.computer/docs/models", "clipboard", 8),
+  text(2, "https://handy.computer/docs/models", "clipboard", 1),
   text(13, "#6f4a4a", "clipboard", 60),
   shot(11, "clipboard", 2),
   shot(12, "manual", 34),
-  text(3, "Dictation is local. The audio never leaves this computer, and Refine only ever sees the finished text.", "dictation", 14),
-  text(1, "Ship the V2 release notes before Friday — keep them under 150 words.", "manual", 3),
+  text(3, "Dictation is local. The audio never leaves this computer.", "dictation", 14),
+  text(1, "Ship the release notes before Friday — keep them under 150 words.", "manual", 9),
   text(4, "#2f6fed", "clipboard", 26),
   text(6, "Call Lerato about the Cape Town launch venue", "manual", 75, { done: 1 }),
   text(7, "Remember: the three tests. Copper, Handy, and would Apple ship this.", "dictation", 180),
@@ -143,54 +141,6 @@ function text(
   };
 }
 
-const license: AppState["license"] =
-  scene === "onboarding"
-    ? {
-        state: "trial_available",
-        canUse: false,
-        keyConfigured: false,
-        trialStartedAt: null,
-        trialExpiresAt: null,
-        expiresAt: null,
-        lastCheckedAt: null,
-        message: null,
-        activationLimit: 3,
-      }
-    : scene === "restricted"
-    ? {
-        state: "restricted",
-        canUse: false,
-        keyConfigured: false,
-        trialStartedAt: secs(now - 15 * 864e5),
-        trialExpiresAt: secs(now - 864e5),
-        expiresAt: null,
-        lastCheckedAt: secs(now),
-        message: "Your 14-day trial has ended.",
-      }
-    : scene === "trial"
-      ? {
-          state: "trial",
-          canUse: true,
-          keyConfigured: false,
-          trialStartedAt: secs(now - 3 * 864e5),
-          trialExpiresAt: secs(now + 11 * 864e5),
-          expiresAt: null,
-          lastCheckedAt: secs(now),
-          message: null,
-        }
-      : {
-          state: "active",
-          canUse: true,
-          keyConfigured: true,
-          trialStartedAt: null,
-          trialExpiresAt: null,
-          expiresAt: secs(now + 340 * 864e5),
-          lastCheckedAt: secs(now),
-          message: null,
-          activationCount: 2,
-          activationLimit: 3,
-        };
-
 const state: AppState = {
   sections: [
     { id: 1, name: "Inbox" },
@@ -209,7 +159,6 @@ const state: AppState = {
   micReady: true,
   // `active=<id>` marks an item as the one on the clipboard, for the gallery.
   activeItemId: params.has("active") ? Number(params.get("active")) : null,
-  license,
   channel: params.get("channel") === "flatpak" ? "flatpak" : params.get("channel") === "store" ? "store" : "direct",
   platform: params.get("platform") ?? "windows",
   desktop: { session: params.get("platform") === "linux" ? "wayland" : "windows", shortcutsReady: params.get("platform") === "linux" },
@@ -229,22 +178,35 @@ const state: AppState = {
 
 const SHORTCUT_ROWS: [string, string, string][] = [
   ["main", "Show or hide Bard", "Alt+Shift+V"],
-  ["dictate", "Dictate (hold to talk, tap to toggle)", "Alt+Shift+Space"],
+  ["dictate", "Dictate", "Alt+Shift+Space"],
   ["slot-1", "Copy item 1", "Alt+Shift+1"],
   ["slot-2", "Copy item 2", "Alt+Shift+2"],
   ["slot-3", "Copy item 3", "Alt+Shift+3"],
-  ["cycle", "Cycle through items 1–3", "Alt+Shift+C"],
-  ["preview", "Preview the clipboard", "Alt+Shift+P"],
-  ["pause", "Pause or resume clipboard capture", "Alt+Shift+X"],
+  ["cycle", "Cycle items 1–3", "Alt+Shift+C"],
+  ["preview", "Show the clipboard", "Alt+Shift+P"],
+  ["pause", "Pause or resume copying", "Alt+Shift+X"],
   ["draw", "Open Draw", "Alt+Shift+D"],
   ["settings", "Open Settings", "Alt+Shift+Comma"],
-  ["guide", "Show the shortcut guide", "Alt+Shift+Slash"],
+  ["guide", "Show the shortcuts", "Alt+Shift+Slash"],
 ];
 
 const chords = new Map(SHORTCUT_ROWS.map(([id, , chord]) => [id, chord]));
 
 function shown(chord: string): string {
   return chord.replace("Comma", ",").replace("Slash", "/");
+}
+
+/** The preview's stand-in for the conflict check: doubles, and one chord the desktop keeps. */
+function shortcutConflicts(proposed: Record<string, string>) {
+  const table = SHORTCUT_ROWS.map(([id, label]) => ({ id, label, chord: proposed[id] ?? chords.get(id) ?? "" }));
+  const found: { id: string; kind: string; with: string }[] = [];
+  for (const row of table) {
+    if (!row.chord) continue;
+    const twin = table.find((other) => other.id !== row.id && other.chord === row.chord);
+    if (twin) found.push({ id: row.id, kind: "duplicate", with: twin.label });
+    else if (row.chord === "Ctrl+Alt+D") found.push({ id: row.id, kind: "system", with: "your desktop’s “show desktop”" });
+  }
+  return found;
 }
 
 function shortcutState(): ShortcutState {
@@ -254,6 +216,14 @@ function shortcutState(): ShortcutState {
     editable: !portal,
     rows: SHORTCUT_ROWS.map(([id, label, defaultChord]) => {
       const chord = chords.get(id) ?? "";
+      // ?unbound=1: the desktop has not granted anything yet.
+      if (portal && params.has("unbound")) {
+        return { id, label, chord, display: shown(chord), defaultChord, status: "pending" };
+      }
+      // ?kept=1: the desktop granted Dictate a chord it uses itself.
+      if (portal && id === "dictate" && params.has("kept")) {
+        return { id, label, chord, display: "Ctrl+Alt+D", defaultChord, status: "taken", conflict: "show desktop" };
+      }
       return { id, label, chord, display: shown(chord), defaultChord, status: chord ? "ready" : "off" };
     }),
   };
@@ -371,15 +341,12 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
         drawColor: "#1d1d1f",
         drawWidth: 4,
       };
-    case "get_license":
-    case "refresh_license":
-      return license;
-    case "start_trial":
-      Object.assign(license, {
-        state: "trial", canUse: true,
-        trialStartedAt: secs(now), trialExpiresAt: secs(now + 14 * 864e5),
-      });
-      return structuredClone(license);
+    case "get_stay_open":
+      return false;
+    case "set_stay_open":
+      return Boolean(args.stay);
+    case "hold_windows":
+      return undefined;
     case "get_models":
       return models;
     case "get_model":
@@ -398,8 +365,6 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "hf_cached_models":
     case "get_custom_models":
       return [];
-    case "get_postprocessing":
-      return { enabled: false, keyConfigured: false, modelIds: [] };
     case "get_microphones":
       return ["Default microphone", "Studio USB Mic"];
     case "get_setting_str":
@@ -432,6 +397,14 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "set_shortcut":
       chords.set(String(args.id), String(args.chord ?? ""));
       return shortcutState();
+    case "check_shortcuts":
+      return shortcutConflicts((args.chords ?? {}) as Record<string, string>);
+    case "save_shortcuts": {
+      const proposed = (args.chords ?? {}) as Record<string, string>;
+      const conflicts = shortcutConflicts(proposed);
+      if (conflicts.length === 0) for (const [id, chord] of Object.entries(proposed)) chords.set(id, chord);
+      return { conflicts, state: shortcutState() };
+    }
     case "reset_shortcuts":
       for (const [id, , chord] of SHORTCUT_ROWS) chords.set(id, chord);
       return shortcutState();
@@ -593,8 +566,8 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
   }
 }
 
-export function install(label: "main" | "settings" | "draw" | "pill") {
-  mockWindows(label, "main", "settings", "draw", "pill");
+export function install(label: "main" | "settings" | "draw" | "pill" | "guide") {
+  mockWindows(label, "main", "settings", "draw", "pill", "guide");
   mockIPC((cmd, payload) => handle(cmd, (payload ?? {}) as Record<string, unknown>), {
     shouldMockEvents: true,
   });
@@ -607,26 +580,50 @@ export function install(label: "main" | "settings" | "draw" | "pill") {
   }
 }
 
+const RAIL: PillNote["rail"] = [
+  { kind: "text", label: "ffmpeg -i take.wav -ar 16000 -ac 1 take-16k.wav", pinned: true },
+  { kind: "text", label: "https://handy.computer/docs/models", pinned: false },
+  { kind: "image", label: "Image", pinned: false },
+];
+
 const PILL_SCENES: Record<string, PillNote> = {
   copied: { kind: "copy", text: "Copied", detail: "https://handy.computer/docs/models", sticky: true, holdMs: 0 },
-  selected: { kind: "select", text: "On your clipboard", detail: "https://handy.computer/docs/models", slot: 2, slots: 3, sticky: true, holdMs: 0 },
+  image: { kind: "copy", text: "Image copied", sticky: true, holdMs: 0 },
+  selected: { kind: "select", text: "On your clipboard", detail: "https://handy.computer/docs/models", sticky: true, holdMs: 0 },
+  cycle: { kind: "select", text: "On your clipboard", detail: "https://handy.computer/docs/models", slot: 2, slots: 3, rail: RAIL, sticky: true, holdMs: 0 },
   listening: { kind: "listen", text: "Listening", sticky: true, holdMs: 0 },
   working: { kind: "work", text: "Transcribing", sticky: true, holdMs: 0 },
-  done: { kind: "done", text: "Transcript copied", detail: "Book the Cape Town venue for the twelfth", sticky: true, holdMs: 0 },
-  paused: { kind: "pause", text: "Clipboard capture paused", sticky: true, holdMs: 0 },
-  error: { kind: "error", text: "Nothing in slot 3 yet", sticky: true, holdMs: 0 },
-  preview: {
-    kind: "preview",
-    text: "Clipboard",
+  done: {
+    kind: "done",
+    text: "Transcript on your clipboard",
     sticky: true,
     holdMs: 0,
     preview: {
       kind: "text",
-      text: "Dictation is local. The audio never leaves this computer, and Refine only ever sees the finished text.\n\nKeep the release notes under 150 words, and lead with what changed for the person using it.",
-      length: 214,
+      text: "Send the release notes to the team before noon, and book the venue for the Cape Town evening on the twelfth.",
+      length: 108,
       files: [],
     },
   },
+  paused: { kind: "pause", text: "Capture paused", sticky: true, holdMs: 0 },
+  resumed: { kind: "resume", text: "Capture on", sticky: true, holdMs: 0 },
+  error: { kind: "error", text: "Nothing in slot 3 yet", sticky: true, holdMs: 0 },
+  preview: {
+    kind: "preview",
+    text: "Clipboard",
+    slot: 2,
+    slots: 3,
+    rail: RAIL,
+    sticky: true,
+    holdMs: 0,
+    preview: {
+      kind: "text",
+      text: "Dictation is local. The audio never leaves this computer.\n\nKeep the release notes under 150 words, and lead with what changed for the person using it.",
+      length: 152,
+      files: [],
+    },
+  },
+  empty: { kind: "preview", text: "Clipboard", sticky: true, holdMs: 0, preview: { kind: "empty", files: [] } },
 };
 
 /** One pill note, as Rust would send it; listening also moves the meter. */

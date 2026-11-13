@@ -33,6 +33,7 @@ export default defineConfig({
         pill: resolve(root, "pill.html"),
         draw: resolve(root, "draw.html"),
         settings: resolve(root, "settings.html"),
+        guide: resolve(root, "guide.html"),
       },
     },
   },

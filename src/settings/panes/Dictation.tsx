@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AlertCircle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "../../store";
 import type { TranscriptOptions } from "../../types";
@@ -24,7 +24,7 @@ const DEFAULTS: TranscriptOptions = {
   silenceMs: 1600,
 };
 
-export default function DictationPane() {
+export default function DictationPane({ models }: { models?: ReactNode }) {
   const [microphones, setMicrophones] = useState<string[]>([]);
   const [selectedMic, setSelectedMic] = useState("");
   const [options, setOptions] = useState<TranscriptOptions>(DEFAULTS);
@@ -79,9 +79,10 @@ export default function DictationPane() {
   };
 
   return (
-    <Pane title="Dictation" description="Speech to text on this PC. Your voice never leaves it.">
+    <Pane title="Dictation">
+      {models}
       <Group title="Input">
-        <Row label="Microphone" hint="The system default is used unless you pick one.">
+        <Row label="Microphone">
           <Select
             label="Microphone"
             value={selectedMic}
@@ -99,22 +100,8 @@ export default function DictationPane() {
         </Row>
       </Group>
 
-      <Group title="Using it">
-        <Row
-          label="Dictate from anywhere"
-          hint="Hold the dictation shortcut to talk and let go to finish, or tap it to start and tap again to stop. Escape cancels."
-        />
-        <Row
-          label="Where the words go"
-          hint="The transcript goes on your clipboard and into Bard's history. Paste it wherever you like."
-        />
-      </Group>
-
-      <Group title="The transcript" note="These apply to the next take.">
-        <Row
-          label="End with a space"
-          hint="A space after the last word, so your words never fuse with what you type next."
-        >
+      <Group title="Transcript">
+        <Row label="End with a space">
           <Toggle
             label="End the transcript with a space"
             checked={options.trailingSpace}
@@ -122,10 +109,7 @@ export default function DictationPane() {
             onChange={(next) => change({ trailingSpace: next })}
           />
         </Row>
-        <Row
-          label="Take out filler words"
-          hint="Removes um, uh, hmm and the like. Off by default, because a filler is sometimes the word you meant."
-        >
+        <Row label="Remove filler words" hint="Um, uh, hmm.">
           <Toggle
             label="Take filler words out of the transcript"
             checked={options.fillers}
@@ -133,10 +117,7 @@ export default function DictationPane() {
             onChange={(next) => change({ fillers: next })}
           />
         </Row>
-        <Row
-          label="Stop after silence"
-          hint="How long the room has to be quiet before Bard finishes the take for you."
-        >
+        <Row label="Stop after silence">
           <Segmented
             label="Stop after silence"
             value={String(options.silenceMs)}
@@ -167,12 +148,6 @@ export default function DictationPane() {
       ) : null}
 
       {!loading && error ? <Note tone="danger">{error}</Note> : null}
-
-      <Note>
-        Audio and transcription stay on this device. If Refine is on (Settings ›
-        Models), the finished transcript text — and nothing else — is sent to
-        OpenRouter.
-      </Note>
     </Pane>
   );
 }

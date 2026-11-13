@@ -1,71 +1,94 @@
 # Bard
 
-**Clipboard, Draw and Dictate.**
+**Clipboard, Draw and Dictate.** A small desktop companion for Windows and Linux
+that keeps what you copy, lets you say or sketch something new, and hands
+everything back on the clipboard.
 
-Bard is a native Windows and Linux app that merges three things into one
-keyboard-first panel: an advanced clipboard manager, a sketchpad and local
-voice dictation — inspired by shadcn's Copper and built as something Apple
-would ship for Windows.
+Bard only ever works with the one thing on your clipboard: it keeps it, shows
+it, swaps it for something you kept earlier, or adds to it by voice. You still
+copy and paste the way you always have. Bard never types into another
+application.
 
-Everything Bard does ends on your clipboard. Bard never types into another
-application on your behalf: you pick it, dictate it or sketch it, and you
-paste it yourself. That is the promise, and it is why focus, timing and
-per-application permissions never decide whether your words arrive.
+It is free and open source. Bard is [Miiso](https://miiso.dev)'s idea and his to
+maintain; version 4 was redesigned and rebuilt by Claude, Anthropic's Fable
+model, which he handed the project to.
 
-- **Clipboard** — every copy and cut, from any application, on Windows, X11 and
-  Wayland, kept in one searchable timeline. Text, links, colours, images, files
-  and drawings. Pin the three you reuse most and put any of them back on the
-  clipboard with one chord, from any application, without opening a window.
-- **Dictate** — hold one key to talk, or tap it to start and tap again to stop.
-  Transcription runs on your own machine through a local `transcribe-cpp` GGUF
-  model: choose **Bard Fast** or **Bard General** in **Settings → Models**.
-  Audio capture and local transcription never leave the device. Optional
-  text-only **Refine** runs after local transcription, only when switched on,
-  and only ever sends the finished transcript text to OpenRouter on your own
-  key; any failure keeps the local transcript. Every transcript is also kept
-  in Bard's history, so a later copy cannot lose it. The model unloads after
-  five idle minutes and a single take can run for up to 20 minutes.
-- **Draw** — pen, arrows, shapes and text on a page of its own. Copy the page
-  as an image in one keystroke, or save it as an SVG.
+## What it does
 
-## Global shortcuts
+- **Keeps what you copy.** Text, links, colours, images and files, from any
+  application, in one searchable history. Copies a password manager marks as
+  private are never kept. A soft sound and a small badge at the top of the
+  screen confirm each one; turn either off.
+- **Three slots, one keystroke.** Your pinned items, then your most recent,
+  fill slots 1 to 3. Put any of them back on the clipboard from anywhere,
+  or cycle through them and watch the badge show where you are.
+- **Shows you the clipboard.** One shortcut reads back what is on it right now.
+- **Dictates on your own machine.** Hold a key and talk, or tap to start and tap
+  to stop. A local speech model turns it into text, reads it back to you, and
+  puts it on the clipboard. Audio never leaves the computer.
+- **Draws.** Pen, arrows, shapes and text on a page of its own; copy it as an
+  image or save it as SVG.
+- **Stays out of the way.** Bard lives in the tray. Its windows come when you
+  call them and tuck away when you click elsewhere.
 
-One table of shortcuts, the same on every platform, and every one of them can
-be changed in **Settings → Shortcuts** (except on Wayland, where the desktop
-owns the bindings and asks once).
+## Shortcuts
+
+Every shortcut can be changed in **Settings → Shortcuts**. On Wayland the
+desktop owns them and asks once. A desktop that already knows Bard from
+version 3 keeps the keys it assigned then, so the table below may not match;
+Settings → Shortcuts shows the keys actually bound, names any your desktop
+keeps for itself, and opens the desktop's own dialog to change them.
 
 | Action | Default |
 | --- | --- |
 | Show or hide Bard | `Alt+Shift+V` |
-| Dictate — hold to talk, tap to toggle | `Alt+Shift+Space` |
-| Copy item 1 / 2 / 3 | `Alt+Shift+1` / `2` / `3` |
-| Cycle through items 1–3 | `Alt+Shift+C` |
-| Preview what is on the clipboard | `Alt+Shift+P` |
-| Pause or resume keeping what you copy | `Alt+Shift+X` |
+| Dictate: hold to talk, tap to toggle | `Alt+Shift+Space` |
+| Copy slot 1 / 2 / 3 | `Alt+Shift+1` / `2` / `3` |
+| Cycle through the slots | `Alt+Shift+C` |
+| Show what is on the clipboard | `Alt+Shift+P` |
+| Pause or resume keeping copies | `Alt+Shift+X` |
 | Open Draw | `Alt+Shift+D` |
 | Open Settings | `Alt+Shift+,` |
 | Show the shortcut guide | `Alt+Shift+/` |
 
-Inside the panel: `↑` `↓` move, `Enter` copies and closes, `Shift+Enter`
+In the main window: `↑` `↓` move, `Enter` copies and closes, `Shift+Enter`
 copies and stays, `Ctrl+P` pins, `Ctrl+S` keeps forever, `Del` deletes,
-`Ctrl+F` searches, `Esc` steps back through search, selection, then the
-window, and the context-menu key opens the row's menu.
+`F2` edits, `Ctrl+F` searches, and `Esc` steps back.
+
+## Privacy
+
+Bard has no account, no telemetry and no sync. Your history, your audio and
+your drawings stay on your computer. Bard uses the network for two things only:
+downloading a speech model when you ask for one, and checking for updates. The
+source is here so you can check that for yourself.
+
+## Speech models
+
+Bard offers two models and runs nothing else. Each is an open-weight model,
+converted to GGUF, hosted at
+[miisodev/bard-models](https://github.com/miisodev/bard-models) and pinned in
+the app by exact size and SHA-256; a download is hashed and loaded before it is
+ever used.
+
+- **Bard Fast**: `parakeet-tdt-0.6b-v3`, about 580 MB. The place to start.
+- **Bard General**: `Qwen3-ASR-1.7B`, about 1.6 GB. More accurate.
+
+The model unloads after five idle minutes.
+
+## Install
+
+Downloads for Windows (installer) and Linux (`.deb`, `.rpm`) are at
+[miiso.dev/bard](https://miiso.dev/bard) and on the
+[releases page](https://github.com/miisodev/bard-releases/releases), with
+checksums.
+
+The Windows installer is not Authenticode-signed, so SmartScreen shows a
+"Windows protected your PC" prompt the first time; choose **More info → Run
+anyway**. Updates are verified against an Ed25519 key built into the app.
 
 ## Licence
 
-**One payment. Nothing renews, and there is no subscription and no account.**
-
-Bard includes a 14-day local trial that needs no account and no key. A licence
-costs **US$20 once** and runs for **365 days from the day you first activate
-it**, on up to **three** activated computers. When those 365 days are over the
-licence ends: nothing is charged again, there is no renewal step, and there is
-no account to sign into. Buy again to carry on.
-
-The raw key is stored in the operating system's credential store (Windows
-Credential Manager, or the D-Bus Secret Service on Linux), and Bard keeps a
-signed offline lease so a network outage does not discard a valid entitlement.
-When the paid term ends, existing captures stay readable, copyable and
-exportable while new capture, dictation and drawing are paused.
+[MIT](LICENSE).
 
 ## Building
 
@@ -77,7 +100,6 @@ installations; the installer can bootstrap it when a clean machine needs it).
 ```sh
 bun install --frozen-lockfile
 bun run tauri dev      # develop
-bun run build:msix     # Store MSIX validation package (Windows)
 ```
 
 A local release — the NSIS installer plus its updater signature — is built by
@@ -89,32 +111,6 @@ A local release — the NSIS installer plus its updater signature — is built b
 
 Linux packages are built in the pinned `ubuntu:22.04` container, because a
 build on a newer distribution demands a glibc its users do not have.
-
-Bard ships in two ways, and only one of them is signed.
-
-- **Direct download from miiso.dev — an NSIS installer that is deliberately
-  unsigned.** No publicly trusted code-signing certificate is bought for Bard,
-  so the installer is not Authenticode-signed and Windows shows a SmartScreen
-  "Windows protected your PC" prompt the first time you run it. The prompt is
-  the expected result, not a corrupt download. Click **More info →
-  Run anyway**, or install from the Microsoft Store instead and skip it. Every
-  other protection is intact and independently checked: the installer carries
-  an Ed25519 updater signature, `scripts/verify-release.ps1` verifies that
-  signature against the public key embedded in the app before anything is
-  published, and the Store copy is signed by Microsoft. The signing path for a
-  future certificate is still in the script and the runbook, unused.
-- **Microsoft Store — an MSIX package signed by Microsoft** after
-  certification. There is no downloadable MSIX: a sideloaded copy would carry a
-  different identity from the Store copy, install beside it, and never receive
-  an update. The package takes its identity from Partner Center.
-
-The two model roles are pinned to hash-verified
-`https://github.com/miisodev/bard-models` releases: `parakeet-tdt-0.6b-v3-Q6_K.gguf`
-for Fast, from `models-v3`, and `Qwen3-ASR-1.7B-Q6_K.gguf` for General, from
-`models-v2`. The first-party release rehosts the exact listed bytes with
-model-specific notices. The embedded catalog records the conversion provenance,
-model-specific licence, exact size, and SHA-256; downloads resume, hash the
-complete file, and load through `transcribe-cpp` before activation.
 
 ## Architecture
 
@@ -158,10 +154,4 @@ fails the job and an informational one is reported on a Check.
 
 The model release gate is `cargo test smoke_test_exact_models_when_requested` against the staged files. Set
 `BARD_SMOKE_MODELS` (and `BARD_SMOKE_WAV` for transcription) only when running
-against the staged model files; the smoke tests are no-ops otherwise. The
-OpenRouter pane is optional and should be exercised with a disposable key
-entered in the UI, never pasted into chat or committed to the repository.
-
-Idle cost is near zero: an event-driven clipboard watcher, a heartbeat that
-records that it is still alive, and no model in memory until the first
-dictation.
+against the staged model files; the smoke tests are no-ops otherwise.
