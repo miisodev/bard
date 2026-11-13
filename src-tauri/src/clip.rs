@@ -3,7 +3,7 @@
 //! says so.
 
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard};
 
 use base64::Engine;
 use tauri::AppHandle;
@@ -15,17 +15,45 @@ use tauri::AppHandle;
 /// dropped per write hands its content to a clipboard manager if there is one
 /// and loses it if there is not, so a copied slot could vanish the moment the
 /// write returned. Keeping one handle keeps the server thread answering.
-pub(crate) fn handle() -> Result<MutexGuard<'static, arboard::Clipboard>, String> {
-    static CLIPBOARD: OnceLock<Mutex<arboard::Clipboard>> = OnceLock::new();
-    if CLIPBOARD.get().is_none() {
-        let clipboard = arboard::Clipboard::new().map_err(|e| format!("clipboard open: {e}"))?;
-        let _ = CLIPBOARD.set(Mutex::new(clipboard));
-    }
-    Ok(CLIPBOARD
-        .get()
-        .expect("clipboard initialised above")
+pub(crate) fn handle() -> Result<Handle, String> {
+    let mut slot = CLIPBOARD
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()))
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if slot.is_none() {
+        *slot = Some(arboard::Clipboard::new().map_err(|e| format!("clipboard open: {e}"))?);
+    }
+    Ok(Handle(slot))
+}
+
+static CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
+
+/// The open clipboard, held for as long as the caller reads or writes.
+pub(crate) struct Handle(MutexGuard<'static, Option<arboard::Clipboard>>);
+
+impl std::ops::Deref for Handle {
+    type Target = arboard::Clipboard;
+    fn deref(&self) -> &arboard::Clipboard {
+        self.0.as_ref().expect("clipboard opened by handle()")
+    }
+}
+
+impl std::ops::DerefMut for Handle {
+    fn deref_mut(&mut self) -> &mut arboard::Clipboard {
+        self.0.as_mut().expect("clipboard opened by handle()")
+    }
+}
+
+/// Let go of the clipboard connection so the next [`handle`] opens a new one.
+///
+/// The one handle is a live connection with a thread behind it. If that
+/// connection breaks, every later read fails and nothing says so; the watcher
+/// calls this when a copy it was told about cannot be read, so that a broken
+/// connection costs one copy rather than every copy until Bard is restarted.
+pub(crate) fn reopen() {
+    let mut slot = CLIPBOARD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *slot = None;
 }
 
 pub fn set_text(app: &AppHandle, text: &str) -> Result<(), String> {

@@ -42,6 +42,10 @@ pub fn show(app: &AppHandle, note: Note) {
         };
         let visible = win.is_visible().unwrap_or(false);
         if !visible {
+            // Before the first map: a window the manager has already taken
+            // charge of stays an application window.
+            static UNMANAGED: std::sync::Once = std::sync::Once::new();
+            UNMANAGED.call_once(|| crate::front::unmanage(&win));
             place(&handle, &win);
         }
         let _ = handle.emit_to(LABEL, "pill", &note);

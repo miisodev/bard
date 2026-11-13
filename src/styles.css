@@ -766,6 +766,18 @@ body {
   border-radius: 0;
 }
 
+/*
+  On Windows the system rounds the window's corners and draws its border and
+  shadow. A page with rounder corners of its own leaves transparent wedges
+  between its curve and the system's, which showed as "ears" at each corner.
+  So there the surface is a plain rectangle and the window frame is Windows'.
+*/
+:root[data-platform="windows"] .app,
+:root[data-platform="windows"] .companion {
+  border: 0;
+  border-radius: 0;
+}
+
 .onboarding {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;

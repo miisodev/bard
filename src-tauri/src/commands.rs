@@ -701,7 +701,9 @@ fn companion(app: &AppHandle, label: &str) -> Option<tauri::WebviewWindow> {
         .resizable(true)
         .decorations(false)
         .transparent(true)
-        .shadow(false)
+        // Windows frames every Bard window the same way: its own corners and
+        // shadow. Elsewhere the page draws the edge.
+        .shadow(cfg!(windows))
         .always_on_top(false)
         .skip_taskbar(false)
         .visible(false)

@@ -18,6 +18,22 @@ pub fn bring(win: &WebviewWindow) {
     x11::activate_soon(win);
 }
 
+/// Take `win` out of the window manager's hands, as a tooltip or a
+/// notification is: it is not focused, placed, animated, listed or tiled, and
+/// compositor effects meant for application windows leave it alone. Call it
+/// before the window is first shown.
+///
+/// The status pill is drawn in a transparent window larger than itself. As an
+/// ordinary window, a desktop that blurs or tints what lies behind every
+/// application window did so behind the whole transparent rectangle, which
+/// showed as a large rounded square behind the pill.
+pub fn unmanage(win: &WebviewWindow) {
+    #[cfg(target_os = "linux")]
+    x11::unmanage(win);
+    #[cfg(not(target_os = "linux"))]
+    let _ = win;
+}
+
 #[cfg(target_os = "linux")]
 mod x11 {
     use std::time::Duration;
@@ -28,7 +44,7 @@ mod x11 {
     use x11rb::protocol::xproto::{ClientMessageEvent, ConnectionExt as _, EventMask};
 
     /// The X window behind `win`, when Bard is running on X11 or XWayland.
-    fn xid(win: &WebviewWindow) -> Option<u32> {
+    pub(crate) fn xid(win: &WebviewWindow) -> Option<u32> {
         match win.window_handle().ok()?.as_raw() {
             RawWindowHandle::Xlib(handle) => u32::try_from(handle.window).ok(),
             RawWindowHandle::Xcb(handle) => Some(handle.window.get()),
@@ -53,6 +69,30 @@ mod x11 {
             root,
             EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
             event,
+        )
+        .ok()?;
+        conn.flush().ok()
+    }
+
+    pub fn unmanage(win: &WebviewWindow) -> Option<()> {
+        use x11rb::protocol::xproto::{AtomEnum, ChangeWindowAttributesAux, PropMode};
+        use x11rb::wrapper::ConnectionExt as _;
+        let window = xid(win)?;
+        let (conn, _) = x11rb::connect(None).ok()?;
+        let atom = |name: &[u8]| Some(conn.intern_atom(false, name).ok()?.reply().ok()?.atom);
+        let kind = atom(b"_NET_WM_WINDOW_TYPE")?;
+        let notification = atom(b"_NET_WM_WINDOW_TYPE_NOTIFICATION")?;
+        conn.change_window_attributes(
+            window,
+            &ChangeWindowAttributesAux::new().override_redirect(1),
+        )
+        .ok()?;
+        conn.change_property32(
+            PropMode::REPLACE,
+            window,
+            kind,
+            AtomEnum::ATOM,
+            &[notification],
         )
         .ok()?;
         conn.flush().ok()
