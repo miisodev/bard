@@ -74,28 +74,17 @@ mod x11 {
         conn.flush().ok()
     }
 
+    /// Runs on the main thread, before the window is first shown. A window
+    /// that has never been shown has no X window yet, so this goes through
+    /// the toolkit: the hint is set, the window realized, and the X window it
+    /// then has is marked override-redirect.
     pub fn unmanage(win: &WebviewWindow) -> Option<()> {
-        use x11rb::protocol::xproto::{AtomEnum, ChangeWindowAttributesAux, PropMode};
-        use x11rb::wrapper::ConnectionExt as _;
-        let window = xid(win)?;
-        let (conn, _) = x11rb::connect(None).ok()?;
-        let atom = |name: &[u8]| Some(conn.intern_atom(false, name).ok()?.reply().ok()?.atom);
-        let kind = atom(b"_NET_WM_WINDOW_TYPE")?;
-        let notification = atom(b"_NET_WM_WINDOW_TYPE_NOTIFICATION")?;
-        conn.change_window_attributes(
-            window,
-            &ChangeWindowAttributesAux::new().override_redirect(1),
-        )
-        .ok()?;
-        conn.change_property32(
-            PropMode::REPLACE,
-            window,
-            kind,
-            AtomEnum::ATOM,
-            &[notification],
-        )
-        .ok()?;
-        conn.flush().ok()
+        use gtk::prelude::{GtkWindowExt, WidgetExt};
+        let window = win.gtk_window().ok()?;
+        window.set_type_hint(gtk::gdk::WindowTypeHint::Notification);
+        window.realize();
+        window.window()?.set_override_redirect(true);
+        Some(())
     }
 
     /// A window that was hidden is only mapped once the event loop gets to

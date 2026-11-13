@@ -304,6 +304,7 @@ dependencies = [
  "cpal",
  "earshot",
  "futures-util",
+ "gtk",
  "image",
  "ksni",
  "log",

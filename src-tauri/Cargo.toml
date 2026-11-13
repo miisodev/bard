@@ -75,6 +75,9 @@ x11rb = { version = "=0.13.2", features = ["xfixes", "xkb", "xtest"] }
 # The X window id of a Bard window, to ask the window manager to raise it.
 # Already in the tree through Tauri.
 raw-window-handle = "0.6"
+# The pill window's type hint, set through the toolkit that owns the window.
+# Tauri's own GTK; nothing new in the tree.
+gtk = "0.18"
 
 [dev-dependencies]
 minisign-verify = "0.2.5"
