@@ -77,7 +77,7 @@ jobs:
           done
           echo 'Acquire::http::Timeout "20"; Acquire::https::Timeout "20"; Acquire::Retries "1";' | sudo tee /etc/apt/apt.conf.d/99-ci-timeout
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends webkit2gtk-driver xvfb dbus-x11 gnome-keyring xclip
+          sudo apt-get install -y --no-install-recommends webkit2gtk-driver xvfb dbus-x11 xclip
           sudo apt-get install -y ./candidate/deb/*.deb
       - name: Prepare Windows desktop
         if: runner.os == 'Windows'
@@ -99,7 +99,7 @@ jobs:
       - name: Test installed Linux app
         if: runner.os == 'Linux'
         run: |
-          dbus-run-session -- bash -euc 'printf "%s" ci-disposable-keyring | gnome-keyring-daemon --unlock --components=secrets; xvfb-run -a node scripts/native-smoke.mjs /usr/bin/bard'
+          dbus-run-session -- xvfb-run -a node scripts/native-smoke.mjs /usr/bin/bard
       - name: Test installed Windows app
         if: runner.os == 'Windows'
         shell: pwsh

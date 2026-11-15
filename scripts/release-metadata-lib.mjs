@@ -3,7 +3,7 @@
 
   The CLI owns filesystem/git/cargo discovery. Everything here takes plain
   data so the dependency graph and source-identity rules can be tested without
-  a build, a network call or a real keyring.
+  a build or a network call.
 */
 
 import { existsSync, readFileSync } from "node:fs";

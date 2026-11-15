@@ -715,19 +715,19 @@ fn checked_setting_reads_distinguish_absence_from_a_failed_query() {
     connection
         .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .unwrap();
-    assert_eq!(read_setting(&connection, "trial-start").unwrap(), None);
+    assert_eq!(read_setting(&connection, "dock").unwrap(), None);
     connection
         .execute(
             "INSERT INTO settings VALUES (?1, ?2)",
-            params!["trial-start", "1000"],
+            params!["dock", "1000"],
         )
         .unwrap();
     assert_eq!(
-        read_setting(&connection, "trial-start").unwrap().as_deref(),
+        read_setting(&connection, "dock").unwrap().as_deref(),
         Some("1000")
     );
     connection.execute_batch("DROP TABLE settings;").unwrap();
-    assert!(read_setting(&connection, "trial-start").is_err());
+    assert!(read_setting(&connection, "dock").is_err());
 }
 
 pub fn get_setting_checked(app: &AppHandle, key: &str) -> Result<Option<String>, String> {

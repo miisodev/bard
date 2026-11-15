@@ -801,7 +801,7 @@ body {
   min-width: 0;
 }
 
-/* One step's own body: the model card, the shortcut list, the licence. A
+/* One step's own body: the model card or the shortcut list. A
    definite width, so a child asking for `min(100%, 310px)` has a 100% to
    measure against. */
 .onb-step {
@@ -1292,98 +1292,6 @@ mark {
   animation: spin var(--t-slow) linear infinite;
 }
 
-.license-card {
-  display: grid;
-  gap: var(--sp-3);
-  padding: var(--sp-7);
-  border-radius: var(--r-card);
-  background: var(--surface);
-  box-shadow: var(--el-card);
-}
-
-.pane > .license-card {
-  margin-bottom: var(--sp-9);
-}
-
-.license-card.compact {
-  padding: var(--sp-6) var(--sp-7);
-}
-
-.license-card-head,
-.license-card-actions,
-.license-activation {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-4);
-}
-
-.license-card-head h2 {
-  margin: var(--sp-2) 0 0;
-  color: var(--text);
-  font-family: var(--font-display);
-  font-size: var(--fs-md);
-  font-weight: 600;
-}
-
-.license-card-copy,
-.license-card-note {
-  margin: 0;
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.license-card-note {
-  color: var(--text-3);
-}
-
-/* The expiry note: a quiet strip inside the card. It states a date rather than
-   an event, so it is not a toast — and it can be put away. */
-.license-banner {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--sp-4);
-  padding: var(--sp-4) var(--sp-5);
-  border-left: 2px solid var(--warning);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.license-activation {
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  margin-top: var(--sp-3);
-}
-
-.license-card-actions {
-  justify-content: flex-start;
-  gap: var(--sp-7);
-  margin-top: var(--sp-3);
-}
-
-.license-input {
-  min-width: 0;
-  flex: 1 1 220px;
-  height: 32px;
-  padding: 0 var(--sp-4);
-  border: 1px solid transparent;
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-}
-
-.license-input:focus {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
 .link-button {
   position: relative;
   justify-self: start;
@@ -1435,36 +1343,6 @@ mark {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-
-.license-input-wrap {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  flex: 1;
-  position: relative;
-}
-
-.license-input-wrap .license-input {
-  width: 100%;
-  padding-right: 32px;
-}
-
-/* The reveal control lives inside the field, as a ghost — not a second field. */
-.license-input-wrap .icon-btn {
-  position: absolute;
-  right: 3px;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--r-sm);
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-3);
-}
-
-.license-input-wrap .icon-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,8 +1,7 @@
 //! A single-value cache with a time-to-live.
 //!
 //! For answers that are expensive to recompute and harmless to serve a moment
-//! stale. The licence gate reads Windows Credential Manager several times per
-//! answer and the microphone probe enumerates audio devices; both are far more
+//! stale. The microphone probe enumerates audio devices, which is far more
 //! costly than the clock comparison that decides whether the stored answer is
 //! still good.
 

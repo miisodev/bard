@@ -1617,10 +1617,9 @@ pub fn open_link(url: String) -> Result<(), String> {
     // The two real call sites pass fixed `https://miiso.dev/...` paths, so a
     // tight allowlist costs nothing.
     //
-    // `#` stays: the Support link and the Refine pane's "Report it" both end in
-    // the site's `#support` fragment, and rejecting it made both links silently
-    // do nothing. A fragment is never sent to a server, and the host is already
-    // pinned to miiso.dev.
+    // `#` stays: the Support link ends in the site's `#support` fragment, and
+    // rejecting it made the link silently do nothing. A fragment is never sent
+    // to a server, and the host is already pinned.
     let allowed = (url.starts_with("https://miiso.dev/")
         || url.starts_with("https://github.com/miisodev/"))
         && url.len() <= 256

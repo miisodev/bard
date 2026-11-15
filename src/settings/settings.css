@@ -519,15 +519,6 @@ because the panel and the Draw window both render
   background: var(--surface-2);
 }
 
-.refine-footer {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  padding: var(--sp-5) var(--sp-7);
-  border-top: 1px solid var(--rule);
-  background: var(--surface-2);
-}
-
 .postprocessing-status {
   flex: 1;
   min-width: 0;
@@ -753,7 +744,7 @@ because the panel and the Draw window both render
   color: var(--on-canvas-3);
 }
 
-/* ── A feature that lives inside another pane (Refine under Models) ── */
+/* ── A feature that lives inside another pane (Models under Dictation) ── */
 
 .pane-section {
   margin-top: var(--sp-10);

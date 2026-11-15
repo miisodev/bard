@@ -1047,7 +1047,7 @@ unsafe extern "system" fn clipboard_wnd_proc(
 /// Accept a clipboard image, or recognise one that is already in hand.
 ///
 /// The cheap decisions stay here, on the thread that has to notice the next
-/// copy: the licence, the hash that suppresses a re-capture of the same
+/// copy: the hash that suppresses a re-capture of the same
 /// picture. Everything that scales with the picture's size — the PNG encode,
 /// the file write, the row and the events — goes to [`image_jobs`], because a
 /// 4K screenshot is 100–250 ms of that thread's attention and the clipboard

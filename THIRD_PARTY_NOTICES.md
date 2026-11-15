@@ -12,19 +12,16 @@ components are used or offered by the product and retain their own notices.
 - Inter — SIL Open Font License 1.1
 - meodai/color-names — MIT (bundled "Best of" colour-name dataset, © David Aerne)
 - Microsoft Edge WebView2 — Microsoft runtime licence
-- Microsoft Windows Credential Manager — Windows platform component
 - rusqlite — MIT
 - reqwest, rustls, webpki-roots, and related Rust dependencies — MIT / Apache-2.0
-- ed25519-dalek and sha2 — BSD-3-Clause / Apache-2.0
-- keyring — MIT / Apache-2.0
+- sha2 — MIT / Apache-2.0
 - transcribe-cpp / ggml — upstream project licences; the exact source and
-  dependency lock are retained in the release source archive
+  dependency lock are in this repository at each release tag
 
 The complete dependency licence and SBOM report is generated with the release
 candidate and published alongside the installer. The exact `Cargo.lock` and the
 build inputs are recorded in the published SBOM and provenance document, which
-are generated from the same release commit; no source archive is published with
-the release.
+are generated from the same release commit.
 
 ## Bundled and downloadable transcription models
 
