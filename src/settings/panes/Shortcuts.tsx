@@ -235,13 +235,17 @@ export default function ShortcutsPane({ state }: PaneProps) {
                 <button
                   type="button"
                   className={`shortcut-record${recording === row.id ? " recording" : ""}${staged ? " staged" : ""}${problem ? " clash" : ""}`}
-                  aria-label={`${row.label}: ${display || "off"}${problem ? `. ${problem}` : ""}. Press to change.`}
                   aria-invalid={problem ? true : undefined}
                   onClick={() => setRecording(recording === row.id ? null : row.id)}
                   onKeyDown={recording === row.id ? onRecordKey(row.id) : undefined}
                   onBlur={() => setRecording((current) => (current === row.id ? null : current))}
                 >
+                  {/* The name is the visible keys, with the action before them for a
+                      screen reader; a name that differs from the visible text
+                      fails voice control. */}
+                  <span className="sr-only">{row.label}: </span>
                   {recording === row.id ? <span className="recording-hint">Press keys…</span> : <Keys display={display} />}
+                  {problem ? <span className="sr-only">. {problem}</span> : null}
                 </button>
               </span>
             </Row>
