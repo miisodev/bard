@@ -346,6 +346,9 @@ pub fn capture_text(app: &AppHandle, text: &str) {
 /// read. `removed` is what the same capture's retention pass took away, which
 /// is the one case the splice cannot express; there the panel reads instead.
 fn announce_captured(app: &AppHandle, id: i64, removed: usize) {
+    // An older copy of the same thing that this capture replaced is a removal
+    // too: spliced in without a read, the panel would list the copy twice.
+    let removed = removed + db::take_replaced();
     let item = db::item_by_id(app, id);
     if item.is_none() {
         // The row is gone again already (a concurrent delete). Nothing to

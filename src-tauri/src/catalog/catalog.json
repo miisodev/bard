@@ -20,7 +20,7 @@
     {
       "id": "parakeet-tdt-0.6b-v3",
       "name": "Bard Fast",
-      "description": "Quick and light, in 25 languages, and it tells them apart on its own. The right place to start.",
+      "description": "Quick, in 25 languages. The place to start.",
       "role": "multilingualFast",
       "architecture": "parakeet",
       "family": "Parakeet TDT",
@@ -67,7 +67,7 @@
     {
       "id": "whisper-turbo",
       "name": "Bard General",
-      "description": "More accurate across 30 languages, and tells them apart on its own.",
+      "description": "Slower and more accurate, in 30 languages.",
       "role": "multilingualQuality",
       "architecture": "qwen3_asr",
       "family": "Qwen3 ASR",

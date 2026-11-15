@@ -849,6 +849,19 @@ pub fn insert_item_with_origin(
     }
 }
 
+thread_local! {
+    /// Rows `take_duplicate` removed on this thread since the last
+    /// [`take_replaced`]: the older copies a new capture took the place of.
+    static REPLACED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many older copies the captures on this thread replaced, reset to zero.
+/// The panel splices a capture in without reading; a replaced row it still
+/// shows has to be read away, or the list shows the same copy twice.
+pub fn take_replaced() -> usize {
+    REPLACED.with(|count| count.replace(0))
+}
+
 /// Resolve a fresh copy of something Bard already holds (text or files).
 ///
 /// A kept copy (pinned, starred, dictated or added by hand) is never
@@ -887,9 +900,12 @@ pub fn take_duplicate(app: &AppHandle, content: &str, kind: &str) -> Option<i64>
         return Some(*id);
     }
     let plain: Vec<i64> = rows.iter().map(|(id, ..)| *id).collect();
-    if !plain.is_empty() && delete_items_with_files(app, &plain).is_err() {
-        // Could not remove the older copy; keep it rather than adding another.
-        return plain.first().copied();
+    if !plain.is_empty() {
+        if delete_items_with_files(app, &plain).is_err() {
+            // Could not remove the older copy; keep it rather than adding another.
+            return plain.first().copied();
+        }
+        REPLACED.with(|count| count.set(count.get() + plain.len()));
     }
     None
 }

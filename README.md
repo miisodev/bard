@@ -33,11 +33,12 @@ model, which he handed the project to.
 
 ## Shortcuts
 
-Every shortcut can be changed in **Settings → Shortcuts**. On Wayland the
-desktop owns them and asks once. A desktop that already knows Bard from
-version 3 keeps the keys it assigned then, so the table below may not match;
-Settings → Shortcuts shows the keys actually bound, names any your desktop
-keeps for itself, and opens the desktop's own dialog to change them.
+Change any of them in **Settings → Shortcuts**, the same way on Windows, X11
+and Wayland: press the new keys, then Save. Save checks the whole table first
+and marks any shortcut that clashes with another one, or with a key your
+desktop or another app already uses, so nothing is saved that would not work.
+**Restore defaults** brings back the set below. On Wayland your desktop shows
+the keys once to confirm them.
 
 | Action | Default |
 | --- | --- |
