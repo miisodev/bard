@@ -61,6 +61,12 @@
   </screenshots>
 
   <releases>
+    <release version="4.0.1" date="2026-11-15">
+      <url type="details">https://github.com/miisodev/bard-releases/releases/tag/v4.0.1</url>
+      <description>
+        <p>The Linux packages now state Bard's MIT licence correctly, and Bard carries the metadata Linux software centres show: its description, screenshots and release notes.</p>
+      </description>
+    </release>
     <release version="4.0.0" date="2026-11-15">
       <url type="details">https://github.com/miisodev/bard-releases/releases/tag/v4.0.0</url>
       <description>

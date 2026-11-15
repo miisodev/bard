@@ -44,6 +44,14 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      # yarn.lock exists for Flatpak's offline source generator, which cannot
+      # read bun.lock. It must name exactly what bun.lock installs; the
+      # generated header line is ignored because it varies with Bun's version.
+      - name: yarn.lock matches bun.lock
+        run: |
+          cp yarn.lock "$RUNNER_TEMP/yarn.lock.committed"
+          bun install --frozen-lockfile --yarn
+          diff <(grep -v '^#' "$RUNNER_TEMP/yarn.lock.committed") <(grep -v '^#' yarn.lock)
       - run: node --test scripts/release-metadata.test.mjs
       # The runner image includes Chrome and its OS libraries. Reuse it rather
       # than downloading a second browser and running another apt transaction.
