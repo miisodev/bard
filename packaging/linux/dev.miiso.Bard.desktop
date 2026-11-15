@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Bard
+Comment=Keep what you copy, dictate and sketch
+Exec=bard
+Icon=dev.miiso.Bard
+Terminal=false
+Categories=Utility;
+Keywords=clipboard;history;dictation;speech;voice;transcribe;draw;sketch;
+StartupWMClass=bard

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Kevin Miiso Novo -->
+<component type="desktop-application">
+  <id>dev.miiso.Bard</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <name>Bard</name>
+  <summary>Keep copies, dictate and sketch</summary>
+
+  <developer id="dev.miiso">
+    <name translate="no">Kevin Miiso Novo</name>
+  </developer>
+
+  <description>
+    <p>Bard keeps everything you copy, from any application, in one searchable history: text, links, colours, images and files. Your pinned and most recent items sit in three slots that one shortcut puts back on the clipboard from anywhere. Copies a password manager marks as private are never kept.</p>
+    <p>Hold a key and talk, and a speech model running on your own computer turns what you said into text and puts it on the clipboard. Audio never leaves the machine. Or open a page and sketch with pens, arrows, shapes and text, then copy it as a picture or save it as SVG.</p>
+    <p>Bard only ever works through the clipboard you already use. It never types into another application, has no account and no telemetry, and goes online only to download a speech model you ask for.</p>
+  </description>
+
+  <launchable type="desktop-id">dev.miiso.Bard.desktop</launchable>
+
+  <url type="homepage">https://miiso.dev/bard</url>
+  <url type="bugtracker">https://github.com/miisodev/bard/issues</url>
+  <url type="vcs-browser">https://github.com/miisodev/bard</url>
+  <url type="contact">https://miiso.dev/contact</url>
+  <url type="donation">https://github.com/sponsors/miisodev</url>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#f5b84a</color>
+    <color type="primary" scheme_preference="dark">#7a5313</color>
+  </branding>
+
+  <content_rating type="oars-1.1" />
+
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/miisodev/bard/279e8e933a07e47c39a6e592cb82a452bc641013/packaging/linux/screenshots/main.png</image>
+      <caption>Everything you copied, with three items one shortcut away</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/miisodev/bard/279e8e933a07e47c39a6e592cb82a452bc641013/packaging/linux/screenshots/draw.png</image>
+      <caption>A page to sketch on, copied as a picture</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/miisodev/bard/279e8e933a07e47c39a6e592cb82a452bc641013/packaging/linux/screenshots/dictation.png</image>
+      <caption>Speech models that run on your own computer</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/miisodev/bard/279e8e933a07e47c39a6e592cb82a452bc641013/packaging/linux/screenshots/main-dark.png</image>
+      <caption>The history in the dark style</caption>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="4.0.0" date="2026-11-15">
+      <url type="details">https://github.com/miisodev/bard-releases/releases/tag/v4.0.0</url>
+      <description>
+        <p>Bard is now free and open source. This version adds a badge that confirms each copy, shortcuts you change and check in one place, and windows that tuck away when you click elsewhere.</p>
+        <p>Dictation no longer loses parts of a recording on desktops that deliver audio in large blocks, and a copy Bard cannot read is retried and reported instead of skipped.</p>
+      </description>
+    </release>
+  </releases>
+</component>
