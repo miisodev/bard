@@ -347,9 +347,26 @@ fn process_block(
             .fetch_add(discarded as u64, Ordering::Relaxed);
     }
 
+    // Drain everything the block made available, not one frame of it. A
+    // device that hands over more per callback than one resampler frame (a
+    // 1024- or 2048-sample PipeWire quantum against a 768-sample frame) was
+    // left with the remainder each time: the buffer filled within a second or
+    // two and from then on the oldest audio was thrown away on every
+    // callback, so the model was given a take with slices cut out of it.
+    while process_frame(shared, resampler, fifo, frame) {}
+}
+
+/// Resample and store one frame from `fifo` if it holds one. False when there
+/// is not enough audio for a frame, or the take has ended or failed.
+fn process_frame(
+    shared: &Shared,
+    resampler: &mut FftFixedOut<f32>,
+    fifo: &mut Vec<f32>,
+    frame: &mut [f32],
+) -> bool {
     let needed = resampler.input_frames_next();
-    if fifo.len() < needed {
-        return;
+    if fifo.len() < needed || quiet(shared) {
+        return false;
     }
     // Exactly the samples the resampler asked for, in stack arrays: no `Vec`,
     // and no ambiguity about how much it will take.
@@ -360,7 +377,7 @@ fn process_block(
         .is_err()
     {
         mark_failed(shared);
-        return;
+        return false;
     }
     // Consume what was resampled by shifting the remainder down. `copy_within`
     // is a memmove; nothing is reallocated.
@@ -378,7 +395,7 @@ fn process_block(
         shared.limit_reached.store(true, Ordering::Release);
     }
     if stored_len == 0 {
-        return;
+        return false;
     }
     let stored_output = &frame[..stored_len];
 
@@ -416,6 +433,7 @@ fn process_block(
         .silence_ms
         .store(silence_ms, Ordering::Relaxed);
     shared.frames.fetch_add(1, Ordering::Relaxed);
+    stored_len == frame.len()
 }
 
 fn monitor_probability(shared: &Shared) -> f32 {
@@ -906,12 +924,12 @@ mod tests {
             480,
             "the oldest 480 samples made room for the newest 480"
         );
-        assert_eq!(lock(&shared.samples).len(), CHUNK_OUT);
+        // Everything buffered is resampled in the same callback, so the
+        // backlog is gone and the next callback has room.
+        let stored = lock(&shared.samples).len();
+        assert!(stored > CHUNK_OUT && stored.is_multiple_of(CHUNK_OUT));
+        assert!(scratch.fifo.len() < scratch.resampler.input_frames_next());
 
-        // The next callback still produces a frame. The take is degraded, not
-        // over. Refill the pending buffer first, because the first callback
-        // consumed a resampler block and that is what made room for this one.
-        scratch.fifo.resize(MAX_INPUT_BUFFER_SAMPLES, 0.5);
         process_block(
             &shared,
             &mut scratch.resampler,
@@ -919,9 +937,45 @@ mod tests {
             &mut scratch.frame,
             &[0.5; 480],
         );
-        assert_eq!(shared.overruns.load(Ordering::Acquire), 2);
-        assert_eq!(lock(&shared.samples).len(), 2 * CHUNK_OUT);
+        assert_eq!(
+            shared.overruns.load(Ordering::Acquire),
+            1,
+            "a drained buffer does not overrun again"
+        );
         assert!(!shared.failed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn a_device_that_delivers_large_blocks_loses_no_audio() {
+        // PipeWire commonly hands over 1024 or 2048 samples per callback at
+        // 48 kHz; one resampler frame takes 768. Taking a single frame per
+        // callback left the rest to pile up until audio was thrown away on
+        // every callback, about a second into every take.
+        for block in [1024usize, 2048, 4096] {
+            let shared = test_shared();
+            let mut scratch = Scratch::new(48_000).expect("48 kHz is a supported rate");
+            let callbacks = 200;
+            for _ in 0..callbacks {
+                process_block(
+                    &shared,
+                    &mut scratch.resampler,
+                    &mut scratch.fifo,
+                    &mut scratch.frame,
+                    &vec![0.25; block],
+                );
+            }
+            assert_eq!(
+                shared.dropped_samples.load(Ordering::Acquire),
+                0,
+                "{block}-sample callbacks dropped audio"
+            );
+            let expected = callbacks * block / 3;
+            let stored = lock(&shared.samples).len();
+            assert!(
+                stored + 2 * CHUNK_OUT >= expected && stored <= expected,
+                "{block}-sample callbacks kept {stored} of about {expected} samples"
+            );
+        }
     }
 
     #[test]

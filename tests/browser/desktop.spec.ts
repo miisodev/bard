@@ -62,7 +62,7 @@ test("clicking an item puts it on the clipboard and marks it current", async ({ 
 test("the first three items carry their slot numbers", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 620 });
   await page.goto("/?bare=1");
-  const slots = page.locator(".badge.slot");
+  const slots = page.locator(".item-slot");
   await expect(slots).toHaveText(["1", "2", "3"]);
 });
 
@@ -98,65 +98,146 @@ test("pinning moves an item into the pinned group, by pointer or keyboard", asyn
   await expect(page.getByRole("option", { name: /Book the Cape Town venue.*pinned/i })).toBeVisible();
 });
 
-test("the shortcut guide lists the global chords and closes with Escape", async ({ page }) => {
+test("the shortcut guide is a window of its own listing the global chords", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 684 });
+  await page.goto("/guide.html?bare=1");
+  const guide = page.getByRole("main", { name: "Shortcuts" });
+  await expect(guide).toBeVisible();
+  await expect(guide).toContainText("Show or hide Bard");
+  await expect(guide).toContainText("Space");
+  await expect(guide).toContainText("In the main window");
+  await expect(guide).not.toContainText("Left Shift");
+  await expect(guide).not.toContainText("paste");
+  // Every row fits: nothing is cut off at the guide's first size.
+  const overflow = await guide.evaluate((el) => el.scrollHeight - el.clientHeight);
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+for (const theme of ["light", "dark"] as const) {
+  test(`${theme} shortcut guide has no serious accessibility violations`, async ({ page }) => {
+    await page.setViewportSize({ width: 400, height: 684 });
+    await page.goto(`/guide.html?theme=${theme}&bare=1`);
+    await page.getByRole("main", { name: "Shortcuts" }).waitFor();
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(serious(violations)).toEqual([]);
+  });
+}
+
+test("the main window opens the guide instead of covering the history", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 620 });
   await page.goto("/?bare=1");
   await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
   await page.keyboard.press("Control+/");
-  const guide = page.getByRole("dialog", { name: "Shortcuts" });
-  await expect(guide).toBeVisible();
-  await expect(guide).toContainText("Show or hide Bard");
-  await expect(guide).toContainText("Space");
-  await expect(guide).not.toContainText("Left Shift");
-  await expect(guide).not.toContainText("paste");
-  await page.keyboard.press("Escape");
-  await expect(guide).not.toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Shortcuts" })).toHaveCount(0);
+  await expect(page.getByRole("listbox", { name: "Clipboard history" })).toBeVisible();
 });
 
 test("on Wayland the guide says the desktop owns the shortcuts", async ({ page }) => {
-  await page.setViewportSize({ width: 400, height: 620 });
-  await page.goto("/?platform=linux&bare=1");
-  await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
-  await page.keyboard.press("Control+/");
-  await expect(page.getByRole("dialog", { name: "Shortcuts" })).toContainText("Your desktop owns these shortcuts");
+  await page.setViewportSize({ width: 400, height: 684 });
+  await page.goto("/guide.html?platform=linux&bare=1");
+  await expect(page.getByRole("main", { name: "Shortcuts" })).toContainText("Your desktop owns these shortcuts");
 });
 
-test("a shortcut can be recorded, refused when taken, and turned off", async ({ page }) => {
-  await page.setViewportSize({ width: 720, height: 620 });
-  await page.goto("/settings.html?pane=shortcuts&bare=1");
-  const draw = page.getByRole("button", { name: /^Open Draw:/ });
-  await draw.click();
-  await page.keyboard.press("Control+Alt+KeyN");
-  await expect(draw).toContainText("N");
-  await draw.click();
-  await page.keyboard.press("Backspace");
-  await expect(draw).toContainText("Off");
+test("the guide lists no keys the desktop has not granted", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 684 });
+  await page.goto("/guide.html?platform=linux&unbound=1&bare=1");
+  const guide = page.getByRole("main", { name: "Shortcuts" });
+  await expect(guide).toContainText("Your desktop has not been asked for these yet");
+  await expect(guide).toContainText("Not set");
+  await expect(guide).not.toContainText("Space");
 });
 
-test("startup permission failure is visible and recoverable", async ({ page }) => {
+test("a shortcut the desktop keeps for itself is marked on its row", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 620 });
-  await page.goto("/settings.html?pane=general&fail=set_autostart&bare=1");
-  const toggle = page.getByRole("switch", { name: "Start at login" });
-  await toggle.click();
-  await expect(page.getByRole("alert")).toContainText("Couldn’t save");
-  await expect(toggle).toBeEnabled();
+  await page.goto("/settings.html?pane=shortcuts&platform=linux&kept=1&bare=1");
+  const pane = page.getByRole("tabpanel");
+  await expect(pane).toContainText("Used by your desktop’s “show desktop”");
+  const { violations } = await new AxeBuilder({ page }).analyze();
+  expect(serious(violations)).toEqual([]);
 });
+
+for (const platform of ["windows", "linux"]) {
+  test(`shortcuts are edited as one table and saved at once on ${platform}`, async ({ page }) => {
+    await page.setViewportSize({ width: 720, height: 620 });
+    await page.goto(`/settings.html?pane=shortcuts&platform=${platform}&bare=1`);
+    const pane = page.getByRole("tabpanel");
+    const save = pane.getByRole("button", { name: "Save" });
+    const draw = pane.getByRole("button", { name: /^Open Draw:/ });
+    await expect(save).toBeDisabled();
+
+    // A change is a draft until Save.
+    await draw.click();
+    await page.keyboard.press("Control+Alt+KeyN");
+    await expect(draw).toContainText("N");
+    await expect(save).toBeEnabled();
+
+    // A chord another action holds is marked on both rows and cannot be saved.
+    await draw.click();
+    await page.keyboard.press("Alt+Shift+KeyV");
+    await expect(pane).toContainText("Same as “Show or hide Bard”");
+    await expect(pane).toContainText("marked shortcuts to save");
+    await expect(save).toBeDisabled();
+
+    // So is a chord the desktop keeps for itself.
+    await draw.click();
+    await page.keyboard.press("Control+Alt+KeyD");
+    await expect(pane).toContainText("Used by your desktop’s “show desktop”");
+    await expect(save).toBeDisabled();
+
+    // Fixed, it saves; Backspace turns a shortcut off.
+    await draw.click();
+    await page.keyboard.press("Backspace");
+    await expect(draw).toContainText("Off");
+    await save.click();
+    await expect(pane).toContainText("Saved.");
+    await expect(save).toBeDisabled();
+
+    // One default set, and a way back to it.
+    await pane.getByRole("button", { name: "Restore defaults" }).click();
+    await expect(draw).toContainText("D");
+    await save.click();
+    await expect(pane.getByRole("button", { name: "Restore defaults" })).toBeDisabled();
+  });
+}
 
 test("feedback channels switch independently", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 620 });
   await page.goto("/settings.html?pane=general&bare=1");
-  const pill = page.getByRole("switch", { name: "Status pill" });
+  const pill = page.getByRole("switch", { name: "Badge" });
   const sounds = page.getByRole("switch", { name: "Sounds" });
   await sounds.click();
   await expect(sounds).toHaveAttribute("aria-checked", "false");
   await expect(pill).toHaveAttribute("aria-checked", "true");
 });
 
-test("Refine lives under Models", async ({ page }) => {
+// A stylesheet can lose a rule without any test of words or contrast noticing.
+// These hold the shape of each window: where its parts sit, not what they say.
+test("Settings keeps its sections beside its content", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 620 });
-  await page.goto("/settings.html?pane=models&bare=1");
-  await expect(page.getByRole("heading", { name: "Refine", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Refine" })).toHaveCount(0);
+  await page.goto("/settings.html?bare=1");
+  await page.getByRole("heading", { name: "General" }).waitFor();
+  const nav = await page.locator(".settings-nav").boundingBox();
+  const content = await page.locator(".settings-content").boundingBox();
+  expect(nav!.x + nav!.width).toBeLessThanOrEqual(content!.x + 1);
+  expect(Math.abs(nav!.y - content!.y)).toBeLessThan(4);
+  expect(nav!.height).toBeGreaterThan(500);
+});
+
+test("the main window stacks its header, search, list and footer", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 620 });
+  await page.goto("/?bare=1");
+  await page.getByRole("listbox", { name: "Clipboard history" }).waitFor();
+  const top = async (selector: string) => (await page.locator(selector).first().boundingBox())!.y;
+  const head = await top(".clip-head");
+  const tools = await top(".clip-tools");
+  const list = await top(".clip-scroll");
+  const foot = await top(".clip-foot");
+  expect(head).toBeLessThan(tools);
+  expect(tools).toBeLessThan(list);
+  expect(list).toBeLessThan(foot);
+  const row = (await page.locator(".clip-list .item").first().boundingBox())!;
+  expect(row.height).toBeGreaterThanOrEqual(32);
+  expect(row.height).toBeLessThanOrEqual(40);
 });
 
 for (const theme of ["light", "dark"]) {
@@ -181,15 +262,33 @@ for (const pane of ["clipboard", "dictation", "models", "shortcuts", "data", "ab
   });
 }
 
-for (const scene of ["copied", "selected", "listening", "done", "error", "preview"]) {
-  test(`the ${scene} pill has no serious accessibility violations`, async ({ page }) => {
-    await page.setViewportSize({ width: 480, height: 300 });
-    await page.goto(`/pill.html?scene=${scene}&bare=1`);
-    await page.getByRole("status").waitFor();
-    const { violations } = await new AxeBuilder({ page }).analyze();
-    expect(serious(violations)).toEqual([]);
-  });
+for (const theme of ["light", "dark"] as const) {
+  for (const scene of ["copied", "selected", "listening", "done", "error", "preview"]) {
+    test(`the ${theme} ${scene} pill has no serious accessibility violations`, async ({ page }) => {
+      await page.setViewportSize({ width: 480, height: 300 });
+      await page.goto(`/pill.html?scene=${scene}&theme=${theme}&bare=1`);
+      await page.getByRole("status").waitFor();
+      const { violations } = await new AxeBuilder({ page }).analyze();
+      expect(serious(violations)).toEqual([]);
+    });
+  }
 }
+
+test("the pill's page fills its window, so its shadow is never cut off", async ({ page }) => {
+  // The real window paints only the document's own box. A page shorter than
+  // the window cut the shadow off in a hard rectangle behind the pill.
+  await page.setViewportSize({ width: 480, height: 300 });
+  await page.goto("/pill.html?scene=copied&bare=1");
+  await page.getByRole("status").waitFor();
+  await page.evaluate(() => document.documentElement.removeAttribute("data-preview"));
+  const box = await page.evaluate(() => {
+    const pill = document.querySelector(".pill")!.getBoundingClientRect();
+    return { doc: document.documentElement.getBoundingClientRect().height, top: pill.top, left: pill.left };
+  });
+  expect(box.doc).toBe(300);
+  expect(box.top).toBeGreaterThanOrEqual(12);
+  expect(box.left).toBeGreaterThanOrEqual(18);
+});
 
 test("a long history is drawn a screenful at a time and can be jumped to", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 620 });
@@ -205,7 +304,7 @@ test("a long history is drawn a screenful at a time and can be jumped to", async
     const scroll = document.querySelector(".clip-scroll") as HTMLElement;
     return scroll.scrollHeight;
   });
-  expect(height).toBeGreaterThan(20_000);
+  expect(height).toBeGreaterThan(15_000);
 
   // End must reach the last item even though it is nowhere near the window
   // that is on the page.

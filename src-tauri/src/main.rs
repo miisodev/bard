@@ -3,18 +3,16 @@
 mod backup;
 mod catalog;
 mod clip;
-mod cloud;
 mod commands;
 mod crash;
-mod credential;
 mod db;
 mod desktop;
 mod dictation;
 mod feedback;
+mod front;
 mod geometry;
 mod guardian;
 mod hf;
-mod license;
 #[cfg(target_os = "linux")]
 mod linux_portal;
 mod monitor;
@@ -302,7 +300,6 @@ fn main() {
                 log::warn!("image covers will fall back to nothing: {error}");
             }
             app.manage(commands::ImagesDir(images_dir));
-            crate::license::spawn_revalidation(handle.clone());
             let startup_args: Vec<String> = std::env::args().collect();
             let launched_with_paths = ingest_startup_paths(&handle, &startup_args);
 
@@ -367,8 +364,7 @@ fn main() {
             {
                 let portal_app = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(error) = linux_portal::configure_shortcuts(portal_app.clone()).await
-                    {
+                    if let Err(error) = linux_portal::connect_at_launch(portal_app.clone()).await {
                         log::warn!("desktop shortcuts unavailable: {error}");
                         commands::refresh(&portal_app);
                     }
@@ -394,7 +390,7 @@ fn main() {
             // None and "open settings" silently does nothing — which is what
             // made settings and the canvas unreachable once either had been
             // closed.
-            if matches!(window.label(), "settings" | "draw") {
+            if matches!(window.label(), "settings" | "draw" | "guide") {
                 match event {
                     WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
@@ -404,6 +400,9 @@ fn main() {
                             panel::hide_companion(window.app_handle(), &companion);
                         }
                         panel::focus_panel(window.app_handle());
+                    }
+                    WindowEvent::Focused(focused) => {
+                        panel::on_focus_change(window.app_handle(), *focused);
                     }
                     WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
                         geometry::remember_soon(window.app_handle(), window.label());
@@ -442,6 +441,7 @@ fn main() {
             commands::add_item,
             commands::add_image,
             commands::open_draw,
+            commands::open_guide,
             commands::open_draw_with_image,
             commands::save_svg,
             commands::set_draw_prefs,
@@ -451,19 +451,13 @@ fn main() {
             commands::delete_item,
             commands::set_favorite,
             commands::set_pinned,
-            commands::set_done,
-            commands::clear_completed,
             commands::clear_history,
             commands::clear_captures,
             commands::delete_all_data,
-            commands::copy_text,
             commands::copy_item,
-            commands::copy_attachment,
             commands::item_image_data,
             commands::item_cover_url,
             commands::clipboard_image_data,
-            commands::attachment_image_data,
-            commands::attachment_cover_url,
             commands::set_theme,
             commands::set_onboarding_completed,
             commands::set_autostart,
@@ -475,36 +469,15 @@ fn main() {
             commands::set_draw_background,
             commands::show_panel,
             commands::hide_panel,
-            commands::toggle_panel,
             commands::get_models,
-            commands::get_model,
             commands::set_model,
             commands::download_model,
             commands::download_model_cancel,
             commands::delete_model,
-            commands::dictate_start,
-            commands::dictate_stop,
-            commands::dictate_cancel,
-            commands::create_section,
-            commands::set_active_section,
-            commands::rename_section,
-            commands::delete_section,
-            commands::list_packs,
-            commands::get_pack,
-            commands::create_pack,
-            commands::rename_pack,
-            commands::delete_pack,
-            commands::pack_add_items,
-            commands::pack_remove_items,
-            commands::pack_reorder,
             commands::update_item,
-            commands::attach_image,
-            commands::detach_attachment,
-            commands::add_note_to_image,
             commands::export_markdown,
             commands::set_export_dir,
             commands::get_export_dir,
-            commands::set_active_item,
             commands::set_retention_days,
             commands::get_retention_days,
             commands::prune_history_now,
@@ -512,40 +485,25 @@ fn main() {
             commands::set_microphone,
             commands::get_dictation_options,
             commands::set_dictation_options,
-            commands::hf_cached_models,
-            commands::get_detected_models,
-            commands::check_model,
-            commands::activate_detected_model,
-            commands::forget_detected_model,
-            commands::hf_list_repo,
-            commands::hf_install,
-            commands::hf_use_cached,
-            commands::remove_custom_model,
-            commands::get_custom_models,
-            commands::get_postprocessing,
-            commands::save_postprocessing,
-            commands::test_postprocessing,
-            commands::test_postprocessing_cancel,
             commands::get_crash_report,
             commands::copy_diagnostic_report,
             backup::backup_now,
             backup::restore_from_backup,
-            commands::get_license,
-            commands::start_trial,
-            commands::activate_license,
-            commands::refresh_license,
-            commands::deactivate_license,
-            commands::clear_license,
             commands::check_for_update,
             commands::install_update,
             commands::set_dock,
             commands::get_feedback,
             commands::set_feedback,
+            commands::get_stay_open,
+            commands::set_stay_open,
+            commands::hold_windows,
             commands::set_capture_paused,
             commands::notify_error,
             shortcuts::get_shortcuts,
             shortcuts::set_shortcut,
             shortcuts::reset_shortcuts,
+            shortcuts::check_shortcuts,
+            shortcuts::save_shortcuts,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run bard");

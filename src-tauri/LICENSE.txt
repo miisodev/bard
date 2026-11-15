@@ -1,25 +1,21 @@
-BARD — LICENCE NOTICE
+MIT License
 
-Copyright © 2026 Kevin Miiso Novo. All rights reserved.
+Copyright (c) 2026 Kevin Miiso Novo
 
-Bard is proprietary software, not source code or an unrestricted work.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-Every installation begins with a 14-day trial. After the trial, using Bard
-requires a paid licence: a one-time purchase of USD 20, sold only on
-https://miiso.dev, valid for 365 days from its first activation on up to three
-computers. Nothing renews automatically; a licence is bought again when it
-ends.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-You may not reverse engineer, decompile, extract source code from, crack,
-bypass or redistribute the application or its licence controls, except where
-that restriction is prohibited by applicable law.
-
-The software is provided AS IS, without warranty of any kind, to the extent
-permitted by law.
-
-The full terms are at https://miiso.dev/terms and the privacy notice is at
-https://miiso.dev/privacy.
-
-[Draft — packaging placeholder. This notice summarises Bard's Licence Model
-for the Linux bundles; the owner's final EULA text replaces it before the first
-public Linux release.]
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -4,7 +4,8 @@
 //! over anything without getting in the way.
 //!
 //! The window is a fixed transparent canvas; the pill itself is drawn at its
-//! top centre by `pill.html` and grows downward for a preview. Timing lives
+//! top centre by `pill.html` and grows downward for a preview. The page fills
+//! the canvas and keeps the pill's shadow inside it. Timing lives
 //! here, not in the webview, so a note always goes away on schedule.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -20,8 +21,9 @@ pub const LABEL: &str = "pill";
 /// part is transparent and lets every click through.
 const WIDTH: f64 = 480.0;
 const HEIGHT: f64 = 300.0;
-/// Distance from the top of the work area.
-const TOP_MARGIN: f64 = 10.0;
+/// Distance from the top of the work area to the canvas. The page keeps its
+/// own margin above the pill, so that the shadow has room to fade out.
+const TOP_MARGIN: f64 = 0.0;
 /// How long the webview's exit animation takes before the window hides.
 const EXIT: Duration = Duration::from_millis(220);
 
@@ -40,6 +42,10 @@ pub fn show(app: &AppHandle, note: Note) {
         };
         let visible = win.is_visible().unwrap_or(false);
         if !visible {
+            // Before the first map: a window the manager has already taken
+            // charge of stays an application window.
+            static UNMANAGED: std::sync::Once = std::sync::Once::new();
+            UNMANAGED.call_once(|| crate::front::unmanage(&win));
             place(&handle, &win);
         }
         let _ = handle.emit_to(LABEL, "pill", &note);
@@ -132,10 +138,10 @@ mod tests {
 
     #[test]
     fn the_pill_is_centred_at_the_top_of_the_work_area() {
-        assert_eq!(top_centre((0, 0), (1920, 1040), 1.0), (720, 10));
+        assert_eq!(top_centre((0, 0), (1920, 1040), 1.0), (720, 0));
         assert_eq!(
             top_centre((1920, 32), (2560, 1408), 2.0),
-            (1920 + 1280 - 480, 52)
+            (1920 + 1280 - 480, 32)
         );
     }
 }

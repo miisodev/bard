@@ -7,8 +7,8 @@
 //! those at -32000, -32000), fullscreen or maximised, and never one that no
 //! longer overlaps a monitor.
 //!
-//! The main window can also dock to the left or right edge of the work area,
-//! full height, at a width the person chose. [`dock`] places it there on every
+//! The main window can also dock beside the left or right edge of the work
+//! area, full height less a small gap, at a width the person chose. [`dock`] places it there on every
 //! show, on the monitor under the pointer.
 
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
@@ -120,18 +120,32 @@ pub enum Side {
     Right,
 }
 
-/// The docked rectangle: full height of the work area, against one side.
-pub fn dock_rect(work: Rect, side: Side, width: u32) -> Rect {
-    let width = width.clamp(200, work.width.max(200)).min(work.width);
+/// The gap a docked window keeps from the edges of the work area, in logical
+/// pixels. Flush against the screen it was a slab with no edge of its own;
+/// set in a little, it is the same rounded surface as the floating window,
+/// and looks the same whatever panels or docks the desktop draws around it.
+pub const DOCK_GAP: f64 = 8.0;
+
+/// The docked rectangle: the height of the work area, beside one edge, set in
+/// by `gap` on the three sides it shares with the screen.
+pub fn dock_rect(work: Rect, side: Side, width: u32, gap: u32) -> Rect {
+    // A work area too small to spare the gap gives it up.
+    let gap = if work.width > 200 + gap * 2 && work.height > 200 + gap * 2 {
+        gap
+    } else {
+        0
+    };
+    let room = work.width - gap * 2;
+    let width = width.clamp(200, room.max(200)).min(room);
     let x = match side {
-        Side::Left => work.x,
-        Side::Right => work.x + work.width as i32 - width as i32,
+        Side::Left => work.x + gap as i32,
+        Side::Right => work.x + work.width as i32 - gap as i32 - width as i32,
     };
     Rect {
         x,
-        y: work.y,
+        y: work.y + gap as i32,
         width,
-        height: work.height,
+        height: work.height - gap * 2,
     }
 }
 
@@ -154,10 +168,12 @@ pub fn dock(app: &AppHandle, win: &WebviewWindow, side: Side, logical_width: f64
         width: work.size.width,
         height: work.size.height,
     };
+    let scale = monitor.scale_factor();
     let rect = dock_rect(
         area,
         side,
-        (logical_width * monitor.scale_factor()).round() as u32,
+        (logical_width * scale).round() as u32,
+        (DOCK_GAP * scale).round() as u32,
     );
     let _ = win.set_size(PhysicalSize::new(rect.width, rect.height));
     let _ = win.set_position(PhysicalPosition::new(rect.x, rect.y));
@@ -351,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn a_docked_window_fills_the_height_against_its_side() {
+    fn a_docked_window_fills_the_height_beside_its_edge() {
         let work = Rect {
             x: 0,
             y: 32,
@@ -359,21 +375,21 @@ mod tests {
             height: 1008,
         };
         assert_eq!(
-            dock_rect(work, Side::Left, 400),
+            dock_rect(work, Side::Left, 400, 8),
             Rect {
-                x: 0,
-                y: 32,
+                x: 8,
+                y: 40,
                 width: 400,
-                height: 1008
+                height: 992
             }
         );
         assert_eq!(
-            dock_rect(work, Side::Right, 400),
+            dock_rect(work, Side::Right, 400, 8),
             Rect {
-                x: 1520,
-                y: 32,
+                x: 1512,
+                y: 40,
                 width: 400,
-                height: 1008
+                height: 992
             }
         );
     }
@@ -386,9 +402,12 @@ mod tests {
             width: 300,
             height: 800,
         };
-        let rect = dock_rect(work, Side::Right, 900);
-        assert_eq!(rect.width, 300);
-        assert_eq!(rect.x, 1920);
-        assert_eq!(dock_rect(work, Side::Left, 10).width, 200);
+        let rect = dock_rect(work, Side::Right, 900, 8);
+        assert_eq!(rect.width, 284);
+        assert_eq!(rect.x, 1928);
+        assert_eq!(dock_rect(work, Side::Left, 10, 8).width, 200);
+        // No room for a gap: the window takes what there is.
+        let tight = Rect { width: 210, ..work };
+        assert_eq!(dock_rect(tight, Side::Left, 400, 8).x, 1920);
     }
 }

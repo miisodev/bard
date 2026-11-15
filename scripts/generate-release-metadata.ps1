@@ -24,7 +24,7 @@ $provenance = [ordered]@{
   version = $Version
   git_commit = $commit
   generated_at = [DateTime]::UtcNow.ToString("o")
-  source_archive = "Not generated; the source is private and Bard releases carry no source archive."
+  source_archive = "Not attached; the source is public and MIT-licensed at https://github.com/miisodev/bard, and git_commit names the exact commit built."
   artifacts = $artifacts
   signing = [ordered]@{
     authenticode = [ordered]@{ required = $false; status = "unsigned by decision; SmartScreen shows its notice once" }

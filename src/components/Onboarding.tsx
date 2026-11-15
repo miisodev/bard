@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowRight, ChevronLeft, ClipboardList, Download, LoaderCircle, Mic, PenTool, RotateCcw } from "lucide-react";
 import { api } from "../store";
-import LicenseCard from "./LicenseCard";
 import type { AppState, ModelInfo, ModelProgress, ShortcutState } from "../types";
 
 const WAVE = (
@@ -94,7 +93,6 @@ export default function Onboarding({
   const [autostart, setAutostart] = useState(state.autostartEnabled);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
-  const [license, setLicense] = useState(state.license);
   const [announcement, setAnnouncement] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const primaryRef = useRef<HTMLButtonElement | null>(null);
@@ -192,15 +190,6 @@ export default function Onboarding({
     setFinishing(true);
     setFinishError(null);
     try {
-      // The 14-day trial is the default path, not a decision the user has to
-      // make to leave this screen. Per the blueprint, "Skipping key entry starts
-      // the 14-day local trial and never consumes a paid activation" — so
-      // arriving here without a licence starts one rather than raising an error
-      // at someone who has not yet decided about money.
-      if (!license.canUse) {
-        await api.startTrial();
-      }
-
       // Autostart is not the app's to set on the Microsoft Store build, where
       // Windows owns it and `set_autostart` reports that as an error. That is a
       // channel fact, not a failure, and treating it as fatal left Store users
@@ -256,7 +245,7 @@ export default function Onboarding({
         ) : (
           <>
             <h1>You're set</h1>
-            <p>{license.canUse ? "Bard is ready on this computer. You can manage your licence in Settings." : "Start with a 14-day local trial, or enter the licence key from your purchase email."}</p>
+            <p>Bard is ready on this computer. It is free and its source is open.</p>
           </>
         )}
       </div>
@@ -377,7 +366,6 @@ export default function Onboarding({
 
         {step === 3 ? (
           <>
-            <LicenseCard status={license} onStatus={setLicense} compact />
             <div className="setting-row">
               <span>
                 <div className="label">Start Bard at login</div>

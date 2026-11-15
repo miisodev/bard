@@ -1,0 +1,97 @@
+/*
+  The shortcut guide window. It borrows the main window's surface (`.app`) and
+  the shared keycap, and lays the rows out the way a menu does: what happens
+  on the left, the keys that do it on the right.
+*/
+
+.guide-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  height: 42px;
+  padding: 0 var(--sp-3) 0 var(--sp-7);
+  cursor: default;
+}
+
+.guide-head h1 {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--on-canvas);
+}
+
+.guide-close {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--on-canvas-2);
+}
+
+.guide-close:hover {
+  background: var(--canvas-hover);
+  color: var(--on-canvas);
+}
+
+.guide-close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.guide-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  flex: 1;
+  min-height: 0;
+  padding: var(--sp-3) var(--sp-7) var(--sp-8);
+  overflow-y: auto;
+}
+
+.guide-group h2 {
+  margin: 0 0 var(--sp-3);
+  font-family: var(--font-small);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tr-caption);
+  text-transform: uppercase;
+  color: var(--on-canvas-3);
+}
+
+.guide-group dl {
+  margin: 0;
+}
+
+.guide-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  min-height: 30px;
+  border-top: 1px solid var(--canvas-rule);
+  font-size: var(--fs-sm);
+  color: var(--on-canvas);
+}
+
+.guide-row:first-child {
+  border-top: 0;
+}
+
+.guide-row dt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guide-row dd {
+  margin: 0;
+}
+
+.guide-note {
+  margin: var(--sp-4) 0 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-base);
+  color: var(--on-canvas-3);
+}

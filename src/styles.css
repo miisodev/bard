@@ -65,7 +65,10 @@ body {
   height: 100vh;
   background: var(--canvas);
   border-radius: var(--r-panel);
-  border: 1px solid var(--border);
+  /* The hairline is the window's whole edge wherever the desktop gives an
+     undecorated window no shadow, so it is drawn firmly enough to hold the
+     surface apart from a page of the same colour behind it. */
+  border: 1px solid color-mix(in srgb, var(--on-canvas) 16%, transparent);
   overflow: hidden;
   color: var(--on-canvas);
 }
@@ -757,8 +760,20 @@ body {
 /* ---------- onboarding ---------- */
 
 /* Setup uses a normal, resizable desktop window with a scrolling step body.
-   Navigation remains visible when a permission message or licence error grows. */
+   Navigation remains visible when a permission message grows. */
 .app.setup {
+  border: 0;
+  border-radius: 0;
+}
+
+/*
+  On Windows the system rounds the window's corners and draws its border and
+  shadow. A page with rounder corners of its own leaves transparent wedges
+  between its curve and the system's, which showed as "ears" at each corner.
+  So there the surface is a plain rectangle and the window frame is Windows'.
+*/
+:root[data-platform="windows"] .app,
+:root[data-platform="windows"] .companion {
   border: 0;
   border-radius: 0;
 }
@@ -1486,7 +1501,7 @@ mark {
   position: relative;
   height: 100vh;
   background: var(--canvas);
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--on-canvas) 16%, transparent);
   border-radius: var(--r-panel);
   overflow: hidden;
   color: var(--on-canvas);
@@ -1555,7 +1570,7 @@ mark {
    The clipboard history: a compact vertical list. A title bar that moves the
    window, a search field and a kind filter, then one row per item — glyph,
    content, and when — with the first three rows numbered for their slot
-   shortcuts. Docked, it loses its outer corners against the screen edge. */
+   shortcuts. Docked, it is the same surface, set in a little from the edge. */
 
 .clip {
   position: relative;
@@ -1565,43 +1580,63 @@ mark {
   min-height: 0;
 }
 
-.app[data-dock="left"],
-.app[data-dock="right"] {
-  border-radius: 0;
-  border-width: 0;
-}
-
 .clip-head {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  height: 44px;
-  padding: 0 var(--sp-4) 0 var(--sp-7);
+  gap: var(--sp-1);
+  height: 42px;
+  padding: 0 var(--sp-3) 0 var(--sp-5);
   flex: none;
   cursor: default;
 }
 
-.status-dot {
-  width: 8px;
-  height: 8px;
+/* The capture switch. It reads as a sentence about what Bard is doing, and
+   pressing it changes the sentence. */
+.capture {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 26px;
+  padding: 0 var(--sp-5) 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--on-canvas);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-spring);
+}
+
+.capture:hover {
+  background: var(--canvas-hover);
+}
+
+.capture:active {
+  transform: scale(var(--press-scale));
+}
+
+.capture:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.capture.is-paused {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+}
+
+.capture-dot {
+  width: 7px;
+  height: 7px;
+  margin: 0 var(--sp-1);
   border-radius: var(--r-pill);
   background: var(--success);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
-  flex: none;
 }
 
-.status-dot.paused {
-  background: var(--warning);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 22%, transparent);
-}
 
-.clip-title {
-  margin: 0 0 0 var(--sp-3);
-  font-size: var(--fs-md);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--tr-normal);
-  color: var(--on-canvas);
-}
+
 
 .clip-head-spring {
   flex: 1;
@@ -1610,8 +1645,8 @@ mark {
 .head-btn {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border: 0;
   border-radius: var(--r-pill);
   background: transparent;
@@ -1659,24 +1694,19 @@ mark {
   font-variant-numeric: tabular-nums;
 }
 
-.paused-badge {
-  padding: 0 var(--sp-4);
-  background: color-mix(in srgb, var(--warning) 20%, var(--surface));
-  color: var(--on-canvas);
-}
 
 .clip-tools {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-4);
-  padding: 0 var(--sp-6) var(--sp-5);
+  gap: var(--sp-3);
+  padding: 0 var(--sp-4) var(--sp-3);
   flex: none;
 }
 
 .clip-tools .search-field {
   flex: none;
   width: 100%;
-  height: 34px;
+  height: 32px;
 }
 
 .search {
@@ -1759,7 +1789,7 @@ mark {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 var(--sp-4) var(--sp-4);
+  padding: 0 var(--sp-3) var(--sp-3);
 }
 
 .clip-list:focus-visible {
@@ -1769,14 +1799,14 @@ mark {
 .clip-list {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: 1px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .clip-heading {
-  padding: var(--sp-5) var(--sp-5) var(--sp-3);
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
   color: var(--on-canvas-3);
   font-size: var(--fs-caption);
   font-weight: var(--fw-semibold);
@@ -1797,13 +1827,14 @@ mark {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--sp-5);
+  gap: var(--sp-4);
   /* Every row is the same height, so the list can be drawn a screenful at a
      time without the scrollbar and the rows disagreeing about where they
-     are. Two lines of text, a thumbnail and a swatch all fit. */
-  height: 56px;
-  padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-5);
-  border-radius: var(--r-card);
+     are. One line each: a history is scanned, and the pill reads an item
+     back in full. */
+  height: 36px;
+  padding: 0 var(--sp-3) 0 var(--sp-4);
+  border-radius: 10px;
   color: var(--text);
   cursor: default;
   overflow: hidden;
@@ -1811,8 +1842,7 @@ mark {
 }
 
 .item:hover {
-  background: var(--surface);
-  box-shadow: var(--el-card);
+  background: var(--canvas-hover);
 }
 
 .item:active {
@@ -1821,48 +1851,43 @@ mark {
 
 .item.is-active {
   background: var(--surface);
-  box-shadow: var(--el-card), inset 0 0 0 2px var(--ring);
+  box-shadow: inset 0 0 0 2px var(--ring);
 }
 
-.item-glyph {
+/* The left edge of a row is either the key that copies it or, for the rest,
+   a quiet mark of what it is. The number is the same one the pill shows. */
+.item-glyph,
+.item-slot {
   display: grid;
   place-items: center;
   flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--r-pill);
-  background: var(--kind-text);
-  color: var(--kind-text-ink);
+  width: 20px;
+  height: 20px;
 }
 
-.item[data-kind="link"] .item-glyph {
-  background: var(--kind-link);
-  color: var(--kind-link-ink);
-}
-
-.item[data-kind="image"] .item-glyph {
-  background: var(--kind-image);
-  color: var(--kind-image-ink);
-}
-
-.item[data-kind="color"] .item-glyph {
-  background: var(--kind-color);
-  color: var(--kind-color-ink);
+.item-glyph {
+  color: var(--text-3);
 }
 
 .item[data-kind="dictation"] .item-glyph {
-  background: var(--kind-dictation);
   color: var(--kind-dictation-ink);
 }
 
-.item[data-kind="draw"] .item-glyph {
-  background: var(--kind-draw);
-  color: var(--kind-draw-ink);
+.item-slot {
+  border-radius: 6px;
+  background: var(--keycap-bg);
+  color: var(--keycap-ink);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  font-family: var(--font-text);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
 }
 
-.item[data-kind="file"] .item-glyph {
-  background: var(--kind-file);
-  color: var(--kind-file-ink);
+.item.is-current .item-slot {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  box-shadow: none;
 }
 
 .item-body {
@@ -1871,14 +1896,12 @@ mark {
 }
 
 .item-text {
-  display: -webkit-box;
+  display: block;
   overflow: hidden;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
   font-size: var(--fs-base);
-  line-height: var(--lh-base);
-  overflow-wrap: anywhere;
-  white-space: pre-line;
+  line-height: 36px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* The inline editor. It sits in the row in place of the text, so the shelf
@@ -1913,8 +1936,17 @@ mark {
 
 .item-lines {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  gap: var(--sp-3);
   min-width: 0;
+}
+
+.item-lines .item-main {
+  flex: 0 1 auto;
+}
+
+.item-lines .item-sub {
+  flex: 1 1 0;
 }
 
 .item-main,
@@ -1953,9 +1985,9 @@ mark {
 
 .item-cover {
   display: block;
-  width: 64px;
-  height: 40px;
-  border-radius: var(--r-sm);
+  width: 44px;
+  height: 26px;
+  border-radius: 6px;
   object-fit: cover;
   background: var(--surface-2);
   box-shadow: inset 0 0 0 1px var(--border);
@@ -1968,8 +2000,8 @@ mark {
 }
 
 .swatch {
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   border-radius: var(--r-pill);
   background: var(--swatch);
   box-shadow: inset 0 0 0 1px var(--border-strong);
@@ -1981,7 +2013,7 @@ mark {
   align-items: center;
   justify-content: flex-end;
   flex: none;
-  min-width: 60px;
+  min-width: 44px;
 }
 
 .item-meta {
@@ -2003,17 +2035,11 @@ mark {
   color: var(--text-3);
 }
 
-.badge.slot {
-  background: var(--keycap-bg);
-  color: var(--keycap-ink);
-  box-shadow: inset 0 0 0 1px var(--border-strong);
-}
-
-.badge.current {
-  width: 18px;
-  padding: 0;
-  background: var(--accent);
-  color: var(--text-on-accent);
+.item-now {
+  color: var(--accent-text);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
 }
 
 .item.is-current .item-text,
@@ -2045,8 +2071,8 @@ mark {
 .item-btn {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 0;
   border-radius: var(--r-pill);
   background: transparent;
@@ -2104,8 +2130,8 @@ mark {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  min-height: 36px;
-  padding: var(--sp-2) var(--sp-7);
+  min-height: 32px;
+  padding: var(--sp-2) var(--sp-5) var(--sp-2) var(--sp-6);
   border-top: 1px solid var(--canvas-rule);
   color: var(--on-canvas-3);
   font-size: var(--fs-caption);
@@ -2113,8 +2139,24 @@ mark {
   flex: none;
 }
 
-.foot-warn {
-  color: var(--danger-text);
+.foot-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.foot-legend kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--sp-2);
+  border-radius: 5px;
+  background: var(--keycap-bg);
+  color: var(--keycap-ink);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  font-family: var(--font-text);
+  font-size: var(--fs-caption);
   font-weight: var(--fw-medium);
 }
 

@@ -484,7 +484,7 @@ because the panel and the Draw window both render
 }
 
 .pane-footnote {
-  margin: 0 var(--sp-1);
+  margin: calc(-1 * var(--sp-4)) var(--sp-1) var(--sp-7);
   font-size: var(--fs-caption);
   line-height: var(--lh-base);
   color: var(--on-canvas-3);
@@ -852,3 +852,45 @@ because the panel and the Draw window both render
   justify-content: flex-end;
   padding: var(--sp-5) var(--sp-6);
 }
+
+/* The table is eleven rows of one kind: set close, it reads as a table. */
+.row:has(> .row-control > .shortcut-cell) {
+  padding-block: var(--sp-3);
+}
+
+.about-promise {
+  margin: 0 var(--sp-1) var(--sp-7);
+  color: var(--on-canvas-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
+/* A changed chord waiting for Save, and one that cannot be saved as it is. */
+.shortcut-record.staged {
+  background: var(--accent-soft);
+}
+
+.shortcut-record.clash {
+  box-shadow: inset 0 0 0 1.5px var(--danger);
+}
+
+/* Save lives at the foot of the table, always in reach while it scrolls. */
+.shortcut-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-top: var(--sp-6);
+  padding: var(--sp-5) 0 var(--sp-2);
+  background: linear-gradient(to top, var(--canvas) 70%, transparent);
+}
+
+.shortcut-bar-note {
+  flex: 1;
+  min-width: 0;
+  color: var(--on-canvas-3);
+  font-size: var(--fs-caption);
+  text-align: right;
+}
+

@@ -296,7 +296,7 @@ const provenance = {
   version,
   git_commit: commit,
   generated_at: new Date().toISOString(),
-  source_archive: "Not generated; the source is private and Bard releases carry no source archive.",
+  source_archive: "Not attached; the source is public and MIT-licensed at https://github.com/miisodev/bard, and git_commit names the exact commit built.",
   artifacts,
   signing,
 };
